@@ -1,0 +1,8 @@
+/uploads/*
+!/.gitkeep
+config/db.php
+*.ofx
+*.log
+.env
+
+!/uploads/.gitkeep
