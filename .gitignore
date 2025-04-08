@@ -2,6 +2,7 @@
 !/.gitkeep
 config/db.php
 *.ofx
+*.csv
 *.log
 .env
 

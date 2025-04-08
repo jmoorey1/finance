@@ -4,7 +4,7 @@ require_once('../config/db.php');
 $statusFilter = $_GET['status'] ?? 'new';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $txn_id = (int)$_POST['txn_id'];
+    $txn_id = (int)($_POST['txn_id'] ?? 0);
     $action = $_POST['action'] ?? '';
     $category_id = isset($_POST['category_id']) ? (int)$_POST['category_id'] : null;
 
@@ -12,26 +12,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute([$txn_id]);
     $row = $stmt->fetch();
 
-    if (!$row) exit;
+    if (!$row) {
+        echo json_encode(['error' => 'Transaction not found']);
+        exit;
+    }
 
-    if ($action === 'delete') {
-        $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
-
-    } elseif ($action === 'confirm_duplicate') {
-        if ($row['matched_transaction_id']) {
-            $pdo->prepare("UPDATE transactions SET date = ? WHERE id = ?")
-                ->execute([$row['date'], $row['matched_transaction_id']]);
-            $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
-        }
-
-    } elseif ($action === 'not_duplicate' && $category_id) {
-        $type = $row['amount'] >= 0 ? 'deposit' : 'withdrawal';
-        $pdo->prepare("INSERT INTO transactions (account_id, date, description, amount, type, category_id)
-                       VALUES (?, ?, ?, ?, ?, ?)")
-            ->execute([$row['account_id'], $row['date'], $row['description'], $row['amount'], $type, $category_id]);
-        $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
-
-    } elseif ($action === 'approve' && $category_id) {
+    if ($action === 'approve' && $category_id) {
         // Lookup the full category row
         $catStmt = $pdo->prepare("SELECT * FROM categories WHERE id = ?");
         $catStmt->execute([$category_id]);
@@ -69,14 +55,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $oppositeAmount = $row['amount'] * -1;
             $oppositeAccountId = $cat['linked_account_id'];
 
+            // Get name of source account (we need this for reverse category lookup)
             $srcAccountNameStmt = $pdo->prepare("SELECT name FROM accounts WHERE id = ?");
             $srcAccountNameStmt->execute([$row['account_id']]);
             $srcAccountName = $srcAccountNameStmt->fetchColumn();
 
+            // Determine the opposite category name
             $expectedOppositeName = $transferTo
                 ? "Transfer From : $srcAccountName"
                 : "Transfer To : $srcAccountName";
 
+            // Find matching category pointing back to this account
             $lookup = $pdo->prepare("SELECT id FROM categories WHERE name = ? AND linked_account_id = ?");
             $lookup->execute([$expectedOppositeName, $row['account_id']]);
             $oppositeCategoryId = $lookup->fetchColumn();
@@ -94,9 +83,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
         }
 
-        // Step 4: Remove from staging
         $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
+        echo json_encode(['status' => 'approved']);
+        exit;
     }
+
+    if ($action === 'delete') {
+        $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
+        echo json_encode(['status' => 'deleted']);
+        exit;
+    }
+
+    if ($action === 'confirm_duplicate' && $row['matched_transaction_id']) {
+        $stmt = $pdo->prepare("UPDATE transactions SET date = ? WHERE id = ?");
+        $stmt->execute([$row['date'], $row['matched_transaction_id']]);
+        $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
+        echo json_encode(['status' => 'duplicate_matched']);
+        exit;
+    }
+
+    if ($action === 'not_duplicate' && $category_id) {
+        // Treat like normal approval
+        $_POST['action'] = 'approve';
+        require(__FILE__); // recurse to run approval logic
+        exit;
+    }
+
+    http_response_code(400);
+    echo json_encode(['error' => 'Unhandled action']);
+    exit;
 }
 
 // Fetch staging rows
@@ -112,10 +127,10 @@ $filterSql = "
 
 if ($statusFilter !== 'all') {
     $filterSql .= " WHERE s.status = ?";
-    $filterStmt = $pdo->prepare($filterSql . " ORDER BY s.date ASC LIMIT 25");
+    $filterStmt = $pdo->prepare($filterSql . " ORDER BY s.date ASC LIMIT 50");
     $filterStmt->execute([$statusFilter]);
 } else {
-    $filterStmt = $pdo->query($filterSql . " ORDER BY s.date ASC LIMIT 25");
+    $filterStmt = $pdo->query($filterSql . " ORDER BY s.date ASC LIMIT 50");
 }
 
 $rows = $filterStmt->fetchAll();
@@ -126,6 +141,28 @@ $categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetc
 <html>
 <head>
   <title>Review Staging Transactions</title>
+  <script>
+    function handleAction(form, action) {
+      const formData = new FormData(form);
+      formData.append('action', action);
+
+      fetch('', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(json => {
+        if (json.status) {
+          form.closest('tr').remove();
+        } else {
+          alert("⚠️ " + (json.error || "Unknown server response"));
+        }
+      })
+      .catch(err => {
+        alert("⚠️ AJAX error: " + err.message);
+      });
+    }
+  </script>
 </head>
 <body>
 <h1>Review Staging Transactions (<?= htmlspecialchars($statusFilter) ?>)</h1>
@@ -150,8 +187,8 @@ $categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetc
 </tr>
 
 <?php foreach ($rows as $txn): ?>
-<tr>
-  <form method="post">
+<tr<?= $txn['status'] === 'duplicate' ? ' style="background-color: #fdd;"' : '' ?>>
+  <form onsubmit="return false;">
     <td><?= htmlspecialchars($txn['status']) ?></td>
     <td><?= htmlspecialchars($txn['date']) ?></td>
     <td><?= htmlspecialchars($txn['account_name']) ?></td>
@@ -169,13 +206,13 @@ $categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetc
     <td>
       <input type="hidden" name="txn_id" value="<?= $txn['id'] ?>">
       <?php if ($txn['status'] === 'potential_duplicate'): ?>
-        <button type="submit" name="action" value="confirm_duplicate">Confirm Match</button>
-        <button type="submit" name="action" value="not_duplicate">Not a Match</button>
+        <button onclick="handleAction(this.form, 'confirm_duplicate')">Confirm Match</button>
+        <button onclick="handleAction(this.form, 'not_duplicate')">Not a Match</button>
       <?php elseif ($txn['status'] === 'duplicate'): ?>
-        <button type="submit" name="action" value="delete">Delete</button>
+        <button onclick="handleAction(this.form, 'delete')">Delete</button>
       <?php else: ?>
-        <button type="submit" name="action" value="approve">Approve</button>
-        <button type="submit" name="action" value="delete">Delete</button>
+        <button onclick="handleAction(this.form, 'approve')">Approve</button>
+        <button onclick="handleAction(this.form, 'delete')">Delete</button>
       <?php endif; ?>
     </td>
     <td>

@@ -1,40 +1,80 @@
 <?php
 require_once('../config/db.php');
 
-$upload_dir = realpath(__DIR__ . '/../uploads') . '/';
-$parser_script = realpath(__DIR__ . '/../scripts/parse_ofx.py');
-
-// Fetch account list for manual selection
+// Fetch accounts to allow user selection for .csv uploads
 $accounts = $pdo->query("SELECT id, name FROM accounts ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ofx_file'])) {
-    $filename = basename($_FILES['ofx_file']['name']);
-    $target_path = $upload_dir . $filename;
-    $manual_account_id = $_POST['account_id'] ?? '';
+$accountId = $_POST['account_id'] ?? null;
+$uploadStatus = '';
 
-    if (move_uploaded_file($_FILES['ofx_file']['tmp_name'], $target_path)) {
-        $escaped_path = escapeshellarg($target_path);
-        $escaped_acct = escapeshellarg($manual_account_id);
-        $output = shell_exec("python3 $parser_script $escaped_path $escaped_acct 2>&1");
-        echo "<pre>Parser output:\n$output</pre>";
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ofxfile'])) {
+    $file = $_FILES['ofxfile'];
+
+    if ($file['error'] === UPLOAD_ERR_OK) {
+        $filename = basename($file['name']);
+        $targetPath = '../uploads/' . $filename;
+
+        if (move_uploaded_file($file['tmp_name'], $targetPath)) {
+            $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+            $cmd = '';
+
+            if ($ext === 'ofx') {
+                $cmd = escapeshellcmd("python3 ../scripts/parse_ofx.py") . ' ' . escapeshellarg($targetPath);
+            } elseif ($ext === 'csv') {
+                if (!$accountId) {
+                    $uploadStatus = "Please select an account for CSV uploads.";
+                } else {
+                    $cmd = escapeshellcmd("python3 ../scripts/parse_csv.py") . ' ' .
+                        escapeshellarg($targetPath) . ' ' . (int)$accountId;
+                }
+            } else {
+                $uploadStatus = "Unsupported file type: $ext";
+            }
+
+            if (empty($uploadStatus)) {
+                ob_start();
+                passthru($cmd, $exitCode);
+                $output = ob_get_clean();
+                $uploadStatus = $exitCode === 0 ? "<pre>$output</pre>" : "❌ Error running script.<br><pre>$output</pre>";
+            }
+        } else {
+            $uploadStatus = "Error moving uploaded file.";
+        }
     } else {
-        echo "File upload failed.";
+        $uploadStatus = "Upload error code: " . $file['error'];
     }
 }
 ?>
 
-<h2>Upload OFX File</h2>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Transactions</title>
+</head>
+<body>
+<h1>Upload Transaction File</h1>
+
 <form method="post" enctype="multipart/form-data">
-  <label for="ofx_file">Select OFX file:</label>
-  <input type="file" name="ofx_file" accept=".ofx" required><br><br>
+    <label for="ofxfile">Select .ofx or .csv file:</label><br>
+    <input type="file" name="ofxfile" id="ofxfile" required><br><br>
 
-  <label for="account_id">Optional: Select account manually</label>
-  <select name="account_id">
-    <option value="">-- auto-detect from file --</option>
-    <?php foreach ($accounts as $acct): ?>
-      <option value="<?= htmlspecialchars($acct['id']) ?>"><?= htmlspecialchars($acct['name']) ?></option>
-    <?php endforeach; ?>
-  </select><br><br>
+    <label for="account_id">Account (required for .csv):</label><br>
+    <select name="account_id" id="account_id">
+        <option value="">-- select account --</option>
+        <?php foreach ($accounts as $acct): ?>
+            <option value="<?= $acct['id'] ?>" <?= $accountId == $acct['id'] ? 'selected' : '' ?>>
+                <?= htmlspecialchars($acct['name']) ?>
+            </option>
+        <?php endforeach; ?>
+    </select><br><br>
 
-  <button type="submit">Upload & Parse</button>
+    <button type="submit">Upload</button>
 </form>
+
+<?php if ($uploadStatus): ?>
+    <hr>
+    <div><strong>Status:</strong><br><?= $uploadStatus ?></div>
+<?php endif; ?>
+
+</body>
+</html>
