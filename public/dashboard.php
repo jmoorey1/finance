@@ -1,15 +1,16 @@
 <?php
 require_once '../config/db.php';
 
-// Get month start from GET or default to current (13th)
-if (isset($_GET['month'])) {
+if (isset($_GET['month']) && DateTime::createFromFormat('Y-m', $_GET['month']) !== false) {
     $inputMonth = DateTime::createFromFormat('Y-m', $_GET['month']);
-    $start_month = new DateTime($inputMonth->format('Y-m-13'));
 } else {
-    $start_month = new DateTime(date('Y-m-13'));
+    // If no month selected, choose correct one based on today's day
+    $today = new DateTime();
+    $monthOffset = ((int)$today->format('d') < 13) ? -1 : 0;
+    $inputMonth = (clone $today)->modify("$monthOffset month");
 }
-$end_month = clone $start_month;
-$end_month->modify('+1 month')->modify('-1 day');
+$start_month = new DateTime($inputMonth->format('Y-m-13'));
+$end_month = (clone $start_month)->modify('+1 month')->modify('-1 day');
 
 // Fetch top-level categories (non-transfer only)
 $categories = [];

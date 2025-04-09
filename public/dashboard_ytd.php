@@ -5,8 +5,12 @@ require_once '../config/db.php';
 if (isset($_GET['month']) && DateTime::createFromFormat('Y-m', $_GET['month']) !== false) {
     $inputMonth = DateTime::createFromFormat('Y-m', $_GET['month']);
 } else {
-    $inputMonth = new DateTime(date('Y-m'));
+    // If no month selected, choose correct one based on today's day
+    $today = new DateTime();
+    $monthOffset = ((int)$today->format('d') < 13) ? -1 : 0;
+    $inputMonth = (clone $today)->modify("$monthOffset month");
 }
+
 $year = $inputMonth->format('Y');
 $start_date = new DateTime("$year-01-13");
 

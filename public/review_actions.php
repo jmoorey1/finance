@@ -1,92 +1,224 @@
 <?php
-require_once('../config/db.php');
+file_put_contents('/tmp/post_debug.txt', print_r($_POST, true));
 
-$action = $_POST['action'] ?? '';
+require_once '../config/db.php';
+
 $txn_id = $_POST['txn_id'] ?? null;
+$action = $_POST['action'] ?? null;
+$category_id = $_POST['category_id'] ?? null;
+$split_mode = isset($_POST['split_mode']);
+$transfer_mode = $_POST['transfer_mode'] ?? null;
+$counter_account_id = $_POST['counter_account_id'] ?? null;
+$link_txn_id = $_POST['link_txn_id'] ?? null;
 
-if (!$txn_id) exit("Error: Missing txn_id");
+if (!$txn_id || !$action) {
+    exit("Missing txn_id or action");
+}
 
+
+
+// Fetch staging transaction
 $stmt = $pdo->prepare("SELECT * FROM staging_transactions WHERE id = ?");
 $stmt->execute([$txn_id]);
-$txn = $stmt->fetch();
-if (!$txn) exit("Error: Transaction not found");
+$txn = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$txn) exit("Transaction not found");
 
-// DELETE
 if ($action === 'delete') {
     $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
-    header("Location: review.php?status=new");
+    header("Location: review.php");
     exit;
 }
 
-// APPROVE
+if ($action === 'confirm_duplicate') {
+    $pdo->prepare("UPDATE staging_transactions SET status = 'duplicate' WHERE id = ?")->execute([$txn_id]);
+    header("Location: review.php");
+    exit;
+}
+
+if ($action === 'not_duplicate') {
+    $pdo->prepare("UPDATE staging_transactions SET matched_transaction_id = NULL, status = 'new' WHERE id = ?")->execute([$txn_id]);
+    header("Location: review.php");
+    exit;
+}
+
 if ($action === 'approve') {
-    $category_id = $_POST['category_id'] ?? null;
-    if (!$category_id) exit("Error: No category selected");
+		if (!$counter_account_id && $transfer_mode === 'link_existing' && $link_txn_id) {
+			$stmt = $pdo->prepare("SELECT account_id FROM transactions WHERE id = ?");
+			$stmt->execute([$link_txn_id]);
+			$counter_account_id = $stmt->fetchColumn();
+		}
+
+if (!$category_id) {
+    if ($transfer_mode && $counter_account_id) {
+        $direction = $txn['amount'] < 0 ? 'Transfer To :' : 'Transfer From :';
+        $stmt = $pdo->prepare("
+            SELECT id FROM categories
+            WHERE type = 'transfer'
+              AND linked_account_id = ?
+              AND name LIKE ?
+            LIMIT 1
+        ");
+        $stmt->execute([$counter_account_id, "$direction%"]);
+        $category_id = $stmt->fetchColumn();
+
+        if (!$category_id) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            exit("No matching transfer category found for account ID $counter_account_id and direction $direction");
+        }
+	} elseif ($split_mode) {
+		$category_id = 197;
+    } else {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        exit("No category selected");
+    }
+}
+
+
 
     $pdo->beginTransaction();
 
-    // Lookup account type
-    $acctStmt = $pdo->prepare("SELECT type FROM accounts WHERE id = ?");
-    $acctStmt->execute([$txn['account_id']]);
-    $acctType = $acctStmt->fetchColumn();
-
-    $amount = floatval($txn['amount']);
-    $type = match (true) {
-        $acctType === 'credit' && $amount < 0 => 'charge',
-        $acctType === 'credit' && $amount >= 0 => 'credit',
-        $acctType !== 'credit' && $amount < 0 => 'withdrawal',
-        default => 'deposit'
+    // Determine transaction type
+	if ($transfer_mode) {
+		$type = 'transfer';
+	} else {
+    $acctType = $pdo->query("SELECT type FROM accounts WHERE id = {$txn['account_id']}")->fetchColumn();
+    $type = match ($acctType) {
+        'credit' => ($txn['amount'] > 0 ? 'credit' : 'charge'),
+        default  => ($txn['amount'] > 0 ? 'deposit' : 'withdrawal')
     };
+	}
 
     // Insert main transaction
-    $insertTxn = $pdo->prepare("
+    $insert = $pdo->prepare("
         INSERT INTO transactions (account_id, date, description, amount, type, category_id)
         VALUES (?, ?, ?, ?, ?, ?)
     ");
-    $insertTxn->execute([
+    $insert->execute([
         $txn['account_id'],
         $txn['date'],
         $txn['description'],
-        $amount,
+        $txn['amount'],
         $type,
-        (int)$category_id
+        $category_id
     ]);
+    $txn_id_final = $pdo->lastInsertId();
 
-    $newTxnId = $pdo->lastInsertId();
+    // Handle split logic
+    if ($category_id == 197 && $split_mode) {
+        $split_cats = $_POST['split_category_id'] ?? [];
+        $split_amts = $_POST['split_amount'] ?? [];
 
-    // Handle splits if split_mode and category_id = 197
-    if ($category_id == 197 && isset($_POST['split_mode'])) {
-        $splitCats = $_POST['split_category_id'] ?? [];
-        $splitAmts = $_POST['split_amount'] ?? [];
-
-        $splitTotal = 0;
-        foreach ($splitAmts as $i => $amt) {
-            $splitTotal += floatval($amt);
+        if (count($split_cats) !== count($split_amts)) {
+if ($pdo->inTransaction()) $pdo->rollBack();
+            exit("Mismatch in split entries.");
         }
 
-        if (round($splitTotal, 2) !== round($amount, 2)) {
-            $pdo->rollBack();
-            exit("Error: Split amount mismatch: total=$splitTotal vs txn=$amount");
+        $sum = 0;
+        for ($i = 0; $i < count($split_cats); $i++) {
+            $cat = (int)$split_cats[$i];
+            $amt = round((float)$split_amts[$i], 2);
+            $sum += $amt;
+
+            $pdo->prepare("
+                INSERT INTO transaction_splits (transaction_id, category_id, amount)
+                VALUES (?, ?, ?)
+            ")->execute([$txn_id_final, $cat, $amt]);
         }
 
-        $insertSplit = $pdo->prepare("
-            INSERT INTO transaction_splits (transaction_id, category_id, amount)
-            VALUES (?, ?, ?)
-        ");
-
-        foreach ($splitCats as $i => $catId) {
-            $insertSplit->execute([
-                $newTxnId,
-                (int)$catId,
-                floatval($splitAmts[$i])
-            ]);
+        if (round($sum, 2) !== round($txn['amount'], 2)) {
+if ($pdo->inTransaction()) $pdo->rollBack();
+            exit("Split total ($sum) doesn't match transaction amount ({$txn['amount']})");
         }
     }
 
+    // Transfer handling
+    if ($transfer_mode === 'create_opposite') {
+        if (!$counter_account_id) {
+if ($pdo->inTransaction()) $pdo->rollBack();
+            exit("Missing counterparty account");
+        }
+
+        $pdo->exec("INSERT INTO transfer_groups () VALUES ()");
+        $group_id = $pdo->lastInsertId();
+
+        // Update first
+        $pdo->prepare("UPDATE transactions SET transfer_group_id = ? WHERE id = ?")->execute([$group_id, $txn_id_final]);
+
+        // Opposite type
+        $opposite_type = match ($type) {
+            'withdrawal' => 'deposit',
+            'deposit' => 'withdrawal',
+            'charge' => 'credit',
+            'credit' => 'charge',
+            default => 'transfer'
+        };
+
+        // Opposite insert
+        $pdo->prepare("
+            INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $counter_account_id,
+            $txn['date'],
+            $txn['description'],
+            -$txn['amount'],
+            $opposite_type,
+            ($category_id == 197 ? null : $category_id),
+            $group_id
+        ]);
+
+} elseif ($transfer_mode === 'link_existing') {
+    if (!$link_txn_id) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        exit("Missing other transaction ID");
+    }
+
+    // Get the other staging transaction
+    $stmt = $pdo->prepare("SELECT * FROM staging_transactions WHERE id = ?");
+    $stmt->execute([$link_txn_id]);
+    $link_txn = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$link_txn) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        exit("Linked transaction not found");
+    }
+
+    // Create the transfer group
+    $pdo->exec("INSERT INTO transfer_groups () VALUES ()");
+    $group_id = $pdo->lastInsertId();
+
+    // Update the approved transaction with the group
+    $pdo->prepare("UPDATE transactions SET transfer_group_id = ? WHERE id = ?")
+        ->execute([$group_id, $txn_id_final]);
+
+    // Determine opposite type
+    $opposite_type = 'transfer';
+
+    // Insert the linked transaction
+    $stmt = $pdo->prepare("
+        INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+    $stmt->execute([
+        $link_txn['account_id'],
+        $link_txn['date'],
+        $link_txn['description'],
+        $link_txn['amount'],
+        $opposite_type,
+        ($category_id == 197 ? null : $category_id),
+        $group_id
+    ]);
+
+    // Delete the linked transaction from staging
+    $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$link_txn_id]);
+}
+
+
     $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
     $pdo->commit();
-    header("Location: review.php?status=new");
+
+    header("Location: review.php");
     exit;
 }
 
-exit("Error: Unhandled action");
+exit("Unhandled action.");
