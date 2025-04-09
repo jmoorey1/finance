@@ -1,0 +1,98 @@
+<?php
+require_once('../config/db.php');
+
+$txn_id = (int)($_POST['txn_id'] ?? 0);
+$action = $_POST['action'] ?? '';
+$category_id = isset($_POST['category_id']) ? (int)$_POST['category_id'] : null;
+
+$stmt = $pdo->prepare("SELECT * FROM staging_transactions WHERE id = ?");
+$stmt->execute([$txn_id]);
+$row = $stmt->fetch();
+
+if (!$row) exit;
+
+if ($action === 'delete') {
+    $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
+    exit;
+}
+
+if (in_array($action, ['approve', 'not_duplicate', 'confirm_duplicate']) && $category_id) {
+    $catStmt = $pdo->prepare("SELECT * FROM categories WHERE id = ?");
+    $catStmt->execute([$category_id]);
+    $cat = $catStmt->fetch();
+
+    $acctStmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
+    $acctStmt->execute([$row['account_id']]);
+    $acct = $acctStmt->fetch();
+
+    $isTransfer = ($cat && $cat['type'] === 'transfer' && $cat['linked_account_id']);
+    $transferTo = str_starts_with($cat['name'], 'Transfer To');
+    $transferFrom = str_starts_with($cat['name'], 'Transfer From');
+
+    if ($isTransfer) {
+        $pdo->prepare("INSERT INTO transfer_groups (description) VALUES (?)")
+            ->execute(["Auto transfer from staging txn ID $txn_id"]);
+        $transferGroupId = $pdo->lastInsertId();
+    } else {
+        $transferGroupId = null;
+    }
+
+    $amount = $row['amount'];
+    $type = match($acct['type']) {
+        'credit' => ($amount >= 0 ? 'credit' : 'charge'),
+        default => ($amount >= 0 ? 'deposit' : 'withdrawal'),
+    };
+
+    $pdo->prepare("INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)")
+        ->execute([
+            $row['account_id'],
+            $row['date'],
+            $row['description'],
+            $amount,
+            $isTransfer ? 'transfer' : $type,
+            $category_id,
+            $transferGroupId
+        ]);
+
+    // Insert opposite-side transfer if needed
+    if ($isTransfer) {
+        $oppositeAmount = -1 * $amount;
+        $oppositeAccountId = $cat['linked_account_id'];
+
+        $srcAccountNameStmt = $pdo->prepare("SELECT name FROM accounts WHERE id = ?");
+        $srcAccountNameStmt->execute([$row['account_id']]);
+        $srcName = $srcAccountNameStmt->fetchColumn();
+
+        $expectedOpposite = $transferTo
+            ? "Transfer From : $srcName"
+            : "Transfer To : $srcName";
+
+        $oppositeCatStmt = $pdo->prepare("SELECT id FROM categories WHERE name = ? AND linked_account_id = ?");
+        $oppositeCatStmt->execute([$expectedOpposite, $row['account_id']]);
+        $oppositeCatId = $oppositeCatStmt->fetchColumn();
+
+        $oppositeAcctStmt = $pdo->prepare("SELECT * FROM accounts WHERE id = ?");
+        $oppositeAcctStmt->execute([$oppositeAccountId]);
+        $oppositeAcct = $oppositeAcctStmt->fetch();
+
+        $oppositeType = match($oppositeAcct['type']) {
+            'credit' => ($oppositeAmount >= 0 ? 'credit' : 'charge'),
+            default => ($oppositeAmount >= 0 ? 'deposit' : 'withdrawal'),
+        };
+
+        $pdo->prepare("INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)")
+            ->execute([
+                $oppositeAccountId,
+                $row['date'],
+                $row['description'],
+                $oppositeAmount,
+                'transfer',
+                $oppositeCatId ?: null,
+                $transferGroupId
+            ]);
+    }
+
+    $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
+}

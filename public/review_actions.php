@@ -1,93 +1,92 @@
 <?php
 require_once('../config/db.php');
 
-header('Content-Type: application/json');
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['error' => 'Invalid request']);
-    exit;
-}
-
-$txn_id = (int)($_POST['txn_id'] ?? 0);
 $action = $_POST['action'] ?? '';
-$category_id = isset($_POST['category_id']) ? (int)$_POST['category_id'] : null;
+$txn_id = $_POST['txn_id'] ?? null;
+
+if (!$txn_id) exit("Error: Missing txn_id");
 
 $stmt = $pdo->prepare("SELECT * FROM staging_transactions WHERE id = ?");
 $stmt->execute([$txn_id]);
-$row = $stmt->fetch();
+$txn = $stmt->fetch();
+if (!$txn) exit("Error: Transaction not found");
 
-if (!$row) {
-    echo json_encode(['error' => 'Transaction not found']);
-    exit;
-}
-
+// DELETE
 if ($action === 'delete') {
     $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
-    echo json_encode(['status' => 'deleted']);
+    header("Location: review.php?status=new");
     exit;
 }
 
-if ($action === 'approve' && $category_id) {
-    // Lookup category
-    $catStmt = $pdo->prepare("SELECT * FROM categories WHERE id = ?");
-    $catStmt->execute([$category_id]);
-    $cat = $catStmt->fetch();
+// APPROVE
+if ($action === 'approve') {
+    $category_id = $_POST['category_id'] ?? null;
+    if (!$category_id) exit("Error: No category selected");
 
-    $isTransfer = ($cat && $cat['type'] === 'transfer' && $cat['linked_account_id']);
-    $transferTo = str_starts_with($cat['name'], 'Transfer To');
-    $transferFrom = str_starts_with($cat['name'], 'Transfer From');
-    $type = $isTransfer ? 'transfer' : ($row['amount'] >= 0 ? 'deposit' : 'withdrawal');
+    $pdo->beginTransaction();
 
-    $transferGroupId = null;
-    if ($isTransfer) {
-        $pdo->prepare("INSERT INTO transfer_groups (description) VALUES (?)")
-            ->execute(["Auto transfer for staging txn ID " . $row['id']]);
-        $transferGroupId = $pdo->lastInsertId();
-    }
+    // Lookup account type
+    $acctStmt = $pdo->prepare("SELECT type FROM accounts WHERE id = ?");
+    $acctStmt->execute([$txn['account_id']]);
+    $acctType = $acctStmt->fetchColumn();
 
-    // Insert primary transaction
-    $pdo->prepare("INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)")
-        ->execute([
-            $row['account_id'],
-            $row['date'],
-            $row['description'],
-            $row['amount'],
-            $type,
-            $category_id,
-            $transferGroupId
-        ]);
+    $amount = floatval($txn['amount']);
+    $type = match (true) {
+        $acctType === 'credit' && $amount < 0 => 'charge',
+        $acctType === 'credit' && $amount >= 0 => 'credit',
+        $acctType !== 'credit' && $amount < 0 => 'withdrawal',
+        default => 'deposit'
+    };
 
-    // Handle opposite transfer
-    if ($isTransfer) {
-        $oppositeAmount = $row['amount'] * -1;
-        $oppositeAccountId = $cat['linked_account_id'];
+    // Insert main transaction
+    $insertTxn = $pdo->prepare("
+        INSERT INTO transactions (account_id, date, description, amount, type, category_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ");
+    $insertTxn->execute([
+        $txn['account_id'],
+        $txn['date'],
+        $txn['description'],
+        $amount,
+        $type,
+        (int)$category_id
+    ]);
 
-        $srcAccountName = $pdo->prepare("SELECT name FROM accounts WHERE id = ?");
-        $srcAccountName->execute([$row['account_id']]);
-        $srcName = $srcAccountName->fetchColumn();
+    $newTxnId = $pdo->lastInsertId();
 
-        $oppositeCatName = $transferTo ? "Transfer From : $srcName" : "Transfer To : $srcName";
-        $lookup = $pdo->prepare("SELECT id FROM categories WHERE name = ? AND linked_account_id = ?");
-        $lookup->execute([$oppositeCatName, $row['account_id']]);
-        $oppositeCategoryId = $lookup->fetchColumn();
+    // Handle splits if split_mode and category_id = 197
+    if ($category_id == 197 && isset($_POST['split_mode'])) {
+        $splitCats = $_POST['split_category_id'] ?? [];
+        $splitAmts = $_POST['split_amount'] ?? [];
 
-        $pdo->prepare("INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)")
-            ->execute([
-                $oppositeAccountId,
-                $row['date'],
-                $row['description'],
-                $oppositeAmount,
-                'transfer',
-                $oppositeCategoryId ?: null,
-                $transferGroupId
+        $splitTotal = 0;
+        foreach ($splitAmts as $i => $amt) {
+            $splitTotal += floatval($amt);
+        }
+
+        if (round($splitTotal, 2) !== round($amount, 2)) {
+            $pdo->rollBack();
+            exit("Error: Split amount mismatch: total=$splitTotal vs txn=$amount");
+        }
+
+        $insertSplit = $pdo->prepare("
+            INSERT INTO transaction_splits (transaction_id, category_id, amount)
+            VALUES (?, ?, ?)
+        ");
+
+        foreach ($splitCats as $i => $catId) {
+            $insertSplit->execute([
+                $newTxnId,
+                (int)$catId,
+                floatval($splitAmts[$i])
             ]);
+        }
     }
 
     $pdo->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$txn_id]);
-    echo json_encode(['status' => 'approved']);
+    $pdo->commit();
+    header("Location: review.php?status=new");
     exit;
 }
 
-echo json_encode(['error' => 'Unhandled action']);
+exit("Error: Unhandled action");
