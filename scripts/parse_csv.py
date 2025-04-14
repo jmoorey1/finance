@@ -84,21 +84,22 @@ with open(csv_path, newline='') as csvfile:
                 matched_id = match_id
 
         # Insert into staging_transactions
-        insert_cursor.execute("""
-            INSERT INTO staging_transactions (account_id, date, description, amount, raw_description, original_memo, status, matched_transaction_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            account_id,
-            txn_date,
-            description,
-            amount,
-            description,  # raw_description
-            original_memo,
-            status,
-            matched_id
-        ))
+        if status in ('new', 'potential_duplicate'):
+            insert_cursor.execute("""
+                INSERT INTO staging_transactions (account_id, date, description, amount, raw_description, original_memo, status, matched_transaction_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                account_id,
+                txn_date,
+                description,
+                amount,
+                description,  # raw_description
+                original_memo,
+                status,
+                matched_id
+            ))
+            inserted += 1
 
-        inserted += 1
 
 conn.commit()
 select_cursor.close()

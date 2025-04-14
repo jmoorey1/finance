@@ -85,21 +85,22 @@ for account in ofx.accounts:
                 status = 'potential_duplicate'
                 matched_id = potential_match['id']
 
-        cursor.execute("""
-            INSERT INTO staging_transactions (
-                account_id, date, description, amount, status, original_memo, matched_transaction_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            account_id, date_str, description, amount,
-            status, memo, matched_id
-        ))
+        if status in ('new', 'potential_duplicate'):
+            cursor.execute("""
+                INSERT INTO staging_transactions (
+                    account_id, date, description, amount, status, original_memo, matched_transaction_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                account_id, date_str, description, amount,
+                status, memo, matched_id
+            ))
 
-        if status == 'duplicate':
-            flagged += 1
-        elif status == 'potential_duplicate':
-            potential += 1
+            if status == 'potential_duplicate':
+                potential += 1
+            else:
+                inserted += 1
         else:
-            inserted += 1
+            flagged += 1
 
 conn.commit()
 cursor.close()

@@ -1,5 +1,4 @@
 <?php
-file_put_contents('/tmp/post_debug.txt', print_r($_POST, true));
 
 require_once '../config/db.php';
 
