@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+include '../layout/header.php';
 
 // Get selected month (e.g. 2025-04) or use current month
 if (isset($_GET['month']) && DateTime::createFromFormat('Y-m', $_GET['month']) !== false) {
@@ -28,47 +29,44 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $categories[$row['id']] = $row;
 }
 
-// Load YTD budgets (all months from Jan–selected month)
+// Load YTD budget totals
 $budgets = [];
-$stmt = $pdo->prepare("SELECT category_id, SUM(amount) as total FROM budgets WHERE month_start >= ? AND month_start <= ? GROUP BY category_id");
+$stmt = $pdo->prepare("
+    SELECT category_id, SUM(amount) as total
+    FROM budgets
+    WHERE month_start BETWEEN ? AND ?
+    GROUP BY category_id
+");
 $stmt->execute([$start_date->format('Y-m-d'), $end_date->format('Y-m-d')]);
 foreach ($stmt as $row) {
     $budgets[$row['category_id']] = floatval($row['total']);
 }
 
-// Load actuals YTD (splits + top-level), rolled up to top-level
+// Load YTD actuals
 $stmt = $pdo->prepare("
-    SELECT
-        IFNULL(top.id, c.id) AS top_id,
-        SUM(s.amount) AS total
+    SELECT IFNULL(top.id, c.id) AS top_id, SUM(s.amount) AS total
     FROM transaction_splits s
     JOIN transactions t ON t.id = s.transaction_id
     JOIN accounts a ON t.account_id = a.id
     JOIN categories c ON s.category_id = c.id
     LEFT JOIN categories top ON c.parent_id = top.id
-    WHERE t.date >= ? AND t.date <= ?
+    WHERE t.date BETWEEN ? AND ?
       AND a.type IN ('current','credit','savings')
       AND c.type IN ('income', 'expense')
     GROUP BY top_id
-
     UNION ALL
-
-    SELECT
-        IFNULL(top.id, c.id) AS top_id,
-        SUM(t.amount) AS total
+    SELECT IFNULL(top.id, c.id) AS top_id, SUM(t.amount) AS total
     FROM transactions t
     JOIN accounts a ON t.account_id = a.id
     JOIN categories c ON t.category_id = c.id
     LEFT JOIN categories top ON c.parent_id = top.id
     LEFT JOIN transaction_splits s ON s.transaction_id = t.id
-    WHERE t.date >= ? AND t.date <= ?
+    WHERE t.date BETWEEN ? AND ?
       AND s.id IS NULL
       AND a.type IN ('current','credit','savings')
       AND c.type IN ('income', 'expense')
     GROUP BY top_id
 ");
-
-
 $stmt->execute([
     $start_date->format('Y-m-d'),
     $end_date->format('Y-m-d'),
@@ -78,109 +76,86 @@ $stmt->execute([
 
 $actuals = [];
 foreach ($stmt as $row) {
-    if (!isset($actuals[$row['top_id']])) {
-        $actuals[$row['top_id']] = 0;
-    }
-    $actuals[$row['top_id']] += floatval($row['total']);
+    $actuals[$row['top_id']] = ($actuals[$row['top_id']] ?? 0) + floatval($row['total']);
 }
 ?>
-<!DOCTYPE html>
-<html>
-<head>
-    <title>YTD Budget vs Actuals</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 2em; }
-        table { border-collapse: collapse; width: 60em; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: right; }
-        th.sticky-col, td.sticky-col { position: sticky; left: 0; background: #fff; text-align: left; }
-        thead th { background: #f8f8f8; position: sticky; top: 0; }
-        .under { background-color: #e0ffe0; }
-        .over { background-color: #ffe0e0; }
-        .income { font-weight: bold; background: #f0f8ff; }
-        .expense { font-weight: normal; }
-    </style>
-</head>
-<body>
 
-<h1>YTD Budget vs Actuals</h1>
+<h1 class="mb-4">📊 YTD Budget vs Actuals</h1>
 
-<form method="GET">
-    <label for="month">Show YTD to:</label>
-    <input type="month" name="month" value="<?= $inputMonth->format('Y-m') ?>" onchange="this.form.submit()" />
+<form method="GET" class="mb-3">
+    <label for="month" class="form-label">Show YTD up to:</label>
+    <input type="month" name="month" class="form-control" value="<?= $inputMonth->format('Y-m') ?>" onchange="this.form.submit()" />
 </form>
-<br>
 
-<h2><?= $start_date->format('j M Y') ?> – <?= $end_date->format('j M Y') ?></h2>
+<h4><?= $start_date->format('j M Y') ?> – <?= $end_date->format('j M Y') ?></h4>
 
-<table>
-    <thead>
-        <tr>
-            <th class="sticky-col">Category</th>
-            <th>Budget</th>
-            <th>Actual</th>
-            <th>Variance</th>
-        </tr>
-    </thead>
-    <tbody>
-        <?php
-        $totals = ['income' => ['budget' => 0, 'actual' => 0], 'expense' => ['budget' => 0, 'actual' => 0]];
+<div class="table-responsive mt-3">
+    <table class="table table-sm table-striped table-bordered align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>Category</th>
+                <th class="text-end">Budget</th>
+                <th class="text-end">Actual</th>
+                <th class="text-end">Variance</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php
+            $totals = ['income' => ['budget' => 0, 'actual' => 0], 'expense' => ['budget' => 0, 'actual' => 0]];
 
-        foreach ($categories as $id => $cat):
-            $type = $cat['type'];
-            $budget = $budgets[$id] ?? 0;
-            $actual_raw = $actuals[$id] ?? 0;
-            $actual = $actual_raw;
+            foreach ($categories as $id => $cat):
+                $type = $cat['type'];
+                $budget = $budgets[$id] ?? 0;
+                $actual_raw = $actuals[$id] ?? 0;
+                $actual = ($type === 'expense') ? -$actual_raw : $actual_raw;
 
-            if ($type === 'expense') {
-                $actual *= -1;
-            }
+                if ($budget == 0 && $actual == 0) continue;
 
-            if ($budget == 0 && $actual == 0) continue;
+                $variance = $actual - $budget;
+                $totals[$type]['budget'] += $budget;
+                $totals[$type]['actual'] += $actual;
 
-            $variance = $actual - $budget;
-            $totals[$type]['budget'] += $budget;
-            $totals[$type]['actual'] += $actual;
-
-            $class = '';
-            if ($variance !== 0) {
-                if ($type === 'income') {
-                    $class = $variance > 0 ? 'under' : 'over';
-                } else {
-                    $class = $variance > 0 ? 'over' : 'under';
+                $class = '';
+                if ($variance !== 0) {
+                    if ($type === 'income') {
+                        $class = $variance > 0 ? 'text-success' : 'text-danger';
+                    } else {
+                        $class = $variance > 0 ? 'text-danger' : 'text-success';
+                    }
                 }
-            }
-        ?>
-        <tr class="<?= $type ?>">
-            <td class="sticky-col"><?= htmlspecialchars($cat['name']) ?></td>
-            <td><?= number_format($budget, 2) ?></td>
-            <td><?= number_format($actual, 2) ?></td>
-            <td class="<?= $class ?>"><?= number_format($variance, 2) ?></td>
-        </tr>
-        <?php endforeach; ?>
-    </tbody>
-    <tfoot>
-        <tr style="font-weight: bold;">
-            <td class="sticky-col">Total Income</td>
-            <td><?= number_format($totals['income']['budget'], 2) ?></td>
-            <td><?= number_format($totals['income']['actual'], 2) ?></td>
-            <td><?= number_format($totals['income']['actual'] - $totals['income']['budget'], 2) ?></td>
-        </tr>
-        <tr style="font-weight: bold;">
-            <td class="sticky-col">Total Expenses</td>
-            <td><?= number_format($totals['expense']['budget'], 2) ?></td>
-            <td><?= number_format($totals['expense']['actual'], 2) ?></td>
-            <td><?= number_format($totals['expense']['actual'] - $totals['expense']['budget'], 2) ?></td>
-        </tr>
-        <tr style="font-weight: bold;">
-            <td class="sticky-col">Net Total</td>
-            <td><?= number_format($totals['income']['budget'] - $totals['expense']['budget'], 2) ?></td>
-            <td><?= number_format($totals['income']['actual'] - $totals['expense']['actual'], 2) ?></td>
-            <td><?= number_format(
-                ($totals['income']['actual'] - $totals['expense']['actual']) -
-                ($totals['income']['budget'] - $totals['expense']['budget']), 2
-            ) ?></td>
-        </tr>
-    </tfoot>
-</table>
-</body>
-</html>
+            ?>
+            <tr>
+                <td><?= htmlspecialchars($cat['name']) ?></td>
+                <td class="text-end">£<?= number_format($budget, 2) ?></td>
+                <td class="text-end">£<?= number_format($actual, 2) ?></td>
+                <td class="text-end <?= $class ?>">£<?= number_format($variance, 2) ?></td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+        <tfoot class="table-light">
+            <tr>
+                <th>Total Income</th>
+                <th class="text-end">£<?= number_format($totals['income']['budget'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['income']['actual'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['income']['actual'] - $totals['income']['budget'], 2) ?></th>
+            </tr>
+            <tr>
+                <th>Total Expenses</th>
+                <th class="text-end">£<?= number_format($totals['expense']['budget'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['expense']['actual'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['expense']['actual'] - $totals['expense']['budget'], 2) ?></th>
+            </tr>
+            <tr>
+                <th>Net Total</th>
+                <th class="text-end">£<?= number_format($totals['income']['budget'] - $totals['expense']['budget'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['income']['actual'] - $totals['expense']['actual'], 2) ?></th>
+                <th class="text-end">£<?= number_format(
+                    ($totals['income']['actual'] - $totals['expense']['actual']) -
+                    ($totals['income']['budget'] - $totals['expense']['budget']), 2
+                ) ?></th>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+<?php include '../layout/footer.php'; ?>

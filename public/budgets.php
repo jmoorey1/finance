@@ -1,4 +1,7 @@
+<?php include '../layout/header.php'; ?>
+
 <?php
+
 require_once '../config/db.php';
 
 // Categories to exclude from budgeting
@@ -169,3 +172,4 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     </form>
 </body>
 </html>
+<?php include '../layout/footer.php'; ?>

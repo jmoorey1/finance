@@ -10,7 +10,7 @@ from datetime import timedelta
 DB_CONFIG = {
     'host': 'localhost',
     'user': 'john',
-    'password': 'Thebluemole01',  # secure this in production
+    'password': 'Thebluemole01',
     'database': 'accounts'
 }
 
@@ -31,13 +31,12 @@ with open(ofx_path, 'r', encoding='utf-8') as f:
 conn = mysql.connector.connect(**DB_CONFIG)
 cursor = conn.cursor(dictionary=True)
 
-inserted, flagged, potential = 0, 0, 0
+inserted, flagged, potential, predictions = 0, 0, 0, 0
 
 for account in ofx.accounts:
     acct_id = account.account_id
     bank_id = getattr(account, 'routing_number', None)
 
-    # resolve account_id
     account_id = manual_account_id
     if not account_id:
         query = "SELECT account_id FROM ofx_account_map WHERE acct_id = %s"
@@ -61,8 +60,9 @@ for account in ofx.accounts:
 
         status = 'new'
         matched_id = None
+        predicted_instance_id = None
 
-        # Check for exact duplicate
+        # 1️⃣ Check if it matches a real transaction
         cursor.execute("""
             SELECT id FROM transactions
             WHERE account_id = %s AND date = %s AND ABS(amount - %s) < 0.01
@@ -73,9 +73,8 @@ for account in ofx.accounts:
             status = 'duplicate'
             matched_id = match['id']
         else:
-            # Check for potential duplicate: date within ±3 days
             cursor.execute("""
-                SELECT id, date FROM transactions
+                SELECT id FROM transactions
                 WHERE account_id = %s AND ABS(amount - %s) < 0.01
                       AND ABS(DATEDIFF(date, %s)) <= 3
                 LIMIT 1
@@ -85,18 +84,37 @@ for account in ofx.accounts:
                 status = 'potential_duplicate'
                 matched_id = potential_match['id']
 
-        if status in ('new', 'potential_duplicate'):
+        # 2️⃣ Check if it matches a predicted instance
+        if status == 'new':
+            cursor.execute("""
+                SELECT id FROM predicted_instances
+                WHERE from_account_id = %s
+                  AND ABS(amount - %s) < 0.01
+                  AND ABS(DATEDIFF(scheduled_date, %s)) <= 3
+                  AND description = %s
+                LIMIT 1
+            """, (account_id, amount, date_str, description))
+            prediction = cursor.fetchone()
+            if prediction:
+                status = 'fulfills_prediction'
+                predicted_instance_id = prediction['id']
+                predictions += 1
+
+        if status in ('new', 'potential_duplicate', 'fulfills_prediction'):
             cursor.execute("""
                 INSERT INTO staging_transactions (
-                    account_id, date, description, amount, status, original_memo, matched_transaction_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    account_id, date, description, amount, status,
+                    original_memo, matched_transaction_id, predicted_instance_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                account_id, date_str, description, amount,
-                status, memo, matched_id
+                account_id, date_str, description, amount, status,
+                memo, matched_id, predicted_instance_id
             ))
 
             if status == 'potential_duplicate':
                 potential += 1
+            elif status == 'fulfills_prediction':
+                predictions += 1
             else:
                 inserted += 1
         else:
@@ -107,5 +125,6 @@ cursor.close()
 conn.close()
 
 print(f"✅ Inserted: {inserted} new transactions.")
-print(f"⚠️ Flagged as potential duplicates: {potential}")
+print(f"⚡ Matches to predicted instances: {predictions}")
+print(f"⚠️ Potential duplicates: {potential}")
 print(f"❌ Exact duplicates: {flagged}")

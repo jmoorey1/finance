@@ -1,3 +1,5 @@
+<?php include '../layout/header.php'; ?>
+
 <?php
 require_once '../config/db.php';
 
@@ -169,3 +171,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 </body>
 </html>
+<?php include '../layout/footer.php'; ?>
