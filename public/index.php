@@ -6,28 +6,13 @@ require_once '../scripts/get_account_balances.php';
 include '../layout/header.php';
 
 $forecast = get_forecast_shortfalls($pdo);
-$predictions = get_upcoming_predictions($pdo, 10);
+$predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
 
-<!-- 📅 Upcoming Predicted Transactions -->
-<div class="mb-4">
-    <h4>📅 Upcoming Transactions (Next 10 Days)</h4>
-    <?php if (count($predictions) > 0): ?>
-        <ul class="list-group">
-            <?php foreach ($predictions as $p): ?>
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <span><?= htmlspecialchars($p['scheduled_date']) ?></span>
-                    <span><?= htmlspecialchars($p['label']) ?></span>
-                </li>
-            <?php endforeach; ?>
-        </ul>
-    <?php else: ?>
-        <p class="text-muted">No upcoming predicted transactions.</p>
-    <?php endif; ?>
-</div>
+
 
 <!-- 💼 Account Balances -->
 <div class="mb-4">
@@ -56,6 +41,23 @@ $balances = get_account_balances($pdo);
             <?php endforeach; ?>
         </tbody>
     </table>
+</div>
+
+<!-- 📅 Upcoming Predicted Transactions -->
+<div class="mb-4">
+    <h4>📅 Upcoming Transactions (Next 5 Days)</h4>
+    <?php if (count($predictions) > 0): ?>
+        <ul class="list-group">
+            <?php foreach ($predictions as $p): ?>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span><?= htmlspecialchars($p['scheduled_date']) ?></span>
+                    <span><?= htmlspecialchars($p['label']) ?></span>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php else: ?>
+        <p class="text-muted">No upcoming predicted transactions.</p>
+    <?php endif; ?>
 </div>
 
 <!-- 🔴 Forecasted Balance Issues -->
