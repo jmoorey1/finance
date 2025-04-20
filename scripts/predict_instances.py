@@ -1,5 +1,3 @@
-# Rewriting the full predict_instances.py with weekly anchor_type support and variable transaction averaging.
-
 from datetime import datetime, timedelta
 import mysql.connector
 import holidays
@@ -36,77 +34,81 @@ def predict_fixed_transactions(cursor, today, end_date):
     predictions = cursor.fetchall()
 
     for p in predictions:
+        pid = p['id']
+        interval = p.get('repeat_interval')
+        anchor_type = p['anchor_type']
+        frequency = p.get('frequency')
+
         # Weekly pattern
-        if p['anchor_type'] == 'weekly':
+        if anchor_type == 'weekly':
             for i in range((end_date - today).days + 1):
                 day = today + timedelta(days=i)
                 if day.weekday() == p['weekday']:
-                    amount = p['amount']
-                    if p.get('variable') and p.get('average_over_last'):
-                        cursor.execute("""
-                             SELECT AVG(pr.amount) AS avg_amount FROM 
-                             (select amount from transactions
-                            WHERE predicted_transaction_id = %s
-                            ORDER BY date DESC LIMIT %s) pr
-                        """, (p['id'], p['average_over_last']))
-                        result = cursor.fetchone()
-                        if result and result['avg_amount'] is not None:
-                            amount = round(result['avg_amount'], 2)
+                    schedule_instance(cursor, p, day)
+            continue
 
-                    cursor.execute("""
-                        INSERT INTO predicted_instances
-                        (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
-                         category_id, amount, description)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE amount = VALUES(amount)
-                    """, (
-                        p['id'], day, p['from_account_id'], p['to_account_id'],
-                        p['category_id'], amount, p['description']
-                    ))
-            continue  # Skip monthly logic for weekly items
+        # Custom repeat every X weeks
+        if frequency == 'custom' and interval:
+            cursor.execute("""
+                SELECT MAX(date) as last_date FROM transactions
+                WHERE predicted_transaction_id = %s
+            """, (pid,))
+            result = cursor.fetchone()
+            start_from = result['last_date'] or today.isoformat()
+            if isinstance(start_from, str):
+                start_from = datetime.strptime(start_from, "%Y-%m-%d")
+            current = start_from + timedelta(weeks=interval)
 
-        # Monthly logic
+            while current <= end_date:
+                schedule_instance(cursor, p, current)
+                current += timedelta(weeks=interval)
+            continue
+
+        # Monthly patterns
         for month_offset in range(3):
             base = today.replace(day=1) + relativedelta(months=month_offset)
             year, month = base.year, base.month
             scheduled_date = None
 
-            if p['anchor_type'] == 'day_of_month':
+            if anchor_type == 'day_of_month' and p.get('day_of_month'):
                 try:
                     scheduled_date = datetime(year, month, p['day_of_month'])
                     scheduled_date = adjust_date(scheduled_date, p['adjust_for_weekend'])
                 except ValueError:
                     continue
-            elif p['anchor_type'] == 'nth_weekday':
+            elif anchor_type == 'nth_weekday':
                 scheduled_date = get_nth_weekday(year, month, p['weekday'], p['nth_weekday'])
-            elif p['anchor_type'] == 'last_business_day':
+            elif anchor_type == 'last_business_day':
                 last_day = calendar.monthrange(year, month)[1]
                 scheduled_date = datetime(year, month, last_day)
                 scheduled_date = adjust_date(scheduled_date, 'previous_business_day')
 
             if scheduled_date and today <= scheduled_date.date() <= end_date:
-                amount = p['amount']
-                if p.get('variable') and p.get('average_over_last'):
-                    cursor.execute("""
-                             SELECT AVG(pr.amount) AS avg_amount FROM 
-                             (select amount from transactions
-                            WHERE predicted_transaction_id = %s
-                            ORDER BY date DESC LIMIT %s) pr
-                    """, (p['id'], p['average_over_last']))
-                    result = cursor.fetchone()
-                    if result and result['avg_amount'] is not None:
-                        amount = round(result['avg_amount'], 2)
+                schedule_instance(cursor, p, scheduled_date.date())
 
-                cursor.execute("""
-                    INSERT INTO predicted_instances
-                    (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
-                     category_id, amount, description)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE amount = VALUES(amount)
-                """, (
-                    p['id'], scheduled_date.date(), p['from_account_id'], p['to_account_id'],
-                    p['category_id'], amount, p['description']
-                ))
+def schedule_instance(cursor, p, day):
+    amount = p['amount']
+    if p.get('variable') and p.get('average_over_last'):
+        cursor.execute("""
+             SELECT AVG(pr.amount) AS avg_amount FROM 
+             (SELECT amount FROM transactions
+              WHERE predicted_transaction_id = %s
+              ORDER BY date DESC LIMIT %s) pr
+        """, (p['id'], p['average_over_last']))
+        result = cursor.fetchone()
+        if result and result['avg_amount'] is not None:
+            amount = round(result['avg_amount'], 2)
+
+    cursor.execute("""
+        INSERT INTO predicted_instances
+        (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
+         category_id, amount, description)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE amount = VALUES(amount)
+    """, (
+        p['id'], day, p['from_account_id'], p['to_account_id'],
+        p['category_id'], amount, p['description']
+    ))
 
 def predict_credit_card_repayments(cursor, today, end_date):
     cursor.execute("""
