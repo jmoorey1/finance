@@ -4,7 +4,7 @@
 require_once('../config/db.php');
 
 // Fetch accounts to allow user selection for .csv uploads
-$accounts = $pdo->query("SELECT id, name FROM accounts ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$accounts = $pdo->query("SELECT id, name FROM accounts where active=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 $accountId = $_POST['account_id'] ?? null;
 $uploadStatus = '';

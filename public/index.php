@@ -3,11 +3,27 @@ require_once '../config/db.php';
 require_once '../scripts/forecast_utils.php';
 require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
+require_once '../scripts/get_missed_predictions.php';
+
 include '../layout/header.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reforecast'])) {
+    $output = [];
+    $return_code = 0;
+    exec('python3 ../scripts/predict_instances.py 2>&1', $output, $return_code);
+    if ($return_code === 0) {
+        echo "<div class='alert alert-success'>Reforecasting complete.</div>";
+    } else {
+        echo "<div class='alert alert-danger'><strong>Error running reforecast:</strong><br><pre>" .
+             htmlspecialchars(implode("\n", $output)) . "</pre></div>";
+    }
+}
 
 $forecast = get_forecast_shortfalls($pdo);
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
+$missed = get_missed_predictions($pdo);
+
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
@@ -43,6 +59,27 @@ $balances = get_account_balances($pdo);
     </table>
 </div>
 
+<!-- ⏳ Missed Predicted Transactions -->
+<div class="mb-4">
+    <h4>⏳ Missed Predicted Transactions</h4>
+    <?php if (count($missed) > 0): ?>
+        <ul class="list-group">
+            <?php foreach ($missed as $m): ?>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span>
+                        <?= htmlspecialchars($m['scheduled_date']) ?> – 
+                        <?= htmlspecialchars($m['description'] ?? $m['category']) ?>
+                    </span>
+                    <span>£<?= number_format($m['amount'], 2) ?></span>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php else: ?>
+        <p class="text-muted">No missed predicted transactions.</p>
+    <?php endif; ?>
+</div>
+
+
 <!-- 📅 Upcoming Predicted Transactions -->
 <div class="mb-4">
     <h4>📅 Upcoming Transactions (Next 5 Days)</h4>
@@ -59,6 +96,8 @@ $balances = get_account_balances($pdo);
         <p class="text-muted">No upcoming predicted transactions.</p>
     <?php endif; ?>
 </div>
+
+
 
 <!-- 🔴 Forecasted Balance Issues -->
 <?php if (count($forecast) > 0): ?>
@@ -90,5 +129,12 @@ $balances = get_account_balances($pdo);
         <p>No projected shortfalls in the next 31 days.</p>
     </div>
 <?php endif; ?>
+
+<!-- 🔄 Reforecast Button -->
+<div class="mb-4">
+    <form method="POST">
+        <button type="submit" name="reforecast" class="btn btn-warning">🔄 Reforecast</button>
+    </form>
+</div>
 
 <?php include '../layout/footer.php'; ?>
