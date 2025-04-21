@@ -67,6 +67,27 @@ $actuals = [];
 foreach ($stmt as $row) {
     $actuals[$row['top_id']] = ($actuals[$row['top_id']] ?? 0) + floatval($row['total']);
 }
+
+// Load forecast from predicted_instances (from today to end of month)
+$forecast = [];
+$today = (new DateTimeImmutable())->format('Y-m-d');
+$stmt = $pdo->prepare("
+    SELECT IFNULL(top.id, c.id) AS top_id, c.type, SUM(pi.amount) AS total
+    FROM predicted_instances pi
+    JOIN categories c ON pi.category_id = c.id
+    LEFT JOIN categories top ON c.parent_id = top.id
+    WHERE pi.scheduled_date BETWEEN ? AND ?
+      AND c.type IN ('income','expense')
+    GROUP BY top_id, c.type
+");
+$stmt->execute([$today, $end_month->format('Y-m-d')]);
+
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $id = $row['top_id'];
+    $amount = floatval($row['total']);
+    if ($row['type'] === 'expense') $amount *= -1;
+    $forecast[$id] = ($forecast[$id] ?? 0) + $amount;
+}
 ?>
 
 <h1 class="mb-4">📆 Budget vs Actuals</h1>
@@ -85,62 +106,71 @@ foreach ($stmt as $row) {
                 <th>Category</th>
                 <th class="text-end">Budget</th>
                 <th class="text-end">Actual</th>
+                <th class="text-end">Forecast</th>
                 <th class="text-end">Variance</th>
             </tr>
         </thead>
         <tbody>
             <?php
-            $totals = ['income' => ['budget' => 0, 'actual' => 0], 'expense' => ['budget' => 0, 'actual' => 0]];
+            $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense' => ['budget' => 0, 'actual' => 0, 'forecast' => 0]];
 
             foreach ($categories as $id => $cat):
                 $type = $cat['type'];
                 $budget = $budgets[$id] ?? 0;
                 $actual_raw = $actuals[$id] ?? 0;
+                $forecast_raw = $forecast[$id] ?? 0;
                 $actual = ($type === 'expense') ? -$actual_raw : $actual_raw;
+                $future = $forecast_raw;
 
-                if ($budget == 0 && $actual == 0) continue;
+                if ($budget == 0 && $actual == 0 && $future == 0) continue;
 
-                $variance = $actual - $budget;
                 $totals[$type]['budget'] += $budget;
                 $totals[$type]['actual'] += $actual;
+                $totals[$type]['forecast'] += $future;
 
-                $class = '';
-                if ($variance !== 0) {
-                    if ($type === 'income') {
-                        $class = $variance > 0 ? 'text-success' : 'text-danger';
-                    } else {
-                        $class = $variance > 0 ? 'text-danger' : 'text-success';
-                    }
-                }
+                $variance = ($type === 'income')
+                    ? ($actual + $future - $budget)
+                    : ($budget - $actual - $future);
+
+                $class = $variance >= 0 ? 'text-success' : 'text-danger';
             ?>
             <tr>
                 <td><?= htmlspecialchars($cat['name']) ?></td>
                 <td class="text-end">£<?= number_format($budget, 2) ?></td>
                 <td class="text-end">£<?= number_format($actual, 2) ?></td>
+                <td class="text-end">£<?= number_format($future, 2) ?></td>
                 <td class="text-end <?= $class ?>">£<?= number_format($variance, 2) ?></td>
             </tr>
             <?php endforeach; ?>
         </tbody>
-        <tfoot class="table-light">
+        <tfoot class="table-light fw-bold">
             <tr>
                 <th>Total Income</th>
                 <th class="text-end">£<?= number_format($totals['income']['budget'], 2) ?></th>
                 <th class="text-end">£<?= number_format($totals['income']['actual'], 2) ?></th>
-                <th class="text-end">£<?= number_format($totals['income']['actual'] - $totals['income']['budget'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['income']['forecast'], 2) ?></th>
+                <th class="text-end">£<?= number_format(
+                    $totals['income']['actual'] + $totals['income']['forecast'] - $totals['income']['budget'], 2
+                ) ?></th>
             </tr>
             <tr>
                 <th>Total Expenses</th>
                 <th class="text-end">£<?= number_format($totals['expense']['budget'], 2) ?></th>
                 <th class="text-end">£<?= number_format($totals['expense']['actual'], 2) ?></th>
-                <th class="text-end">£<?= number_format($totals['expense']['actual'] - $totals['expense']['budget'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['expense']['forecast'], 2) ?></th>
+                <th class="text-end">£<?= number_format(
+                    $totals['expense']['budget'] - $totals['expense']['actual'] - $totals['expense']['forecast'], 2
+                ) ?></th>
             </tr>
             <tr>
                 <th>Net Total</th>
                 <th class="text-end">£<?= number_format($totals['income']['budget'] - $totals['expense']['budget'], 2) ?></th>
                 <th class="text-end">£<?= number_format($totals['income']['actual'] - $totals['expense']['actual'], 2) ?></th>
+                <th class="text-end">£<?= number_format($totals['income']['forecast'] - $totals['expense']['forecast'], 2) ?></th>
                 <th class="text-end">£<?= number_format(
-                    ($totals['income']['actual'] - $totals['expense']['actual']) -
-                    ($totals['income']['budget'] - $totals['expense']['budget']), 2
+                    ($totals['income']['actual'] + $totals['income']['forecast']) -
+                    ($totals['income']['budget']) -
+                    ($totals['expense']['actual'] + $totals['expense']['forecast'] - $totals['expense']['budget']), 2
                 ) ?></th>
             </tr>
         </tfoot>

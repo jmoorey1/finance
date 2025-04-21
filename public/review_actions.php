@@ -261,7 +261,7 @@ switch ($action) {
 			$splits[] = ['category_id' => $cat, 'amount' => $amt];
 		}
 
-		if ($total !== $staging['amount']) {
+		if (abs($total - $staging['amount']) > 0.01) {
 			die("❌ Split total ($total) does not match transaction amount ({$staging['amount']}).");
 		}
 
