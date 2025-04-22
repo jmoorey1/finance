@@ -14,6 +14,9 @@
         .navbar {
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
+        .navbar-brand {
+            font-weight: bold;
+        }
         .container {
             max-width: 960px;
         }
@@ -45,25 +48,30 @@
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
-    <div class="container">
-        <a class="navbar-brand" href="/finance/public/index.php">💰 Home Finances</a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/finance/public/index.php">💰 Finance</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#financeNavbar" aria-controls="financeNavbar" aria-expanded="false" aria-label="Toggle navigation">
             <span class="navbar-toggler-icon"></span>
         </button>
-        <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav ms-auto text-end">
-                <li class="nav-item"><a class="nav-link" href="/finance/public/index.php">Dashboard</a></li>
+        <div class="collapse navbar-collapse" id="financeNavbar">
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <li class="nav-item"><a class="nav-link" href="/finance/public/index.php">Home</a></li>
                 <li class="nav-item"><a class="nav-link" href="/finance/public/dashboard.php">Monthly Summary</a></li>
                 <li class="nav-item"><a class="nav-link" href="/finance/public/dashboard_ytd.php">Year-to-Date</a></li>
-                <li class="nav-item"><a class="nav-link" href="/finance/public/review.php">Review</a></li>
-                <li class="nav-item"><a class="nav-link" href="/finance/public/budgets.php">Budgets</a></li>
-                <li class="nav-item"><a class="nav-link" href="/finance/public/manual_entry.php">Manual Entry</a></li>
-                <li class="nav-item"><a class="nav-link" href="/finance/public/upload.php">Upload</a></li>
-                <li class="nav-item"><a class="nav-link" href="/finance/public/ledger.php">Ledger</a></li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Manage</a>
+                    <ul class="dropdown-menu" aria-labelledby="manageDropdown">
+                        <li><a class="dropdown-item" href="/finance/public/upload.php">Upload</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/review.php">Review</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/manual_entry.php">Manual Entry</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/ledger.php">Ledger</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/project_fund.php">Project Fund Review</a></li>
+                    </ul>
+                </li>
             </ul>
         </div>
     </div>
 </nav>
-
 <div class="container">

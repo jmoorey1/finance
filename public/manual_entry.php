@@ -4,7 +4,7 @@
 require_once '../config/db.php';
 
 // Fetch accounts and categories
-$accounts = $pdo->query("SELECT id, name, type FROM accounts ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$accounts = $pdo->query("SELECT id, name, type FROM accounts where active=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $categories = $pdo->query("SELECT id, name FROM categories ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
 
 $success = null;
