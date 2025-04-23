@@ -2,21 +2,16 @@
 require_once '../config/db.php';
 include '../layout/header.php';
 
-// Fetch all accounts and categories for joins
+// Fetch lookups
 $accounts = $pdo->query("SELECT id, name FROM accounts ORDER BY name")->fetchAll(PDO::FETCH_KEY_PAIR);
 $categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetchAll(PDO::FETCH_KEY_PAIR);
 
-// Fetch recurring rules (predicted_transactions)
-$stmt = $pdo->query("
-    SELECT * FROM predicted_transactions
-    ORDER BY active DESC, id ASC
-");
-$rules = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// Fetch predicted_transactions
+$rules = $pdo->query("SELECT * FROM predicted_transactions ORDER BY active DESC, id ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch predicted instances (next 90 days)
+// Fetch predicted_instances
 $today = (new DateTime())->format('Y-m-d');
-$horizon = (new DateTime('+90 days'))->format('Y-m-d');
-
+$future = (new DateTime('+90 days'))->format('Y-m-d');
 $stmt = $pdo->prepare("
     SELECT pi.*, c.name AS category, fa.name AS from_account, ta.name AS to_account
     FROM predicted_instances pi
@@ -26,15 +21,45 @@ $stmt = $pdo->prepare("
     WHERE pi.scheduled_date BETWEEN ? AND ?
     ORDER BY pi.scheduled_date ASC
 ");
-$stmt->execute([$today, $horizon]);
+$stmt->execute([$today, $future]);
 $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Helper functions
+function ordinal($n) {
+    if (!in_array(($n % 100), [11,12,13])) {
+        switch ($n % 10) {
+            case 1: return $n . 'st';
+            case 2: return $n . 'nd';
+            case 3: return $n . 'rd';
+        }
+    }
+    return $n . 'th';
+}
+
+function format_schedule_summary($r) {
+    $weekday_names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    $anchor = $r['anchor_type'];
+    if ($anchor === 'weekly') {
+        return "Every {$weekday_names[$r['weekday']]}";
+    }
+    if ($anchor === 'nth_weekday') {
+        return "Every " . ordinal($r['repeat_interval']) . " " . $weekday_names[$r['weekday']];
+    }
+    if ($anchor === 'day_of_month') {
+        return "On the " . ordinal($r['day_of_month']) . " of each month";
+    }
+    if ($anchor === 'last_business_day') {
+        return "Last business day of each month";
+    }
+    return ucfirst($r['frequency']);
+}
 ?>
 
 <h1 class="mb-4">🔁 Predicted Transactions & Instances</h1>
 
 <!-- 🔁 Recurring Rules -->
-<h4 class="mt-4">Recurring Rules</h4>
-<table class="table table-sm table-bordered table-striped align-middle">
+<h4>Recurring Rules</h4>
+<table class="table table-sm table-bordered align-middle">
     <thead class="table-light">
         <tr>
             <th>ID</th>
@@ -42,52 +67,30 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <th>From → To</th>
             <th>Category</th>
             <th>Amount</th>
-            <th>Freq / Anchor</th>
-            <th>Variable?</th>
+            <th>Schedule</th>
+            <th>Variable</th>
             <th>Active</th>
         </tr>
     </thead>
     <tbody>
         <?php foreach ($rules as $r): ?>
-            <tr class="<?= $r['active'] ? '' : 'text-muted' ?>">
-                <td><?= $r['id'] ?></td>
-                <td><?= htmlspecialchars($r['description']) ?></td>
-                <td>
-                    <?= $accounts[$r['from_account_id']] ?? '—' ?>
-                    →
-                    <?= $accounts[$r['to_account_id']] ?? '—' ?>
-                </td>
-                <td><?= $categories[$r['category_id']] ?? '—' ?></td>
-                <td class="text-end">£<?= number_format($r['amount'], 2) ?></td>
-                <td>
-                    <?= $r['frequency'] ?> /
-                    <?= $r['anchor_type'] ?>
-                    <?php if ($r['anchor_type'] === 'weekly'): ?>
-                        (<?= ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][$r['weekday']] ?>)
-                    <?php elseif ($r['anchor_type'] === 'nth_weekday'): ?>
-                        (<?= $r['nth_weekday'] ?>× <?= ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][$r['weekday']] ?>)
-                    <?php endif; ?>
-                </td>
-                <td>
-                    <?= $r['variable'] ? "Yes (avg last " . $r['average_over_last'] . ")" : "No" ?>
-                </td>
-                <td class="text-center">
-                    <form method="POST" action="toggle_rule.php" class="d-inline">
-                        <input type="hidden" name="id" value="<?= $r['id'] ?>">
-                        <input type="hidden" name="active" value="<?= $r['active'] ? 0 : 1 ?>">
-                        <button type="submit" class="btn btn-sm <?= $r['active'] ? 'btn-success' : 'btn-secondary' ?>">
-                            <?= $r['active'] ? '✔' : '✖' ?>
-                        </button>
-                    </form>
-                </td>
-            </tr>
+        <tr>
+            <td><?= $r['id'] ?></td>
+            <td><?= htmlspecialchars($r['description']) ?></td>
+            <td><?= $accounts[$r['from_account_id']] ?? '?' ?> → <?= $r['to_account_id'] ? $accounts[$r['to_account_id']] : '—' ?></td>
+            <td><?= $categories[$r['category_id']] ?? '?' ?></td>
+            <td class="text-end">£<?= number_format($r['amount'], 2) ?></td>
+            <td><?= format_schedule_summary($r) ?></td>
+            <td><?= $r['variable'] ? "Yes (Avg {$r['average_over_last']})" : "No" ?></td>
+            <td><?= $r['active'] ? '✅' : '—' ?></td>
+        </tr>
         <?php endforeach; ?>
     </tbody>
 </table>
 
-<!-- 📅 Predicted Instances -->
-<h4 class="mt-5">Scheduled Predicted Instances (Next 90 Days)</h4>
-<table class="table table-sm table-bordered table-striped align-middle">
+<!-- 📅 Upcoming Predicted Instances -->
+<h4 class="mt-5">Upcoming Instances (Next 90 Days)</h4>
+<table class="table table-sm table-bordered align-middle">
     <thead class="table-light">
         <tr>
             <th>Date</th>
@@ -95,19 +98,19 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <th>From → To</th>
             <th>Category</th>
             <th class="text-end">Amount</th>
-            <th>Fulfilled</th>
+            <th>Status</th>
         </tr>
     </thead>
     <tbody>
         <?php foreach ($instances as $i): ?>
-            <tr class="<?= $i['fulfilled'] ? 'table-success' : ($i['scheduled_date'] < $today ? 'table-danger' : '') ?>">
-                <td><?= $i['scheduled_date'] ?></td>
-                <td><?= htmlspecialchars($i['description'] ?? $i['category']) ?></td>
-                <td><?= $i['from_account'] ?? '—' ?> → <?= $i['to_account'] ?? '—' ?></td>
-                <td><?= $i['category'] ?? '—' ?></td>
-                <td class="text-end">£<?= number_format($i['amount'], 2) ?></td>
-                <td><?= $i['fulfilled'] ? 'Yes' : 'No' ?></td>
-            </tr>
+        <tr class="<?= $i['fulfilled'] ? 'table-success' : ($i['scheduled_date'] < $today ? 'table-danger' : '') ?>">
+            <td><?= $i['scheduled_date'] ?></td>
+            <td><?= htmlspecialchars($i['description']) ?></td>
+            <td><?= $i['from_account'] ?> → <?= $i['to_account'] ?? '—' ?></td>
+            <td><?= htmlspecialchars($i['category']) ?></td>
+            <td class="text-end">£<?= number_format($i['amount'], 2) ?></td>
+            <td><?= $i['fulfilled'] ? '✅ Fulfilled' : ($i['scheduled_date'] < $today ? '⚠️ Missed' : 'Planned') ?></td>
+        </tr>
         <?php endforeach; ?>
     </tbody>
 </table>

@@ -2,7 +2,7 @@
 require_once '/var/www/html/finance/config/db.php';
 
 // Email Recipients
-$to = 'john@moorey.uk.com, india@moorey.uk.com';
+$to = 'john@moorey.uk.com, india@moorey.uk.com, indiamo@amazon.co.uk';
 $subject = 'Weekly Budget Summary – Variable Expenses';
 $headers = "MIME-Version: 1.0\r\n";
 $headers .= "Content-Type: text/html; charset=UTF-8\r\n";

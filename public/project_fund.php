@@ -2,10 +2,40 @@
 require_once '../config/db.php';
 include '../layout/header.php';
 
+function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
+	$sql = "
+		SELECT (ad.actual + fd.forecast) as projected
+		FROM 
+			(SELECT SUM(t.amount) AS actual
+			 FROM transactions t
+			 JOIN accounts a ON t.account_id = a.id
+			 WHERE a.type IN ('current', 'credit', 'savings')
+			   AND t.type != 'transfer'
+			   AND t.date BETWEEN :actual_start AND :actual_end) ad,
+			(SELECT SUM(pi.amount) AS forecast
+			 FROM predicted_instances pi
+			 JOIN accounts a ON pi.from_account_id = a.id
+			 WHERE pi.to_account_id IS NULL
+			   AND a.type IN ('current', 'credit', 'savings')
+			   AND pi.scheduled_date BETWEEN :forecast_start AND :forecast_end) fd
+	";
+
+    $stmt = $pdo->prepare($sql);
+	$stmt->execute([
+		':actual_start' => $start,
+		':actual_end' => $end,
+		':forecast_start' => $start,
+		':forecast_end' => $end,
+	]);
+
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return (float)($row['projected'] ?? 0);
+}
+
 // Config
 $savings_account_id = 24;
 $earmarks = [
-    'Teddy\'s Inheritance'     => 10000,
+    'Teddy\'s Inheritance' => 10000,
     'Grandad\'s Money for Travel' => 4812.91
 ];
 $solvency_fund = 8500;
@@ -18,34 +48,21 @@ for ($i = 0; $i < 12; $i++) {
     $months[] = ['start' => $start, 'end' => $end];
 }
 
-// Get current savings balance
+// Current balance
 $stmt = $pdo->prepare("SELECT balance_as_of_last_night FROM accounts.account_balances_as_of_last_night WHERE account_id = ?");
 $stmt->execute([$savings_account_id]);
 $current_balance = floatval($stmt->fetchColumn());
 
-// Get savings balance at the end of last month
-// Calculate most recent 12th of the month
-$today = new DateTime();
-$savings_last_month = new DateTime($today->format('Y-m-12'));
-if ($today->format('d') < 12) {
-    $savings_last_month->modify('-1 month');
-}
-
-$stmt = $pdo->prepare("
-select (select sum(amount) from transactions where account_id=? and date <= ?) + (select starting_balance from accounts where id=?) as balance
-");
-$stmt->execute([$savings_account_id, $savings_last_month->format('Y-m-d'), $savings_account_id]);
-$savings_last_month_balance = floatval($stmt->fetchColumn());
-
-// Get savings starting balance
+// Starting balance
 $savings_start_date = new DateTime("$year-01-12");
 $stmt = $pdo->prepare("
-select (select sum(amount) from transactions where account_id=? and date <= ?) + (select starting_balance from accounts where id=?) as balance
+	select (select sum(amount) from transactions where account_id=? and date <= ?) + 
+	       (select starting_balance from accounts where id=?) as balance
 ");
 $stmt->execute([$savings_account_id, $savings_start_date->format('Y-m-d'), $savings_account_id]);
 $savings_start_balance = floatval($stmt->fetchColumn());
 
-// Get net budget per month
+// Budgets
 $budgets = [];
 $stmt = $pdo->prepare("
     SELECT month_start,
@@ -64,17 +81,17 @@ foreach ($stmt as $row) {
     $budgets[$row['month_start']] = floatval($row['net']);
 }
 
+// Actuals and savings balances
 $actuals = [];
 $savings_balances = [];
-
 foreach ($months as $m) {
     $start = $m['start']->format('Y-m-d');
     $end = $m['end']->format('Y-m-d');
 
     // Actuals
     $stmt = $pdo->prepare("
-	SELECT sum(total) as total from 
-	(SELECT IFNULL(top.id, c.id) AS top_id, SUM(s.amount) AS total
+	SELECT SUM(total) as total FROM (
+		SELECT IFNULL(top.id, c.id) AS top_id, SUM(s.amount) AS total
 		FROM transaction_splits s
 		JOIN transactions t ON t.id = s.transaction_id
 		JOIN accounts a ON t.account_id = a.id
@@ -84,7 +101,9 @@ foreach ($months as $m) {
 		  AND a.type IN ('current','credit','savings')
 		  AND c.type IN ('income', 'expense')
 		GROUP BY top_id
+
 		UNION ALL
+
 		SELECT IFNULL(top.id, c.id) AS top_id, SUM(t.amount) AS total
 		FROM transactions t
 		JOIN accounts a ON t.account_id = a.id
@@ -95,24 +114,24 @@ foreach ($months as $m) {
 		  AND s.id IS NULL
 		  AND a.type IN ('current','credit','savings')
 		  AND c.type IN ('income', 'expense')
-		GROUP BY top_id) actuals
+		GROUP BY top_id
+	) actuals
     ");
     $stmt->execute([$start, $end, $start, $end]);
-	$result = $stmt->fetch(PDO::FETCH_ASSOC);
-	$actuals[$m['start']->format('Y-m-d')] = $result && isset($result['total']) ? floatval($result['total']) : 0;
-	
-	// Savings balance
-	$stmt = $pdo->prepare("
-	select (select sum(amount) from transactions where account_id=? and date <= ?) + (select starting_balance from accounts where id=?) as balance
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $actuals[$m['start']->format('Y-m-d')] = $row && isset($row['total']) ? floatval($row['total']) : 0;
+
+    // Savings
+    $stmt = $pdo->prepare("
+	select (select sum(amount) from transactions where account_id=? and date < ?) + 
+	       (select starting_balance from accounts where id=?) as balance
     ");
     $stmt->execute([$savings_account_id, $end, $savings_account_id]);
-	$result = $stmt->fetch(PDO::FETCH_ASSOC);
-	$savings_balances[$m['start']->format('Y-m-d')] = $result && isset($result['balance']) ? floatval($result['balance']) : 0;
-	
-
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $savings_balances[$m['start']->format('Y-m-d')] = $row && isset($row['balance']) ? floatval($row['balance']) : 0;
 }
 
-// Determine totals
+// Build rows
 $initial_project_fund = $savings_start_balance - array_sum($earmarks);
 $solvency = 0;
 $rows = [];
@@ -121,58 +140,62 @@ $today = new DateTime();
 foreach ($months as $m) {
     $key = $m['start']->format('Y-m-d');
     $label = $m['start']->format('F') . ' – ' . $m['end']->format('F Y');
-
     $budget = $budgets[$key] ?? 0;
-    $savings_balance = $savings_balances[$key] ?? 0;
 
-    // Use actuals and variance only for past months
-    $actual = ($today > $m['end']) ? ($actuals[$key] ?? 0) : 0;
-    $variance = ($today > $m['end']) ? ($actual - $budget) : 0;
-
-    // Solvency builds from actuals (past) or budget (future)
-	$deficit = ($today > $m['end']) ? $actual : $budget;
-    $running_deficit += ($today > $m['end']) ? $actual : $budget;
-	$running_solvency_fund = $solvency_fund + $running_deficit;
-	if ($running_solvency_fund > $solvency_fund) {
+    if ($today > $m['end']) {
+        $actual = $actuals[$key] ?? 0;
+        $variance = $actual - $budget;
+        $deficit = $actual;
+        $running_deficit += $actual;
+		$savings_balance = $savings_balances[$key] ?? 0;
+    } else {
+        $actual = 0;
+        $variance = 0;
+        $deficit = $budget;
+        $running_deficit += $budget;
+		$savings_balance += $deficit;
+    }
+	$excess_solvency = 0;
+    $running_solvency_fund = $solvency_fund + $running_deficit;
+    if ($running_solvency_fund > $solvency_fund) {
 		$excess_solvency = $running_solvency_fund - $solvency_fund;
-		$running_solvency_fund = $solvency_fund;
-		$project = $savings_balance - array_sum($earmarks) - $solvency_fund ;
-	} else {
-		$project = $savings_balance - array_sum($earmarks) - $running_solvency_fund;
-	}
-	if ($m['start']->format('F') == 'December' && $running_deficit < 0){
-		$project += $running_deficit;
-		$running_deficit = 0;
-		$running_solvency_fund = $solvency_fund;
-	}
+        $running_solvency_fund = $solvency_fund;
+    }
+
+    $project = $savings_balance - array_sum($earmarks) - $running_solvency_fund;
+    if ($m['start']->format('F') == 'December' && $running_deficit < 0) {
+        $project += $running_deficit;
+        $running_deficit = 0;
+        $running_solvency_fund = $solvency_fund;
+    }
 
     $rows[] = [
-		'key' => $key,
+        'key' => $key,
         'label' => $label,
+		'end' => $m['end']->format('F Y'),
         'budget' => $budget,
         'actual' => $actual,
         'variance' => $variance,
         'running_solvency_fund' => $running_solvency_fund,
-        'total_deficit' => $total_deficit,
-        'total_surplus' => $total_surplus,
         'deficit' => $deficit,
-		'running_deficit' => $running_deficit,
+        'running_deficit' => $running_deficit,
         'project' => $project,
-		'savings_balance' => $savings_balance
+        'savings_balance' => $savings_balance
     ];
 }
 
-$min_project_fund = min(array_column($rows, 'project'));
-$min_project_key = null;
 
-foreach ($rows as $r) {
-    if ($r['project'] === $min_project_fund) {
-        $min_project_key = $r['key'] ?? null; // Only works if you included 'key' in the $rows[]
-        break;
-    }
+$dec_project_fund = end($rows)['project'];
+//Work backwards from December to find first month where project fund >= December's
+$eligible_month = null;
+for ($i = count($rows) - 1; $i >= 0; $i--) {
+    if ($rows[$i]['project'] >= $dec_project_fund) {
+        $eligible_month = $rows[$i]['end'];
+    } else {
+		break;
+	}
 }
-$min_project_key_dt = new DateTime($min_project_key);
-$min_project_key_dt->modify("+1 month")->modify("-1 day");
+
 
 ?>
 
@@ -186,7 +209,7 @@ $min_project_key_dt->modify("+1 month")->modify("-1 day");
         <?php endforeach; ?>
         <li><strong>Total Earmarked: £<?= number_format(array_sum($earmarks), 2) ?></strong></li>
         <li><strong>Slush Fund Required For Solvency: £<?= number_format($solvency_fund, 2) ?></strong></li>
-        <li><strong>Project Fund Remaining: £<?= number_format($min_project_fund, 2) ?> available from <?= $min_project_key_dt->format('F Y') ?></strong></li>
+        <li><strong>Project Fund: £<?= number_format($project, 2) ?> available from <?= $eligible_month ?> onwards</strong></li>
     </ul>
 </div>
 
@@ -198,7 +221,6 @@ $min_project_key_dt->modify("+1 month")->modify("-1 day");
                 <th class="text-end">Budget Net</th>
                 <th class="text-end">Actual</th>
                 <th class="text-end">Variance</th>
-                <th class="text-end">Deficit</th>
                 <th class="text-end">Running Deficit</th>
             </tr>
         </thead>
@@ -209,7 +231,6 @@ $min_project_key_dt->modify("+1 month")->modify("-1 day");
                     <td class="text-end">£<?= number_format($r['budget'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['actual'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['variance'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['deficit'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['running_deficit'], 2) ?></td>
                 </tr>
             <?php endforeach; ?>

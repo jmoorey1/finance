@@ -91,9 +91,8 @@ for account in ofx.accounts:
                 WHERE from_account_id = %s
                   AND ABS(amount - %s) < 0.01
                   AND ABS(DATEDIFF(scheduled_date, %s)) <= 3
-                  AND description = %s
                 LIMIT 1
-            """, (account_id, amount, date_str, description))
+            """, (account_id, amount, date_str))
             prediction = cursor.fetchone()
             if prediction:
                 status = 'fulfills_prediction'

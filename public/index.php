@@ -4,6 +4,7 @@ require_once '../scripts/forecast_utils.php';
 require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
 require_once '../scripts/get_missed_predictions.php';
+require_once '../scripts/get_insights.php';
 
 include '../layout/header.php';
 
@@ -19,16 +20,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reforecast'])) {
     }
 }
 
-$forecast = get_forecast_shortfalls($pdo);
+$balance_issues = get_forecast_shortfalls($pdo);
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
 $missed = get_missed_predictions($pdo);
-
+$insights = include '../scripts/get_insights.php';
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
 
 
+<!-- 💡 Insights -->
+<?php if (count($insights) > 0): ?>
+    <div class="mb-4">
+        <h4>💡 Insights</h4>
+        <ul class="list-group">
+            <?php foreach ($insights as $i): ?>
+                <li class="list-group-item"><?= $i ?></li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
+<?php endif; ?>
 
 <!-- 💼 Account Balances -->
 <div class="mb-4">
@@ -79,7 +91,6 @@ $missed = get_missed_predictions($pdo);
     <?php endif; ?>
 </div>
 
-
 <!-- 📅 Upcoming Predicted Transactions -->
 <div class="mb-4">
     <h4>📅 Upcoming Transactions (Next 5 Days)</h4>
@@ -97,13 +108,12 @@ $missed = get_missed_predictions($pdo);
     <?php endif; ?>
 </div>
 
-
-
 <!-- 🔴 Forecasted Balance Issues -->
-<?php if (count($forecast) > 0): ?>
+
+<?php if (count($balance_issues) > 0): ?>
     <div class="mb-4">
         <h4>⚠️ Forecasted Balance Issues</h4>
-        <?php foreach ($forecast as $f): ?>
+        <?php foreach ($balance_issues as $f): ?>
             <div class="forecast-panel">
                 <h5>💸 <?= htmlspecialchars($f['account_name']) ?></h5>
                 <p>Today's Balance: <strong>£<?= number_format($f['today_balance'], 2) ?></strong></p>
@@ -129,6 +139,8 @@ $missed = get_missed_predictions($pdo);
         <p>No projected shortfalls in the next 31 days.</p>
     </div>
 <?php endif; ?>
+
+
 
 <!-- 🔄 Reforecast Button -->
 <div class="mb-4">
