@@ -6,7 +6,6 @@ include '../layout/header.php';
 if (isset($_GET['month']) && DateTime::createFromFormat('Y-m', $_GET['month']) !== false) {
     $inputMonth = DateTime::createFromFormat('Y-m', $_GET['month']);
 } else {
-    // If no month selected, choose correct one based on today's day
     $today = new DateTime();
     $monthOffset = ((int)$today->format('d') < 13) ? -1 : 0;
     $inputMonth = (clone $today)->modify("$monthOffset month");
@@ -14,11 +13,15 @@ if (isset($_GET['month']) && DateTime::createFromFormat('Y-m', $_GET['month']) !
 
 $year = $inputMonth->format('Y');
 $start_date = new DateTime("$year-01-13");
-
 $end_date = new DateTime($inputMonth->format('Y-m-13'));
 $end_date->modify('+1 month')->modify('-1 day');
 
-// Define category sections
+// Account query string
+$acct_stmt = $pdo->query("SELECT id FROM accounts WHERE type IN ('current','credit','savings') and active=1");
+$account_ids = array_column($acct_stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+$account_query = implode('&', array_map(fn($id) => "accounts[]=$id", $account_ids));
+
+// Category sections
 $sections = [
     'Fixed Income' => ['type' => 'income', 'fixedness' => 'fixed'],
     'Variable Income' => ['type' => 'income', 'fixedness' => 'variable'],
@@ -89,7 +92,7 @@ foreach ($stmt as $row) {
     $actuals[$row['top_id']] = floatval($row['total']);
 }
 
-// Load forecasts from today to end_date
+// Load forecast (today to end)
 $forecast = [];
 $today = (new DateTimeImmutable())->format('Y-m-d');
 $stmt = $pdo->prepare("
@@ -103,12 +106,10 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$today, $end_date->format('Y-m-d')]);
 foreach ($stmt as $row) {
-    $amount = floatval($row['total']);
-//    if ($row['type'] === 'expense') $amount *= -1;
-    $forecast[$row['top_id']] = $amount;
+    $forecast[$row['top_id']] = floatval($row['total']);
 }
 
-// Track totals
+// Totals
 $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense' => ['budget' => 0, 'actual' => 0, 'forecast' => 0]];
 ?>
 
@@ -162,11 +163,15 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
             $totals[$cat['type']]['actual'] += $actual;
             $totals[$cat['type']]['forecast'] += $future;
 
+            $link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$id}";
+            $actual_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($actual, 2) . "</a>";
+            $forecast_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($future, 2) . "</a>";
+
             $section_rows .= "<tr>
                 <td>" . htmlspecialchars($cat['name']) . "</td>
                 <td class='text-end'>£" . number_format($budget, 2) . "</td>
-                <td class='text-end'>£" . number_format($actual, 2) . "</td>
-                <td class='text-end'>£" . number_format($future, 2) . "</td>
+                <td class='text-end'>$actual_link</td>
+                <td class='text-end'>$forecast_link</td>
                 <td class='text-end $class'>£" . number_format($variance, 2) . "</td>
             </tr>";
         endforeach;

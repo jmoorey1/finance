@@ -5,6 +5,7 @@ include '../layout/header.php';
 
 $accounts = get_all_active_accounts($pdo);
 
+// Default account = JOINT BILLS
 $default_account = null;
 foreach ($accounts as $acct) {
     if ($acct['name'] === 'JOINT BILLS') {
@@ -13,82 +14,156 @@ foreach ($accounts as $acct) {
     }
 }
 
+// Inputs from query string
 $selected_accounts = $_GET['accounts'] ?? [$default_account];
 $start_date = $_GET['start'] ?? (new DateTimeImmutable('-30 days'))->format('Y-m-d');
 $end_date = $_GET['end'] ?? (new DateTimeImmutable('today'))->format('Y-m-d');
+$selected_categories = $_GET['category_id'] ?? [];
+$parent_filter = $_GET['parent_id'] ?? '';
 
-$placeholders = implode(',', array_fill(0, count($selected_accounts), '?'));
-$params = array_merge(
-    $selected_accounts, [$start_date, $end_date], // for actuals
-    $selected_accounts, [$start_date, $end_date], // predicted income/expense
-    $selected_accounts, [$start_date, $end_date], // predicted transfer (from)
-    $selected_accounts, [$start_date, $end_date]  // predicted transfer (to)
-);
+// Load categories
+$categories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE type IN ('income','expense') ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$parents = array_filter($categories, fn($c) => is_null($c['parent_id']));
+$children = array_filter($categories, fn($c) => !is_null($c['parent_id']));
 
+// If a parent is selected, add it and its children to the filter
+if ($parent_filter !== '') {
+    $selected_categories[] = $parent_filter; // include parent itself
+    $child_ids = array_column(
+        array_filter($children, fn($c) => $c['parent_id'] == $parent_filter),
+        'id'
+    );
+    $selected_categories = array_merge($selected_categories, $child_ids);
+}
+
+// Remove duplicates
+$selected_categories = array_unique($selected_categories);
+
+$account_placeholders = implode(',', array_fill(0, count($selected_accounts), '?'));
+$category_clause = '';
+$category_placeholders = [];
+
+if (!empty($selected_categories)) {
+    $category_placeholders = array_fill(0, count($selected_categories), '?');
+    $cat_placeholder_str = implode(',', $category_placeholders);
+    $category_clause = "
+        AND (
+            (s.category_id IS NOT NULL AND s.category_id IN ($cat_placeholder_str)) OR
+            (s.category_id IS NULL AND t.category_id IN ($cat_placeholder_str))
+        )
+    ";
+}
+
+// SQL query
 $query = "
-    SELECT 'Actual' AS source, date, account_id, amount, description
-    FROM transactions
-    WHERE account_id IN ($placeholders) AND date BETWEEN ? AND ?
+	SELECT 
+		'Actual' AS source, t.date, t.account_id,
+		CASE 
+			WHEN s.id IS NOT NULL THEN s.amount
+			ELSE t.amount
+		END AS amount, t.description, IFNULL(cs.name, ct.name) AS category
+	FROM transactions t
+	LEFT JOIN transaction_splits s ON t.id = s.transaction_id
+	LEFT JOIN categories cs ON cs.id = s.category_id
+	LEFT JOIN categories ct ON ct.id = t.category_id
+    WHERE t.account_id IN ($account_placeholders)
+      AND t.date BETWEEN ? AND ?
+      $category_clause
 
     UNION ALL
 
-    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id AS account_id,
-           p.amount AS amount, p.description
+    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, p.amount, p.description, c.name as category
     FROM predicted_instances p
-    INNER JOIN categories c ON p.category_id = c.id
+    JOIN categories c ON p.category_id = c.id
     WHERE c.type IN ('income', 'expense')
-      AND p.from_account_id IN ($placeholders)
+      AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
-
-    UNION ALL
-
-    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id AS account_id,
-           -p.amount AS amount, p.description
-    FROM predicted_instances p
-    INNER JOIN categories c ON p.category_id = c.id
-    WHERE c.type = 'transfer'
-      AND p.from_account_id IN ($placeholders)
-      AND p.scheduled_date BETWEEN ? AND ?
-
-    UNION ALL
-
-    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.to_account_id AS account_id,
-           p.amount AS amount, p.description
-    FROM predicted_instances p
-    WHERE p.to_account_id IN ($placeholders)
-      AND p.scheduled_date BETWEEN ? AND ?
-
-    ORDER BY date ASC
 ";
+
+if (!empty($selected_categories)) {
+    $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
+}
+
+$query .= "
+    UNION ALL
+
+    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, p.description, c.name as category
+    FROM predicted_instances p
+    JOIN categories c ON p.category_id = c.id
+    WHERE c.type = 'transfer'
+      AND p.from_account_id IN ($account_placeholders)
+      AND p.scheduled_date BETWEEN ? AND ?
+";
+
+if (!empty($selected_categories)) {
+    $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
+}
+
+$query .= "
+    UNION ALL
+
+    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, p.description, c.name as category
+    FROM predicted_instances p
+    JOIN categories c ON p.category_id = c.id
+    WHERE p.to_account_id IN ($account_placeholders)
+      AND p.scheduled_date BETWEEN ? AND ?
+";
+
+if (!empty($selected_categories)) {
+    $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
+}
+
+$query .= " ORDER BY date ASC";
+
+// Build parameters in the correct order
+$params = array_merge(
+    $selected_accounts, [$start_date, $end_date],
+    $selected_categories, $selected_categories, // for actuals split and unsplit
+    $selected_accounts, [$start_date, $end_date],
+    $selected_categories,                       // predicted income/expense
+    $selected_accounts, [$start_date, $end_date],
+    $selected_categories,                       // predicted transfer (from)
+    $selected_accounts, [$start_date, $end_date],
+    $selected_categories                        // predicted transfer (to)
+);
 
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
 ?>
 
 <h1 class="mb-4">📒 Ledger Viewer</h1>
 
 <form method="GET" class="mb-4">
-    <div class="row">
-        <div class="col-md-4">
+    <div class="row g-3">
+        <div class="col-md-3">
             <label class="form-label">Account(s)</label>
             <select name="accounts[]" class="form-select" multiple size="5">
                 <?php foreach ($accounts as $acct): ?>
-                    <option value="<?= $acct['id'] ?>"
-                        <?= in_array($acct['id'], $selected_accounts) ? 'selected' : '' ?>>
+                    <option value="<?= $acct['id'] ?>" <?= in_array($acct['id'], $selected_accounts) ? 'selected' : '' ?>>
                         <?= htmlspecialchars($acct['name']) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <label class="form-label">From Date</label>
             <input type="date" name="start" class="form-control" value="<?= $start_date ?>">
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <label class="form-label">To Date</label>
             <input type="date" name="end" class="form-control" value="<?= $end_date ?>">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Top-Level Category</label>
+            <select name="parent_id" class="form-select">
+                <option value="">— All —</option>
+                <?php foreach ($parents as $p): ?>
+                    <option value="<?= $p['id'] ?>" <?= $parent_filter == $p['id'] ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($p['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
         </div>
         <div class="col-md-2 d-flex align-items-end">
             <button type="submit" class="btn btn-primary w-100">Filter</button>
@@ -97,13 +172,14 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </form>
 
 <?php if ($ledger): ?>
-    <table class="table table-striped">
+    <table class="table table-striped table-sm align-middle">
         <thead>
             <tr>
                 <th>Date</th>
                 <th>Account</th>
                 <th>Description</th>
-                <th>Amount</th>
+                <th>Category</th>
+                <th class="text-end">Amount</th>
                 <th>Source</th>
             </tr>
         </thead>
@@ -122,14 +198,17 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td><?= $entry['date'] ?></td>
                     <td><?= htmlspecialchars($acct_name) ?></td>
                     <td><?= htmlspecialchars($entry['description']) ?></td>
-                    <td class="text-end"><?= ($entry['amount'] < 0 ? "-" : "") . "£" . number_format(abs($entry['amount']), 2) ?></td>
+                    <td><?= $entry['category'] ?></td>
+                    <td class="text-end <?= $entry['amount'] < 0 ? 'text-danger' : '' ?>">
+                        £<?= number_format($entry['amount'], 2) ?>
+                    </td>
                     <td><?= $entry['source'] ?></td>
                 </tr>
             <?php endforeach; ?>
         </tbody>
     </table>
 <?php else: ?>
-    <p>No ledger entries found for the selected criteria.</p>
+    <p>No results found for the selected criteria.</p>
 <?php endif; ?>
 
 <?php include '../layout/footer.php'; ?>

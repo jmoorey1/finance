@@ -33,6 +33,12 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $categories[$row['id']] = $row;
 }
 
+// Load IDs of all current/credit/savings accounts for linking
+$acct_stmt = $pdo->query("SELECT id FROM accounts WHERE type IN ('current','credit','savings') and active=1");
+$account_ids = array_column($acct_stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+$account_query = implode('&', array_map(fn($id) => "accounts[]=$id", $account_ids));
+
+
 // Load budgets
 $budgets = [];
 $stmt = $pdo->prepare("SELECT category_id, amount FROM budgets WHERE month_start = ?");
@@ -150,12 +156,21 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                 $totals[$cat['type']]['budget'] += $budget;
                 $totals[$cat['type']]['actual'] += $actual;
                 $totals[$cat['type']]['forecast'] += $future;
+				
+				$link_base = "ledger.php?$account_query&start={$start_month->format('Y-m-d')}&end={$end_month->format('Y-m-d')}&parent_id={$id}";
+
+				$actual_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" .
+							   "£" . number_format($actual, 2) . "</a>";
+
+				$forecast_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" .
+								 "£" . number_format($future, 2) . "</a>";
+
 
                 $section_rows .= "<tr>
                     <td>" . htmlspecialchars($cat['name']) . "</td>
                     <td class='text-end'>£" . number_format($budget, 2) . "</td>
-                    <td class='text-end'>£" . number_format($actual, 2) . "</td>
-                    <td class='text-end'>£" . number_format($future, 2) . "</td>
+                    <td class='text-end'>". $actual_link ."</td>
+                    <td class='text-end'>". $forecast_link ."</td>
                     <td class='text-end $class'>£" . number_format($variance, 2) . "</td>
                 </tr>";
             endforeach;
