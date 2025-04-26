@@ -10,7 +10,7 @@ $end_date = (clone $start_date)->modify('+1 month')->modify('-1 day');
 
 // Load category metadata
 $categories = [];
-$stmt = $pdo->query("SELECT id, name, parent_id, type, fixedness, priority FROM categories");
+$stmt = $pdo->query("SELECT id, name, parent_id, type, fixedness, priority FROM categories where type='expense'");
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $categories[$row['id']] = $row;
 }
@@ -89,11 +89,13 @@ $top_categories = array_slice($totals, 0, 5, true);
 
 // Top vendors by description
 $stmt = $pdo->prepare("
-    SELECT description, SUM(amount) AS total
-    FROM transactions
-    WHERE date BETWEEN ? AND ?
-    GROUP BY description
-    ORDER BY total DESC
+    SELECT t.description, SUM(t.amount) AS total
+    FROM transactions t
+	join categories c on t.category_id=c.id
+    WHERE c.type = 'expense'
+    AND t.date BETWEEN ? AND ?
+    GROUP BY t.description
+    ORDER BY total ASC
     LIMIT 5
 ");
 $stmt->execute([$start_date->format('Y-m-d'), $end_date->format('Y-m-d')]);

@@ -98,6 +98,23 @@ for account in ofx.accounts:
                 status = 'fulfills_prediction'
                 predicted_instance_id = prediction['id']
                 predictions += 1
+            else:
+                cursor.execute("""
+                    SELECT pi.id 
+                    FROM predicted_instances pi
+                    JOIN predicted_transactions pt ON pi.predicted_transaction_id = pt.id
+                    WHERE pi.from_account_id = %s
+                      AND pt.variable = 1
+                      AND pi.description LIKE %s
+                      AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
+                    LIMIT 1
+                """, (account_id, f"%{description[:5]}%", date_str))
+                prediction = cursor.fetchone()
+                if prediction:
+                    status = 'fulfills_prediction'
+                    predicted_instance_id = prediction['id']
+                    predictions += 1
+
 
         if status in ('new', 'potential_duplicate', 'fulfills_prediction'):
             cursor.execute("""
