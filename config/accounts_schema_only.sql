@@ -164,11 +164,12 @@ CREATE TABLE `predicted_instances` (
   `fulfilled` tinyint(1) DEFAULT '0',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `description` text,
+  `confirmed` tinyint(1) DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `predicted_transaction_id` (`predicted_transaction_id`,`scheduled_date`),
   UNIQUE KEY `unique_repayments` (`scheduled_date`,`from_account_id`,`to_account_id`,`category_id`),
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4054 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4664 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -253,7 +254,28 @@ CREATE TABLE `staging_transactions` (
   CONSTRAINT `staging_transactions_ibfk_2` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `staging_transactions_ibfk_3` FOREIGN KEY (`matched_transaction_id`) REFERENCES `transactions` (`id`),
   CONSTRAINT `staging_transactions_ibfk_4` FOREIGN KEY (`predicted_instance_id`) REFERENCES `predicted_instances` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=6155 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6183 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `statements`
+--
+
+DROP TABLE IF EXISTS `statements`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `statements` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `account_id` int NOT NULL,
+  `statement_date` date NOT NULL,
+  `start_balance` decimal(10,2) NOT NULL,
+  `end_balance` decimal(10,2) NOT NULL,
+  `reconciled` tinyint(1) DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `account_id` (`account_id`),
+  CONSTRAINT `statements_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -280,7 +302,7 @@ CREATE TABLE `transaction_splits` (
   CONSTRAINT `transaction_splits_ibfk_2` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `transaction_splits_ibfk_3` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`),
   CONSTRAINT `transaction_splits_ibfk_4` FOREIGN KEY (`fund_source_id`) REFERENCES `fund_sources` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=539 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=541 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -302,14 +324,17 @@ CREATE TABLE `transactions` (
   `original_ref` varchar(100) DEFAULT NULL,
   `category_id` int DEFAULT NULL,
   `predicted_transaction_id` int DEFAULT NULL,
+  `reconciled` tinyint(1) DEFAULT '0',
+  `statement_id` int DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `account_id` (`account_id`),
   KEY `fk_transactions_category` (`category_id`),
   KEY `predicted_transaction_id` (`predicted_transaction_id`),
+  KEY `idx_statement_id` (`statement_id`),
   CONSTRAINT `fk_transactions_category` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `transactions_ibfk_2` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=14413 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=14441 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -324,7 +349,7 @@ CREATE TABLE `transfer_groups` (
   `description` varchar(255) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1035 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1037 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -372,4 +397,4 @@ CREATE TABLE `transfer_groups` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2025-04-26 16:41:45
+-- Dump completed on 2025-04-29 17:21:24
