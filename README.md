@@ -1,93 +1,145 @@
-# 💰 Home Finances System
+# 🏡 Household Finance System
 
-A custom MySQL + PHP/Python-powered household finance tracker designed to replace Microsoft Money and bring full visibility and forecasting control to our family budget.
-
-Built to be robust, mobile-friendly, and fully automated — with a powerful backend and simple interface anyone can use (including on an iPhone).
+An advanced personal finance manager built in **PHP**, **MySQL**, and **Python**, designed to track income, expenses, budgets, cash flow, savings earmarks, and credit card repayments, all while supporting detailed reconciliation and forecasting.
 
 ---
 
-## 🔧 Core Features
+## 🚀 Core Features
 
-### 📊 Budget & Actual Tracking
-- Monthly and YTD dashboards with budget vs actual variance
-- Supports split transactions and category roll-ups
-- Auto-classifies based on category structure
+### ✅ Accounts Management
+- Current, Savings, Credit Card, Investment, and House account types supported.
+- Starting balances, statement dates, and payment days configurable.
 
-### 🔁 Predicted Transactions Engine
-- Supports monthly, weekly, nth weekday, and business-day recurrence
-- Estimates variable transactions by averaging the last X actuals
-- Generates `predicted_instances` table up to 90 days ahead
+### 💳 Transactions
+- Manual entry or automatic OFX/CSV file uploads.
+- Split transactions across multiple categories.
+- Intelligent duplicate detection and transfer matching.
+- Support for one-sided transfers and PLACEHOLDER reconciliation.
 
-### 💳 Credit Card Forecasting
-- Predicts credit card payments based on statement/payment cycle
-- Handles mid-month and cross-month logic
-- Forecasts repayment amounts from actual spend or extrapolated usage
+### 🔮 Predicted Transactions
+- Fixed or variable recurring transactions.
+- Weekly, monthly, or custom recurrence intervals.
+- Auto-calculated average values for variable entries.
+- Automatic prediction of credit card repayments.
+- Confirmed predictions are frozen from overwrite.
 
-### 🔮 Forecasted Balance Timeline
-- Combines predicted and actual transactions
-- Detects upcoming cash shortfalls
-- Recommends top-up amounts to prevent overdraft
-- Lists contributing transactions with running balance view
+### 📊 Budgeting
+- Monthly budgets by top-level category.
+- Dashboard with variance tracking (budget vs actual vs forecast).
+- Forecast column integrated into budget views.
+- YTD tracking included.
 
-### 📋 Review & Approval Workflow
-- Categorize new transactions or mark as duplicates
-- Supports:
-  - Manual edits
-  - Transfer pairing (matched and one-sided)
-  - Split/Multiple category handling
+### 📒 Ledger Viewer
+- Search by account, date, parent category, or subcategory.
+- Displays both actual and predicted transactions.
+- Linked directly from dashboard actuals for drilldown.
 
-### 📥 Data Ingestion
-- Import `.OFX` and `.CSV` via web interface
-- Duplicate detection
-- Smart account matching
+### 💼 Project Fund Forecasting
+- Tracks discretionary fund available for non-essential projects.
+- Accounts for earmarked savings and solvency fund.
+- Forecasts when funds become available across the year.
 
-### 📱 Mobile-Friendly Dashboard
-- Touch-optimized navigation
-- Forecasts, predictions, and balances accessible on iPhone
-- Responsive tables and buttons
+### 📈 Forecasting & Automation
+- Balance forecasting over 90 days.
+- Identifies shortfalls and suggests top-ups.
+- Automatically reconciles confirmed repayments after statements.
+- Python engine runs via cron or manual trigger.
 
----
+### 🔁 Reconciliation Engine
+- Create and manage account statements.
+- Match unreconciled transactions to statement balances.
+- Confirms predicted repayment entries automatically.
+- Finalize reconciliations and updates balances reliably.
 
-## 📂 Key Scripts
-
-| Script | Description |
-|--------|-------------|
-| `predict_instances.py` | Generates predicted instances for all active predicted transactions |
-| `forecast_balance_timeline.py` | Analyzes cash flow and surfaces shortfalls with top-up advice |
-| `parse_csv.py`, `parse_ofx.py` | Ingest `.csv` and `.ofx` files and populate `staging_transactions` |
-| `review.php` / `review_actions.php` | UI for transaction categorization, splitting, and approval |
-| `dashboard.php` | Budget vs Actual for current month |
-| `dashboard_ytd.php` | YTD budget tracking and variance |
-| `ledger.php` | Transaction ledger by account and date range |
-| `get_upcoming_predictions.php` | Returns next 10 predicted transaction instances |
-| `get_account_balances.php` | Uses MySQL view to return current account balances |
-| `forecast_utils.php` | Provides forecasting shortfall panel logic |
+### 📬 Weekly Email Summary
+- Sends weekly email of insights and spending health.
+- Flags overspending, underspending, and prediction mismatches.
 
 ---
 
-## 🚧 Wishlist / To-Do
+## 📁 Folder Structure
 
-- [ ] Add tags for categories: `fixed vs variable`, `compulsory vs discretionary`
-- [ ] Add in-browser editing of budgets
-- [ ] Filter ledger by transaction source (actual vs predicted)
-- [ ] CSV export of dashboard and ledger views
-- [ ] Historical trend charts for spending by category
-- [ ] Save "last viewed" filters per user/session
-- [ ] Email alerts for upcoming shortfalls
-- [ ] Archive completed predicted instances (fulfilled = 1)
+- .
+  - public/
+    - manual_entry.php
+    - assets/
+    - review_actions.php
+    - toggle_rule.php
+    - reconcile.php
+    - dashboard.php
+    - budgets.php
+    - statements.php
+    - index.php
+    - upload.php
+    - ledger.php
+    - project_fund.php
+    - insights.php
+    - review.php
+    - finalize_reconciliation.php
+    - predicted.php
+    - dashboard_ytd.php
+    - view_statement.php
+  - config/
+    - db.php
+    - accounts_schema_only.sql
+  - uploads/
+  - layout/
+    - footer.php
+    - header.php
+  - README.md
+  - scripts/
+    - forecast_utils.php
+    - parse_csv.py
+    - get_accounts.php
+    - predict_instances.py
+    - email_weekly_summary.php
+    - get_account_balances.php
+    - get_insights.php
+    - get_missed_predictions.php
+    - get_upcoming_predictions.php
+    - parse_ofx.py
+    - forecast_balance_timeline.py
+
 
 ---
 
-## 🏗️ Stack
+## ⚙️ Technology Stack
 
-- MySQL (InnoDB, Views, Foreign Keys)
-- PHP 8 + Bootstrap 5 (UI)
-- Python 3.10 (prediction + ingestion engine)
-- Dropbox + GitHub for sync and version control
+- **PHP** 8.x
+- **MySQL** 8.x
+- **Python** 3.x
+- **Bootstrap 5**
+- **cron** (for automated forecasting and email)
+
+---
+
+## 🔭 Roadmap
+
+- Enhanced graphs and mobile-first UX
+- Multi-year planning support
+- Smarter alerting engine
+- Recategorization and tagging tools
+- Role-based access or user-specific views (optional)
+- Net worth tracker and investment forecasting (stretch)
 
 ---
 
 ## 👨‍👩‍👧‍👦 Family-Centered Design
 
 This system was built not just for tracking — but for making sure my wife and I can always stay ahead of our bills, optimize savings, and make financial decisions together. It's fast, clean, and works great from an iPhone.
+
+---
+
+## 🧠 Author
+
+Built and maintained by **John** as a fully self-hosted, personal finance automation suite.
+
+---
+
+## 📌 License
+
+This is a personal, private project. No license or distribution currently intended.
+
+---
+
 
