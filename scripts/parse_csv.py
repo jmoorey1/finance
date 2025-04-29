@@ -90,34 +90,45 @@ with open(csv_path, newline='') as csvfile:
 
         # 2️⃣ Check for match to predicted_instance
         if status == 'new':
+            # First, try exact match (amount and account)
             select_cursor.execute("""
                 SELECT id FROM predicted_instances
-                WHERE from_account_id = %s
-                  AND ABS(amount - %s) < 0.01
+                WHERE (from_account_id = %s OR to_account_id = %s)
+                  AND ABS(
+                      CASE 
+                          WHEN from_account_id = %s THEN amount
+                          WHEN to_account_id = %s THEN -amount
+                          ELSE 0
+                      END - %s
+                  ) < 0.01
                   AND ABS(DATEDIFF(scheduled_date, %s)) <= 3
                 LIMIT 1
-            """, (account_id, amount, txn_date))
+            """, (account_id, account_id, account_id, account_id, amount, txn_date))
             prediction = select_cursor.fetchone()
+
             if prediction:
                 status = 'fulfills_prediction'
                 predicted_instance_id = prediction['id']
                 predictions += 1
             else:
+                # Try variable description matching
                 select_cursor.execute("""
                     SELECT pi.id 
                     FROM predicted_instances pi
                     JOIN predicted_transactions pt ON pi.predicted_transaction_id = pt.id
-                    WHERE pi.from_account_id = %s
+                    WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
                       AND pt.variable = 1
                       AND pi.description LIKE %s
                       AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
                     LIMIT 1
-                """, (account_id, f"%{description[:5]}%", txn_date))
+                """, (account_id, account_id, f"%{description[:5]}%", txn_date))
                 prediction = select_cursor.fetchone()
+
                 if prediction:
                     status = 'fulfills_prediction'
                     predicted_instance_id = prediction['id']
                     predictions += 1
+
 
         if status in ('new', 'potential_duplicate', 'fulfills_prediction'):
             insert_cursor.execute("""

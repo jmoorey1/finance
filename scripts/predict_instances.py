@@ -29,6 +29,31 @@ def get_nth_weekday(year, month, weekday, n):
         day += 1
     return None
 
+def schedule_instance(cursor, p, day):
+    amount = p['amount']
+    if p.get('variable') and p.get('average_over_last'):
+        cursor.execute("""
+            SELECT AVG(pr.amount) AS avg_amount FROM 
+            (SELECT amount FROM transactions
+             WHERE predicted_transaction_id = %s
+             ORDER BY date DESC LIMIT %s) pr
+        """, (p['id'], p['average_over_last']))
+        result = cursor.fetchone()
+        if result and result['avg_amount'] is not None:
+            amount = round(result['avg_amount'], 2)
+
+    cursor.execute("""
+        INSERT INTO predicted_instances
+        (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
+         category_id, amount, description)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE 
+            amount = IF(confirmed = 1, amount, VALUES(amount))
+    """, (
+        p['id'], day, p['from_account_id'], p['to_account_id'],
+        p['category_id'], amount, p['description']
+    ))
+
 def predict_fixed_transactions(cursor, today, end_date):
     cursor.execute("SELECT * FROM predicted_transactions WHERE active=1")
     predictions = cursor.fetchall()
@@ -39,7 +64,6 @@ def predict_fixed_transactions(cursor, today, end_date):
         anchor_type = p['anchor_type']
         frequency = p.get('frequency')
 
-        # Weekly pattern
         if anchor_type == 'weekly':
             for i in range((end_date - today).days + 1):
                 day = today + timedelta(days=i)
@@ -47,7 +71,6 @@ def predict_fixed_transactions(cursor, today, end_date):
                     schedule_instance(cursor, p, day)
             continue
 
-        # Custom repeat every X weeks
         if frequency == 'custom' and interval:
             cursor.execute("""
                 SELECT MAX(date) as last_date FROM transactions
@@ -58,13 +81,11 @@ def predict_fixed_transactions(cursor, today, end_date):
             if isinstance(start_from, str):
                 start_from = datetime.strptime(start_from, "%Y-%m-%d")
             current = start_from + timedelta(weeks=interval)
-
             while current <= end_date:
                 schedule_instance(cursor, p, current)
                 current += timedelta(weeks=interval)
             continue
 
-        # Monthly patterns
         for month_offset in range(3):
             base = today.replace(day=1) + relativedelta(months=month_offset)
             year, month = base.year, base.month
@@ -85,30 +106,6 @@ def predict_fixed_transactions(cursor, today, end_date):
 
             if scheduled_date and today <= scheduled_date.date() <= end_date:
                 schedule_instance(cursor, p, scheduled_date.date())
-
-def schedule_instance(cursor, p, day):
-    amount = p['amount']
-    if p.get('variable') and p.get('average_over_last'):
-        cursor.execute("""
-             SELECT AVG(pr.amount) AS avg_amount FROM 
-             (SELECT amount FROM transactions
-              WHERE predicted_transaction_id = %s
-              ORDER BY date DESC LIMIT %s) pr
-        """, (p['id'], p['average_over_last']))
-        result = cursor.fetchone()
-        if result and result['avg_amount'] is not None:
-            amount = round(result['avg_amount'], 2)
-
-    cursor.execute("""
-        INSERT INTO predicted_instances
-        (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
-         category_id, amount, description)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE amount = VALUES(amount)
-    """, (
-        p['id'], day, p['from_account_id'], p['to_account_id'],
-        p['category_id'], amount, p['description']
-    ))
 
 def predict_credit_card_repayments(cursor, today, end_date):
     cursor.execute("""
@@ -144,39 +141,64 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 continue
             payment_date = adjust_date(payment_date, 'next_business_day')
 
-            if today <= payment_date.date() <= end_date:
-                cursor.execute("""
-                    SELECT SUM(amount) AS balance FROM transactions
-                    WHERE account_id = %s AND date <= %s
-                """, (card['id'], statement_date.date()))
-                result = cursor.fetchone()
-                balance = result['balance'] if result and result['balance'] is not None else 0.00
+            if not (today <= payment_date.date() <= end_date):
+                continue
 
-                if abs(balance) >= 1.00:
-                    cursor.execute("""
-                        SELECT id FROM categories
-                        WHERE linked_account_id = %s AND name LIKE 'Transfer To : %%'
-                        LIMIT 1
-                    """, (card['id'],))
-                    category_result = cursor.fetchone()
-                    if not category_result:
-                        continue
+            # Skip if confirmed
+            cursor.execute("""
+                SELECT id FROM predicted_instances
+                WHERE from_account_id = %s AND to_account_id = %s
+                  AND scheduled_date = %s AND confirmed = 1
+            """, (card['paid_from'], card['id'], payment_date.date()))
+            if cursor.fetchone():
+                continue
 
-                    category_id = category_result['id']
+            # Skip if real transactions already happened
+            cursor.execute("""
+                SELECT 1 FROM transactions
+                WHERE (account_id = %s OR account_id = %s)
+                  AND ABS(DATEDIFF(date, %s)) <= 3
+                  AND ABS(amount) >= 1
+                LIMIT 1
+            """, (card['paid_from'], card['id'], payment_date.date()))
+            if cursor.fetchone():
+                continue
 
-                    cursor.execute("""
-                        INSERT INTO predicted_instances
-                        (scheduled_date, from_account_id, to_account_id, category_id, amount, description)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE amount = VALUES(amount)
-                    """, (
-                        payment_date.date(),
-                        card['paid_from'],
-                        card['id'],
-                        category_id,
-                        round(-balance, 2),
-                        "Predicted Credit Card Payment"
-                    ))
+            cursor.execute("""
+                SELECT SUM(amount) AS balance FROM transactions
+                WHERE account_id = %s AND date <= %s
+            """, (card['id'], statement_date.date()))
+            result = cursor.fetchone()
+            balance = result['balance'] if result and result['balance'] is not None else 0.00
+
+            if abs(balance) < 1.00:
+                continue
+
+            cursor.execute("""
+                SELECT id FROM categories
+                WHERE linked_account_id = %s AND name LIKE 'Transfer To : %%'
+                LIMIT 1
+            """, (card['id'],))
+            category_result = cursor.fetchone()
+            if not category_result:
+                continue
+
+            category_id = category_result['id']
+
+            cursor.execute("""
+                INSERT INTO predicted_instances
+                (scheduled_date, from_account_id, to_account_id, category_id, amount, description)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE 
+                    amount = IF(confirmed = 1, amount, VALUES(amount))
+            """, (
+                payment_date.date(),
+                card['paid_from'],
+                card['id'],
+                category_id,
+                round(-balance, 2),
+                "Predicted Credit Card Payment"
+            ))
 
 def main():
     db = mysql.connector.connect(

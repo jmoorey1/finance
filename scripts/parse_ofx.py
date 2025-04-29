@@ -86,19 +86,35 @@ for account in ofx.accounts:
 
         # 2️⃣ Check if it matches a predicted instance
         if status == 'new':
+            # Try matching exactly first
             cursor.execute("""
-                SELECT id FROM predicted_instances
-                WHERE from_account_id = %s
-                  AND ABS(amount - %s) < 0.01
+                SELECT id, from_account_id, to_account_id, amount
+                FROM predicted_instances
+                WHERE (from_account_id = %s OR to_account_id = %s)
                   AND ABS(DATEDIFF(scheduled_date, %s)) <= 3
-                LIMIT 1
-            """, (account_id, amount, date_str))
-            prediction = cursor.fetchone()
-            if prediction:
+            """, (account_id, account_id, date_str))
+            candidates = cursor.fetchall()
+
+            matched = None
+            for pred in candidates:
+                from_id = pred['from_account_id']
+                to_id = pred['to_account_id']
+                pred_amt = float(pred['amount'])
+
+                if account_id == from_id and abs(amount + pred_amt) < 0.01:
+                    matched = pred
+                    break
+                if account_id == to_id and abs(amount - pred_amt) < 0.01:
+                    matched = pred
+                    break
+
+            if matched:
                 status = 'fulfills_prediction'
-                predicted_instance_id = prediction['id']
+                predicted_instance_id = matched['id']
                 predictions += 1
+
             else:
+                # Try matching variable predictions by fuzzy description
                 cursor.execute("""
                     SELECT pi.id 
                     FROM predicted_instances pi
@@ -110,10 +126,12 @@ for account in ofx.accounts:
                     LIMIT 1
                 """, (account_id, f"%{description[:5]}%", date_str))
                 prediction = cursor.fetchone()
+
                 if prediction:
                     status = 'fulfills_prediction'
                     predicted_instance_id = prediction['id']
                     predictions += 1
+
 
 
         if status in ('new', 'potential_duplicate', 'fulfills_prediction'):

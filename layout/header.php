@@ -65,16 +65,17 @@
                     <ul class="dropdown-menu" aria-labelledby="manageDropdown">
                         <li><a class="dropdown-item" href="/finance/public/upload.php">Upload</a></li>
                         <li><a class="dropdown-item" href="/finance/public/review.php">Review</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/statements.php">Statements</a></li>
                         <li><a class="dropdown-item" href="/finance/public/manual_entry.php">Manual Entry</a></li>
-                        <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
                         <li><a class="dropdown-item" href="/finance/public/ledger.php">Ledger</a></li>
-                        <li><a class="dropdown-item" href="/finance/public/project_fund.php">Project Fund Review</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/predicted.php">Predicted Transactions</a></li>
                     </ul>
                 </li>
 				<li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Settings</a>
+                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Planning</a>
                     <ul class="dropdown-menu" aria-labelledby="settingsDropdown">
-                        <li><a class="dropdown-item" href="/finance/public/predicted.php">Predicted Transactions</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/project_fund.php">Project Fund Review</a></li>
                     </ul>
                 </li>
             </ul>

@@ -13,39 +13,128 @@ switch ($action) {
     // ----------------------------------------
     // ✅ CONFIRM: This transaction fulfills a predicted instance
     // ----------------------------------------
-    case 'fulfill_prediction':
-        $predicted_id = (int) ($_POST['predicted_instance_id'] ?? 0);
+	case 'fulfill_prediction':
+		$predicted_id = (int) ($_POST['predicted_instance_id'] ?? 0);
 
-        $stmt = $conn->prepare("
-            SELECT s.*, p.predicted_transaction_id, p.category_id AS instance_category_id
-            FROM staging_transactions s
-            JOIN predicted_instances p ON s.predicted_instance_id = p.id
-            WHERE s.id = ?
-        ");
-        $stmt->execute([$staging_id]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+		$stmt = $conn->prepare("
+			SELECT s.*, p.predicted_transaction_id, p.category_id AS instance_category_id, 
+				   p.from_account_id, p.to_account_id
+			FROM staging_transactions s
+			JOIN predicted_instances p ON s.predicted_instance_id = p.id
+			WHERE s.id = ?
+		");
+		$stmt->execute([$staging_id]);
+		$row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($row) {
-            $insert = $conn->prepare("
-                INSERT INTO transactions 
-                (account_id, date, description, amount, original_ref, category_id, predicted_transaction_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ");
-            $insert->execute([
-                $row['account_id'],
-                $row['date'],
-                $row['description'],
-                $row['amount'],
-                substr($row['original_memo'], 0, 100),
-                $row['instance_category_id'] ?? null,
-                $row['predicted_transaction_id']
-            ]);
+		if ($row) {
+			// Lookup category type
+			$cat_stmt = $conn->prepare("SELECT type FROM categories WHERE id = ?");
+			$cat_stmt->execute([$row['instance_category_id']]);
+			$cat_row = $cat_stmt->fetch(PDO::FETCH_ASSOC);
+			$category_type = $cat_row['type'] ?? '';
 
-            $conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
-            $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
-        }
+			if ($category_type === 'transfer') {
+				// --- TRANSFER handling ---
+				$conn->beginTransaction();
 
-        break;
+				// Insert into transfer_groups
+				$conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Predicted transfer match')")->execute();
+				$transfer_group_id = $conn->lastInsertId();
+
+				// Helper to resolve category
+				function resolve_transfer_category(PDO $conn, int $base_account_id, int $linked_account_id, string $direction): ?int {
+					$stmt = $conn->prepare("
+						SELECT id FROM categories
+						WHERE type = 'transfer'
+						  AND linked_account_id = ?
+						  AND name LIKE ?
+						LIMIT 1
+					");
+					$stmt->execute([$linked_account_id, "$direction%"]);
+					$result = $stmt->fetch(PDO::FETCH_ASSOC);
+					return $result['id'] ?? null;
+				}
+
+				$uploaded_account = (int) $row['account_id'];
+				$from_account = (int) $row['from_account_id'];
+				$to_account = (int) $row['to_account_id'];
+
+				if ($uploaded_account === $from_account) {
+					$direction = 'Transfer To :';
+					$counterparty_account = $to_account;
+				} elseif ($uploaded_account === $to_account) {
+					$direction = 'Transfer From :';
+					$counterparty_account = $from_account;
+				} else {
+					$conn->rollBack();
+					die("❌ Uploaded account does not match predicted transfer.");
+				}
+
+				// Insert real transaction
+				$real_category = resolve_transfer_category($conn, $uploaded_account, $counterparty_account, $direction);
+				$real_txn = $conn->prepare("
+					INSERT INTO transactions 
+					(account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
+					VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)
+				");
+				$real_txn->execute([
+					$uploaded_account,
+					$row['date'],
+					$row['description'],
+					$row['amount'],
+					$real_category,
+					$transfer_group_id,
+					$row['predicted_transaction_id']
+				]);
+
+				// Insert placeholder transaction
+				$placeholder_amt = -1 * $row['amount'];
+				$placeholder_direction = ($direction === 'Transfer To :') ? 'Transfer From :' : 'Transfer To :';
+				$placeholder_category = resolve_transfer_category($conn, $counterparty_account, $uploaded_account, $placeholder_direction);
+
+				$conn->prepare("
+					INSERT INTO transactions 
+					(account_id, date, description, amount, type, category_id, transfer_group_id)
+					VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+				")->execute([
+					$counterparty_account,
+					$row['date'],
+					'PLACEHOLDER',
+					$placeholder_amt,
+					$placeholder_category,
+					$transfer_group_id
+				]);
+
+				// Cleanup
+				$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
+				$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+
+				$conn->commit();
+			} else {
+				// --- Regular Income/Expense ---
+				$insert = $conn->prepare("
+					INSERT INTO transactions 
+					(account_id, date, description, amount, original_ref, category_id, predicted_transaction_id)
+					VALUES (?, ?, ?, ?, ?, ?, ?)
+				");
+				$insert->execute([
+					$row['account_id'],
+					$row['date'],
+					$row['description'],
+					$row['amount'],
+					substr($row['original_memo'], 0, 100),
+					$row['instance_category_id'] ?? null,
+					$row['predicted_transaction_id']
+				]);
+
+				$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
+				$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+			}
+		}
+
+		break;
+
+
 
     // ----------------------------------------
     // ❌ REJECT: It's not the predicted transaction
