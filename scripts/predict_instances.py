@@ -64,6 +64,7 @@ def predict_fixed_transactions(cursor, today, end_date):
         anchor_type = p['anchor_type']
         frequency = p.get('frequency')
 
+        # Weekly predictions
         if anchor_type == 'weekly':
             for i in range((end_date - today).days + 1):
                 day = today + timedelta(days=i)
@@ -71,6 +72,7 @@ def predict_fixed_transactions(cursor, today, end_date):
                     schedule_instance(cursor, p, day)
             continue
 
+        # Custom frequency (e.g. every N weeks)
         if frequency == 'custom' and interval:
             cursor.execute("""
                 SELECT MAX(date) as last_date FROM transactions
@@ -80,15 +82,33 @@ def predict_fixed_transactions(cursor, today, end_date):
             start_from = result['last_date'] or today.isoformat()
             if isinstance(start_from, str):
                 start_from = datetime.strptime(start_from, "%Y-%m-%d")
+            if isinstance(start_from, datetime):
+                start_from = start_from.date()
             current = start_from + timedelta(weeks=interval)
             while current <= end_date:
                 schedule_instance(cursor, p, current)
                 current += timedelta(weeks=interval)
             continue
 
-        for month_offset in range(3):
-            base = today.replace(day=1) + relativedelta(months=month_offset)
-            year, month = base.year, base.month
+        # Default to 1 month if repeat_interval is missing
+        months_interval = int(p.get('repeat_interval') or 1)
+
+        # Start from last actual transaction or today
+        cursor.execute("""
+            SELECT MAX(date) as last_date FROM transactions
+            WHERE predicted_transaction_id = %s
+        """, (pid,))
+        result = cursor.fetchone()
+        start_from = result['last_date'] or today.isoformat()
+        if isinstance(start_from, str):
+            start_from = datetime.strptime(start_from, "%Y-%m-%d")
+        if isinstance(start_from, datetime):
+            start_from = start_from.date()
+
+        current = start_from + relativedelta(months=months_interval)
+
+        while current <= end_date:
+            year, month = current.year, current.month
             scheduled_date = None
 
             if anchor_type == 'day_of_month' and p.get('day_of_month'):
@@ -96,9 +116,12 @@ def predict_fixed_transactions(cursor, today, end_date):
                     scheduled_date = datetime(year, month, p['day_of_month'])
                     scheduled_date = adjust_date(scheduled_date, p['adjust_for_weekend'])
                 except ValueError:
+                    current += relativedelta(months=months_interval)
                     continue
+
             elif anchor_type == 'nth_weekday':
                 scheduled_date = get_nth_weekday(year, month, p['weekday'], p['nth_weekday'])
+
             elif anchor_type == 'last_business_day':
                 last_day = calendar.monthrange(year, month)[1]
                 scheduled_date = datetime(year, month, last_day)
@@ -106,6 +129,10 @@ def predict_fixed_transactions(cursor, today, end_date):
 
             if scheduled_date and today <= scheduled_date.date() <= end_date:
                 schedule_instance(cursor, p, scheduled_date.date())
+
+            current += relativedelta(months=months_interval)
+
+
 
 def predict_credit_card_repayments(cursor, today, end_date):
     cursor.execute("""

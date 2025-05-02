@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../scripts/forecast_utils.php';
 include '../layout/header.php';
 
 function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
@@ -81,6 +82,23 @@ foreach ($stmt as $row) {
     $budgets[$row['month_start']] = floatval($row['net']);
 }
 
+// Forecast top ups
+
+$forecast_issues = get_forecast_shortfalls($pdo);
+$topups_by_month = [];
+foreach ($forecast_issues as $issue) {
+    $date = new DateTime($issue['start_day']);
+    $month_end = ($date->format('d') >= 12)
+        ? new DateTime($date->format('Y-m-12'))
+        : (new DateTime($date->format('Y-m-01')))->modify('-1 day')->setDate(null, null, 12);
+    $month_key = $month_end->modify("-1 month")->modify("+1 day")->format('Y-m-d');
+
+    if (!isset($topups_by_month[$month_key])) {
+        $topups_by_month[$month_key] = 0;
+    }
+    $topups_by_month[$month_key] += $issue['top_up'];
+}
+
 // Actuals and savings balances
 $actuals = [];
 $savings_balances = [];
@@ -134,6 +152,7 @@ foreach ($months as $m) {
 // Build rows
 $initial_project_fund = $savings_start_balance - array_sum($earmarks);
 $solvency = 0;
+$topup = 0;
 $rows = [];
 $today = new DateTime();
 
@@ -153,7 +172,14 @@ foreach ($months as $m) {
         $variance = 0;
         $deficit = $budget;
         $running_deficit += $budget;
-		$savings_balance += $deficit;
+		$month_key = $m['start']->format('Y-m-d');
+		$topup = $topups_by_month[$month_key] ?? 0;
+
+		if ($topup > 0) {
+			$savings_balance -= $topup;
+		} else {
+			$savings_balance += $deficit;
+		}
     }
 	$excess_solvency = 0;
     $running_solvency_fund = $solvency_fund + $running_deficit;
@@ -180,7 +206,8 @@ foreach ($months as $m) {
         'deficit' => $deficit,
         'running_deficit' => $running_deficit,
         'project' => $project,
-        'savings_balance' => $savings_balance
+        'savings_balance' => $savings_balance,
+        'topup' => $topup
     ];
 }
 

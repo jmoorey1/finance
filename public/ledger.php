@@ -20,6 +20,8 @@ $start_date = $_GET['start'] ?? (new DateTimeImmutable('-30 days'))->format('Y-m
 $end_date = $_GET['end'] ?? (new DateTimeImmutable('today'))->format('Y-m-d');
 $selected_categories = $_GET['category_id'] ?? [];
 $parent_filter = $_GET['parent_id'] ?? '';
+$search_term = trim($_GET['description'] ?? '');
+$search_like = '%' . $search_term . '%';
 
 // Load categories
 $categories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE type IN ('income','expense') ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -69,15 +71,15 @@ $query = "
     WHERE t.account_id IN ($account_placeholders)
       AND t.date BETWEEN ? AND ?
       $category_clause
-
+      AND t.description LIKE ?
     UNION ALL
-
     SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, p.amount, p.description, c.name as category
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
     WHERE c.type IN ('income', 'expense')
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
+      AND p.description LIKE ?
 ";
 
 if (!empty($selected_categories)) {
@@ -86,13 +88,13 @@ if (!empty($selected_categories)) {
 
 $query .= "
     UNION ALL
-
     SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, p.description, c.name as category
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
     WHERE c.type = 'transfer'
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
+      AND p.description LIKE ?
 ";
 
 if (!empty($selected_categories)) {
@@ -101,12 +103,12 @@ if (!empty($selected_categories)) {
 
 $query .= "
     UNION ALL
-
     SELECT 'Predicted' AS source, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, p.description, c.name as category
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
     WHERE p.to_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
+      AND p.description LIKE ?
 ";
 
 if (!empty($selected_categories)) {
@@ -115,16 +117,13 @@ if (!empty($selected_categories)) {
 
 $query .= " ORDER BY date ASC";
 
-// Build parameters in the correct order
+// Build parameters
 $params = array_merge(
     $selected_accounts, [$start_date, $end_date],
-    $selected_categories, $selected_categories, // for actuals split and unsplit
-    $selected_accounts, [$start_date, $end_date],
-    $selected_categories,                       // predicted income/expense
-    $selected_accounts, [$start_date, $end_date],
-    $selected_categories,                       // predicted transfer (from)
-    $selected_accounts, [$start_date, $end_date],
-    $selected_categories                        // predicted transfer (to)
+    $selected_categories, $selected_categories, [$search_like], // actuals
+    $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories, // predicted income/expense
+    $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories, // predicted transfer (from)
+    $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories  // predicted transfer (to)
 );
 
 $stmt = $pdo->prepare($query);
@@ -165,8 +164,12 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="col-md-2 d-flex align-items-end">
-            <button type="submit" class="btn btn-primary w-100">Filter</button>
+        <div class="col-md-2">
+            <label class="form-label">Description Contains</label>
+            <input type="text" name="description" class="form-control" value="<?= htmlspecialchars($search_term) ?>">
+        </div>
+        <div class="col-md-12 text-end">
+            <button type="submit" class="btn btn-primary mt-2">Filter</button>
         </div>
     </div>
 </form>

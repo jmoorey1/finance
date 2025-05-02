@@ -34,6 +34,8 @@ predictions = 0
 potential = 0
 duplicates = 0
 
+used_predictions = set()
+
 with open(csv_path, newline='') as csvfile:
     reader = csv.DictReader(csvfile)
     for row in reader:
@@ -64,9 +66,7 @@ with open(csv_path, newline='') as csvfile:
         # 1️⃣ Check for real transaction match
         select_cursor.execute("""
             SELECT id FROM transactions
-            WHERE account_id = %s
-              AND date = %s
-              AND ABS(amount - %s) < 0.01
+            WHERE account_id = %s AND date = %s AND ABS(amount - %s) < 0.01
             LIMIT 1
         """, (account_id, txn_date, amount))
         match = select_cursor.fetchone()
@@ -76,10 +76,9 @@ with open(csv_path, newline='') as csvfile:
             duplicates += 1
         else:
             select_cursor.execute("""
-                SELECT id, date FROM transactions
-                WHERE account_id = %s
-                  AND ABS(amount - %s) < 0.01
-                  AND ABS(DATEDIFF(date, %s)) <= 3
+                SELECT id FROM transactions
+                WHERE account_id = %s AND ABS(amount - %s) < 0.01
+                      AND ABS(DATEDIFF(date, %s)) <= 3
                 LIMIT 1
             """, (account_id, amount, txn_date))
             potential_match = select_cursor.fetchone()
@@ -88,32 +87,49 @@ with open(csv_path, newline='') as csvfile:
                 matched_id = potential_match['id']
                 potential += 1
 
-        # 2️⃣ Check for match to predicted_instance
+        # 2️⃣ Check for predicted match
         if status == 'new':
-            # First, try exact match (amount and account)
             select_cursor.execute("""
-                SELECT id FROM predicted_instances
-                WHERE (from_account_id = %s OR to_account_id = %s)
-                  AND ABS(
-                      CASE 
-                          WHEN from_account_id = %s THEN amount
-                          WHEN to_account_id = %s THEN -amount
-                          ELSE 0
-                      END - %s
-                  ) < 0.01
-                  AND ABS(DATEDIFF(scheduled_date, %s)) <= 3
-                LIMIT 1
-            """, (account_id, account_id, account_id, account_id, amount, txn_date))
-            prediction = select_cursor.fetchone()
+                SELECT pi.id, pi.from_account_id, pi.to_account_id, pi.amount, c.type AS cat_type
+                FROM predicted_instances pi
+                JOIN categories c ON pi.category_id = c.id
+                WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
+                  AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
+            """, (account_id, account_id, txn_date))
+            candidates = select_cursor.fetchall()
 
-            if prediction:
-                status = 'fulfills_prediction'
-                predicted_instance_id = prediction['id']
-                predictions += 1
-            else:
-                # Try variable description matching
+            for pred in candidates:
+                pred_id = pred['id']
+                if pred_id in used_predictions:
+                    continue
+
+                pred_amt = Decimal(str(pred['amount']))
+                from_id = pred['from_account_id']
+                to_id = pred['to_account_id']
+                cat_type = pred['cat_type']
+
+                if cat_type == 'transfer':
+                    if account_id == from_id and abs(amount + pred_amt) < Decimal('0.01'):
+                        predicted_instance_id = pred_id
+                        status = 'fulfills_prediction'
+                        used_predictions.add(pred_id)
+                        break
+                    if account_id == to_id and abs(amount - pred_amt) < Decimal('0.01'):
+                        predicted_instance_id = pred_id
+                        status = 'fulfills_prediction'
+                        used_predictions.add(pred_id)
+                        break
+                else:
+                    if account_id == from_id and abs(amount - pred_amt) < Decimal('0.01'):
+                        predicted_instance_id = pred_id
+                        status = 'fulfills_prediction'
+                        used_predictions.add(pred_id)
+                        break
+
+            # 3️⃣ Fallback: fuzzy match on variable predictions
+            if status == 'new':
                 select_cursor.execute("""
-                    SELECT pi.id 
+                    SELECT pi.id
                     FROM predicted_instances pi
                     JOIN predicted_transactions pt ON pi.predicted_transaction_id = pt.id
                     WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
@@ -124,11 +140,10 @@ with open(csv_path, newline='') as csvfile:
                 """, (account_id, account_id, f"%{description[:5]}%", txn_date))
                 prediction = select_cursor.fetchone()
 
-                if prediction:
-                    status = 'fulfills_prediction'
+                if prediction and prediction['id'] not in used_predictions:
                     predicted_instance_id = prediction['id']
-                    predictions += 1
-
+                    status = 'fulfills_prediction'
+                    used_predictions.add(predicted_instance_id)
 
         if status in ('new', 'potential_duplicate', 'fulfills_prediction'):
             insert_cursor.execute("""
@@ -149,6 +164,7 @@ with open(csv_path, newline='') as csvfile:
                 predicted_instance_id
             ))
             inserted += 1
+
 
 conn.commit()
 select_cursor.close()

@@ -152,6 +152,7 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                     : ($budget - $actual - $future);
 
                 $class = $variance >= 0 ? 'text-success' : 'text-danger';
+                $sign = $variance > 0 ? "+" : "";
 
                 $totals[$cat['type']]['budget'] += $budget;
                 $totals[$cat['type']]['actual'] += $actual;
@@ -171,7 +172,7 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                     <td class='text-end'>£" . number_format($budget, 2) . "</td>
                     <td class='text-end'>". $actual_link ."</td>
                     <td class='text-end'>". $forecast_link ."</td>
-                    <td class='text-end $class'>£" . number_format($variance, 2) . "</td>
+                    <td class='text-end $class'>". $sign . "£" . number_format($variance, 2) . "</td>
                 </tr>";
             endforeach;
 
@@ -183,12 +184,13 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                 if ($filter['type'] === 'income' && $label === 'Variable Income'):
                     $inc_var = $totals['income']['actual'] + $totals['income']['forecast'] - $totals['income']['budget'];
                     $inc_class = $inc_var >= 0 ? 'text-success' : 'text-danger';
+                    $sign = $inc_var > 0 ? "+" : "";
                     echo "<tr class='fw-bold table-light'>
                         <td>Total Income</td>
                         <td class='text-end'>£" . number_format($totals['income']['budget'], 2) . "</td>
                         <td class='text-end'>£" . number_format($totals['income']['actual'], 2) . "</td>
                         <td class='text-end'>£" . number_format($totals['income']['forecast'], 2) . "</td>
-                        <td class='text-end $inc_class'>£" . number_format($inc_var, 2) . "</td>
+                        <td class='text-end $inc_class'>". $sign . "£" . number_format($inc_var, 2) . "</td>
                     </tr>";
                 endif;
             endif;
@@ -202,8 +204,9 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
             <?php
             $exp_var = $totals['expense']['budget'] - $totals['expense']['actual'] - $totals['expense']['forecast'];
             $exp_class = $exp_var >= 0 ? 'text-success' : 'text-danger';
+            $sign = $exp_var > 0 ? "+" : "";
             ?>
-            <td class="text-end <?= $exp_class ?>">£<?= number_format($exp_var, 2) ?></td>
+            <td class="text-end <?= $exp_class ?>"><?= $sign ?>£<?= number_format($exp_var, 2) ?></td>
         </tr>
         <tr class="fw-bold table-dark">
             <td>Net Total</td>
@@ -215,8 +218,9 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                        ($totals['expense']['actual'] + $totals['expense']['forecast']) -
                        ($totals['income']['budget'] - $totals['expense']['budget']);
             $net_class = $net_var >= 0 ? 'text-success' : 'text-danger';
+                    $sign = $net_var > 0 ? "+" : "";
             ?>
-            <td class="text-end <?= $net_class ?>">£<?= number_format($net_var, 2) ?></td>
+            <td class="text-end <?= $net_class ?>"><?= $sign ?>£<?= number_format($net_var, 2) ?></td>
         </tr>
         </tbody>
     </table>

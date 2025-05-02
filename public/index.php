@@ -4,6 +4,7 @@ require_once '../scripts/forecast_utils.php';
 require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
 require_once '../scripts/get_missed_predictions.php';
+require_once '../scripts/get_missed_statements.php';
 require_once '../scripts/get_insights.php';
 
 include '../layout/header.php';
@@ -24,23 +25,13 @@ $balance_issues = get_forecast_shortfalls($pdo);
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
 $missed = get_missed_predictions($pdo);
-$insights = include '../scripts/get_insights.php';
+$missed_state = get_missed_statements($pdo);
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
 
 
-<!-- 💡 Insights -->
-<?php if (count($insights) > 0): ?>
-    <div class="mb-4">
-        <h4>💡 Insights</h4>
-        <ul class="list-group">
-            <?php foreach ($insights as $i): ?>
-                <li class="list-group-item"><?= $i ?></li>
-            <?php endforeach; ?>
-        </ul>
-    </div>
-<?php endif; ?>
+
 
 <!-- 💼 Account Balances -->
 <div class="mb-4">
@@ -88,6 +79,25 @@ $insights = include '../scripts/get_insights.php';
         </ul>
     <?php else: ?>
         <p class="text-muted">No missed predicted transactions.</p>
+    <?php endif; ?>
+</div>
+
+<!-- ⏳ Missed Statements -->
+<div class="mb-4">
+    <h4>🧾 Missed Statements</h4>
+    <?php if (count($missed_state) > 0): ?>
+        <ul class="list-group">
+            <?php foreach ($missed_state as $m): ?>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span>
+                        <?= htmlspecialchars($m['statement_date']) ?>
+                    </span>
+                    <span><?= $m['account_name'] ?> - <?= $m['transaction_count'] ?> unreconciled transaction(s)</span>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php else: ?>
+        <p class="text-muted">No missed statements.</p>
     <?php endif; ?>
 </div>
 

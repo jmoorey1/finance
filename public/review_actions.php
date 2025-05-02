@@ -149,7 +149,7 @@ switch ($action) {
     // ----------------------------------------
     case 'confirm_duplicate':
 		$matched_id = (int) ($_POST['matched_transaction_id'] ?? 0);
-        $conn->prepare("UPDATE transactions set date=(select date from staging_transactions WHERE id = ? limit 1) WHERE id = ?")->execute([$staging_id, $matched_id]);
+        $conn->prepare("UPDATE transactions set date=(select date from staging_transactions WHERE id = ? limit 1), description=(select description from staging_transactions where id = ? limit 1) WHERE id = ?")->execute([$staging_id, $staging_id, $matched_id]);
         $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
         break;
 

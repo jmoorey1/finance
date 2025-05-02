@@ -3,6 +3,8 @@
 import sys
 import os
 import mysql.connector
+from decimal import Decimal
+
 from ofxparse import OfxParser
 from datetime import timedelta
 
@@ -52,9 +54,11 @@ for account in ofx.accounts:
         print(f"❌ Could not resolve account for ACCTID={acct_id}, BANKID={bank_id}")
         continue
 
+    used_predictions = set()
+
     for txn in account.statement.transactions:
         date_str = txn.date.strftime('%Y-%m-%d')
-        amount = txn.amount
+        amount = Decimal(str(txn.amount))  # consistent with DB type
         description = txn.payee
         memo = txn.memo or ''
 
@@ -62,7 +66,7 @@ for account in ofx.accounts:
         matched_id = None
         predicted_instance_id = None
 
-        # 1️⃣ Check if it matches a real transaction
+        # 1️⃣ Check for exact or near match in real transactions
         cursor.execute("""
             SELECT id FROM transactions
             WHERE account_id = %s AND date = %s AND ABS(amount - %s) < 0.01
@@ -76,7 +80,7 @@ for account in ofx.accounts:
             cursor.execute("""
                 SELECT id FROM transactions
                 WHERE account_id = %s AND ABS(amount - %s) < 0.01
-                      AND ABS(DATEDIFF(date, %s)) <= 3
+                  AND ABS(DATEDIFF(date, %s)) <= 3
                 LIMIT 1
             """, (account_id, amount, date_str))
             potential_match = cursor.fetchone()
@@ -84,39 +88,49 @@ for account in ofx.accounts:
                 status = 'potential_duplicate'
                 matched_id = potential_match['id']
 
-        # 2️⃣ Check if it matches a predicted instance
+        # 2️⃣ Check for prediction matches (only if still new)
         if status == 'new':
-            # Try matching exactly first
             cursor.execute("""
-                SELECT id, from_account_id, to_account_id, amount
-                FROM predicted_instances
-                WHERE (from_account_id = %s OR to_account_id = %s)
-                  AND ABS(DATEDIFF(scheduled_date, %s)) <= 3
+                SELECT pi.id, pi.from_account_id, pi.to_account_id, pi.amount, c.type AS cat_type
+                FROM predicted_instances pi
+                JOIN categories c ON pi.category_id = c.id
+                WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
+                  AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
             """, (account_id, account_id, date_str))
             candidates = cursor.fetchall()
 
-            matched = None
             for pred in candidates:
+                pred_id = pred['id']
+                if pred_id in used_predictions:
+                    continue  # already matched
+
+                pred_amt = Decimal(str(pred['amount']))
+                cat_type = pred['cat_type']
                 from_id = pred['from_account_id']
                 to_id = pred['to_account_id']
-                pred_amt = float(pred['amount'])
 
-                if account_id == from_id and abs(amount + pred_amt) < 0.01:
-                    matched = pred
-                    break
-                if account_id == to_id and abs(amount - pred_amt) < 0.01:
-                    matched = pred
-                    break
+                if cat_type == 'transfer':
+                    if account_id == from_id and abs(amount + pred_amt) < Decimal('0.01'):
+                        predicted_instance_id = pred_id
+                        used_predictions.add(pred_id)
+                        status = 'fulfills_prediction'
+                        break
+                    if account_id == to_id and abs(amount - pred_amt) < Decimal('0.01'):
+                        predicted_instance_id = pred_id
+                        used_predictions.add(pred_id)
+                        status = 'fulfills_prediction'
+                        break
+                else:
+                    if account_id == from_id and abs(amount - pred_amt) < Decimal('0.01'):
+                        predicted_instance_id = pred_id
+                        used_predictions.add(pred_id)
+                        status = 'fulfills_prediction'
+                        break
 
-            if matched:
-                status = 'fulfills_prediction'
-                predicted_instance_id = matched['id']
-                predictions += 1
-
-            else:
-                # Try matching variable predictions by fuzzy description
+            # 3️⃣ Fallback: match variable predictions by description
+            if status == 'new':
                 cursor.execute("""
-                    SELECT pi.id 
+                    SELECT pi.id
                     FROM predicted_instances pi
                     JOIN predicted_transactions pt ON pi.predicted_transaction_id = pt.id
                     WHERE pi.from_account_id = %s
@@ -127,13 +141,12 @@ for account in ofx.accounts:
                 """, (account_id, f"%{description[:5]}%", date_str))
                 prediction = cursor.fetchone()
 
-                if prediction:
-                    status = 'fulfills_prediction'
+                if prediction and prediction['id'] not in used_predictions:
                     predicted_instance_id = prediction['id']
-                    predictions += 1
+                    used_predictions.add(predicted_instance_id)
+                    status = 'fulfills_prediction'
 
-
-
+        # 4️⃣ Insert into staging table if needed
         if status in ('new', 'potential_duplicate', 'fulfills_prediction'):
             cursor.execute("""
                 INSERT INTO staging_transactions (

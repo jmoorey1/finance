@@ -1,21 +1,39 @@
 <?php
+// Include DB connection and common page layout
 require_once '../config/db.php';
 include '../layout/header.php';
 
-// Determine the current financial month
+// ----------------------------
+// Determine Financial Month (13th to 12th of following month)
+// ----------------------------
+
+// Get today's date
 $today = new DateTime();
+
+// If we're before the 13th, use previous month as the "financial" month
 $monthOffset = ((int)$today->format('d') < 13) ? -1 : 0;
-$start_date = (clone $today)->modify("$monthOffset month")->setDate((int)$today->format('Y'), (int)$today->format('m'), 13);
+$inputMonth = (clone $today)->modify("$monthOffset month");
+
+// Start date is always 13th of the chosen month
+$start_date = new DateTime($inputMonth->format('Y-m-13'));
+
+// End date is 12th of the next month
 $end_date = (clone $start_date)->modify('+1 month')->modify('-1 day');
 
-// Load category metadata
+// ----------------------------
+// Load Expense Category Metadata
+// ----------------------------
+
 $categories = [];
-$stmt = $pdo->query("SELECT id, name, parent_id, type, fixedness, priority FROM categories where type='expense'");
+$stmt = $pdo->query("SELECT id, name, parent_id, type, fixedness, priority FROM categories WHERE type='expense'");
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $categories[$row['id']] = $row;
 }
 
-// Load budgets for current month
+// ----------------------------
+// Load Budgets for Current Financial Month
+// ----------------------------
+
 $budgets = [];
 $stmt = $pdo->prepare("SELECT category_id, amount FROM budgets WHERE month_start = ?");
 $stmt->execute([$start_date->format('Y-m-d')]);
@@ -23,44 +41,80 @@ foreach ($stmt as $row) {
     $budgets[$row['category_id']] = floatval($row['amount']);
 }
 
-// Load actuals (splits + direct)
+// ----------------------------
+// Load Actual Spend Data (Transactions + Splits + Predicted Instances)
+// Grouped by Parent Category ID if exists
+// Only include variable expenses
+// ----------------------------
+
 $actuals = [];
 $stmt = $pdo->prepare("
-    SELECT category_id, SUM(amount) AS total FROM (
-        SELECT s.category_id, s.amount
-        FROM transaction_splits s
-        JOIN transactions t ON s.transaction_id = t.id
-        WHERE t.date BETWEEN ? AND ?
-        UNION ALL
-        SELECT t.category_id, t.amount
+    SELECT category_id, -SUM(amount) AS total FROM (
+        -- Unsplitted transactions
+        SELECT IFNULL(c.parent_id, c.id) AS category_id, t.amount
         FROM transactions t
-        LEFT JOIN transaction_splits s ON s.transaction_id = t.id
-        WHERE t.date BETWEEN ? AND ? AND s.id IS NULL
-    ) all_data
+        JOIN categories c ON t.category_id = c.id
+        LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+        WHERE c.type = 'expense'
+          AND par_cat.fixedness = 'variable'
+          AND t.date BETWEEN ? AND ?
+
+        UNION ALL
+
+        -- Split transactions
+        SELECT IFNULL(c.parent_id, c.id) AS category_id, sp.amount
+        FROM transaction_splits sp
+        JOIN categories c ON sp.category_id = c.id
+        JOIN transactions tr ON tr.id = sp.transaction_id
+        LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+        WHERE c.type = 'expense'
+          AND par_cat.fixedness = 'variable'
+          AND tr.date BETWEEN ? AND ?
+
+        UNION ALL
+
+        -- Predicted (upcoming or missed) expenses
+        SELECT IFNULL(c.parent_id, c.id) AS category_id, pi.amount
+        FROM predicted_instances pi
+        JOIN categories c ON pi.category_id = c.id
+        LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+        WHERE c.type = 'expense'
+          AND par_cat.fixedness = 'variable'
+          AND pi.scheduled_date BETWEEN ? AND ?
+    ) raw_data
     GROUP BY category_id
 ");
 $stmt->execute([
-    $start_date->format('Y-m-d'), $end_date->format('Y-m-d'),
-    $start_date->format('Y-m-d'), $end_date->format('Y-m-d')
+    $start_date->format('Y-m-d'), $end_date->format('Y-m-d'), // transactions
+    $start_date->format('Y-m-d'), $end_date->format('Y-m-d'), // splits
+    $start_date->format('Y-m-d'), $end_date->format('Y-m-d')  // predictions
 ]);
+
 foreach ($stmt as $row) {
-    $actuals[$row['category_id']] = floatval($row['total']);
+    $actuals[$row['category_id']] = floatval($row['total']); // Force float, negative already applied in SQL
 }
 
-// Flagged categories
+// ----------------------------
+// Analyse Spending vs Budget
+// ----------------------------
+
 $overspent = [];
 $underspent = [];
 $totals = [];
 
 foreach ($actuals as $cat_id => $actual) {
     $meta = $categories[$cat_id] ?? null;
+
+    // Skip if no metadata or not an expense category
     if (!$meta || $meta['type'] !== 'expense') continue;
 
     $budget = $budgets[$cat_id] ?? 0;
     $fixed = $meta['fixedness'] === 'fixed';
 
+    // Focus only on variable categories with defined budget
     if ($budget > 0 && !$fixed) {
         if ($actual > $budget) {
+            // Overspent: actual > budget
             $overspent[] = [
                 'name' => $meta['name'],
                 'actual' => $actual,
@@ -68,6 +122,7 @@ foreach ($actuals as $cat_id => $actual) {
                 'variance' => $actual - $budget
             ];
         } elseif ($actual < 0.5 * $budget) {
+            // Underspent significantly (less than 50%)
             $underspent[] = [
                 'name' => $meta['name'],
                 'actual' => $actual,
@@ -77,31 +132,73 @@ foreach ($actuals as $cat_id => $actual) {
         }
     }
 
-    // Group totals by name
+    // Group totals under parent category name (for ranking)
     $parent_id = $meta['parent_id'] ?? null;
     $name = $parent_id ? $categories[$parent_id]['name'] : $meta['name'];
     $totals[$name] = ($totals[$name] ?? 0) + $actual;
 }
 
-// Top spending categories
-arsort($totals);
+// ----------------------------
+// Identify Top Spending Categories
+// ----------------------------
+
+arsort($totals); // Descending by spend
 $top_categories = array_slice($totals, 0, 5, true);
 
-// Top vendors by description
+// ----------------------------
+// Identify Top Vendors by Description
+// Across transaction, split, and predicted descriptions
+// ----------------------------
+
 $stmt = $pdo->prepare("
-    SELECT t.description, SUM(t.amount) AS total
-    FROM transactions t
-	join categories c on t.category_id=c.id
-    WHERE c.type = 'expense'
-    AND t.date BETWEEN ? AND ?
-    GROUP BY t.description
-    ORDER BY total ASC
+    SELECT description, -SUM(amount) AS total FROM (
+        -- Direct transactions
+        SELECT t.description, t.amount
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+        WHERE c.type = 'expense'
+          AND par_cat.fixedness = 'variable'
+          AND t.date BETWEEN ? AND ?
+
+        UNION ALL
+
+        -- Split transactions
+        SELECT tr.description, sp.amount
+        FROM transaction_splits sp
+        JOIN categories c ON sp.category_id = c.id
+        JOIN transactions tr ON tr.id = sp.transaction_id
+        LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+        WHERE c.type = 'expense'
+          AND par_cat.fixedness = 'variable'
+          AND tr.date BETWEEN ? AND ?
+
+        UNION ALL
+
+        -- Predicted entries
+        SELECT pi.description, pi.amount
+        FROM predicted_instances pi
+        JOIN categories c ON pi.category_id = c.id
+        LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+        WHERE c.type = 'expense'
+          AND par_cat.fixedness = 'variable'
+          AND pi.scheduled_date BETWEEN ? AND ?
+    ) raw_data
+    GROUP BY description
+    ORDER BY total DESC
     LIMIT 5
 ");
-$stmt->execute([$start_date->format('Y-m-d'), $end_date->format('Y-m-d')]);
+
+$stmt->execute([
+    $start_date->format('Y-m-d'), $end_date->format('Y-m-d'), // transactions
+    $start_date->format('Y-m-d'), $end_date->format('Y-m-d'), // splits
+    $start_date->format('Y-m-d'), $end_date->format('Y-m-d')  // predictions
+]);
+
 $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
+<!-- HTML Rendering -->
 <h1 class="mb-4">📊 Spending Insights</h1>
 <h5><?= $start_date->format('j M Y') ?> – <?= $end_date->format('j M Y') ?></h5>
 
