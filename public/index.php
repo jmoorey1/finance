@@ -5,7 +5,8 @@ require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
 require_once '../scripts/get_missed_predictions.php';
 require_once '../scripts/get_missed_statements.php';
-require_once '../scripts/get_insights.php';
+$headlines = require_once '../scripts/get_insights.php';
+
 
 include '../layout/header.php';
 
@@ -30,7 +31,19 @@ $missed_state = get_missed_statements($pdo);
 
 <h1 class="mb-4">Dashboard</h1>
 
-
+<!-- 📊 Monthly Financial Insights -->
+<div class="mb-4">
+    <h4>📊 Monthly Insights (<?= $start_month->format('F Y') ?>)</h4>
+    <?php if (count($headlines) > 0): ?>
+        <ul class="list-group">
+            <?php foreach ($headlines as $line): ?>
+                <li class="list-group-item"><?= nl2br(htmlspecialchars($line)) ?></li>
+            <?php endforeach; ?>
+        </ul>
+    <?php else: ?>
+        <p class="text-muted">No headlines yet — keep spending and we'll have something to report!</p>
+    <?php endif; ?>
+</div>
 
 
 <!-- 💼 Account Balances -->

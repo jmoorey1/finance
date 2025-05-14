@@ -70,23 +70,23 @@
                         <li><a class="dropdown-item" href="/finance/public/ledger.php">Ledger</a></li>
                     </ul>
                 </li>
-		<li class="nav-item dropdown">
+				<li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Planning</a>
                     <ul class="dropdown-menu" aria-labelledby="settingsDropdown">
-                        <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
                         <li><a class="dropdown-item" href="/finance/public/predicted.php">Predicted Transactions</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
                         <li><a class="dropdown-item" href="/finance/public/project_fund.php">Project Fund Review</a></li>
-                    </ul>
-                </li>
-		<li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Review</a>
-                    <ul class="dropdown-menu" aria-labelledby="settingsDropdown">
                         <li><a class="dropdown-item" href="/finance/public/projects.php">Projects and Trips Review</a></li>
                         <li><a class="dropdown-item" href="/finance/public/earmarks.php">Fund Review</a></li>
-                        <li><a class="dropdown-item" href="/finance/public/analytics_monthly.php">Monthly Analytics</a></li>
-                        <li><a class="dropdown-item" href="/finance/public/analytics_yoy_totals.php">Year-on-Year Analytics</a></li>
                     </ul>
                 </li>
+				<li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Review</a>
+                    <ul class="dropdown-menu" aria-labelledby="settingsDropdown">
+                        <li><a class="dropdown-item" href="/finance/public/predicted.php">Predicted Transactions</a></li>
+
+                    </ul>
+
             </ul>
         </div>
     </div>

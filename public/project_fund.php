@@ -33,12 +33,28 @@ function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
     return (float)($row['projected'] ?? 0);
 }
 
+// Get earmarks
+$earmarks = [];
+
+$stmt = $pdo->query("
+    SELECT em.remaining, e.name
+    FROM (
+        SELECT SUM(t.amount) AS remaining, t.earmark_id
+        FROM transactions t
+        WHERE t.earmark_id IS NOT NULL
+        GROUP BY t.earmark_id
+    ) em
+    JOIN earmarks e ON e.id = em.earmark_id
+    WHERE em.remaining > 0
+");
+
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $earmarks[$row['name']] = floatval($row['remaining']);
+}
+
+
 // Config
 $savings_account_id = 24;
-$earmarks = [
-    'Teddy\'s Inheritance' => 10000,
-    'Grandad\'s Money for Travel' => 4812.91
-];
 $solvency_fund = 8500;
 $year = 2025;
 $months = [];

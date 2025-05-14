@@ -22,6 +22,18 @@ $selected_categories = $_GET['category_id'] ?? [];
 $parent_filter = $_GET['parent_id'] ?? '';
 $search_term = trim($_GET['description'] ?? '');
 $search_like = '%' . $search_term . '%';
+// Add to your existing filter logic:
+$projectFilter = '';
+if (isset($_GET['project_id']) && is_numeric($_GET['project_id'])) {
+    $project_id = (int) $_GET['project_id'];
+    $projectFilter = "AND (t.project_id = $project_id)";
+}
+$earmarkFilter = '';
+if (isset($_GET['earmark_id']) && is_numeric($_GET['earmark_id'])) {
+$earmark_id = (int) $_GET['earmark_id'];
+$earmarkFilter = "AND (t.earmark_id = $earmark_id)";
+}
+
 
 // Load categories
 $categories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE type IN ('income','expense') ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -63,14 +75,17 @@ $query = "
 		CASE 
 			WHEN s.id IS NOT NULL THEN s.amount
 			ELSE t.amount
-		END AS amount, t.description, IFNULL(cs.name, ct.name) AS category
+		END AS amount, coalesce(p.name, t.description) as description, IFNULL(cs.name, ct.name) AS category
 	FROM transactions t
 	LEFT JOIN transaction_splits s ON t.id = s.transaction_id
 	LEFT JOIN categories cs ON cs.id = s.category_id
 	LEFT JOIN categories ct ON ct.id = t.category_id
+    left join payees p on p.id = t.payee_id
     WHERE t.account_id IN ($account_placeholders)
       AND t.date BETWEEN ? AND ?
       $category_clause
+      $projectFilter
+      $earmarkFilter
       AND t.description LIKE ?
     UNION ALL
     SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, p.amount, p.description, c.name as category
