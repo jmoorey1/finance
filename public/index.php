@@ -81,10 +81,20 @@ $missed_state = get_missed_statements($pdo);
     <?php if (count($missed) > 0): ?>
         <ul class="list-group">
             <?php foreach ($missed as $m): ?>
+                <?php
+                    $scheduled = new DateTime($m['scheduled_date']);
+                    $today = new DateTime();
+                    $days_late = $today->diff($scheduled)->days;
+                    $is_late = $today > $scheduled;
+                ?>
                 <li class="list-group-item d-flex justify-content-between align-items-center">
                     <span>
-                        <?= htmlspecialchars($m['scheduled_date']) ?> – 
-                        <?= htmlspecialchars($m['description'] ?? $m['category']) ?>
+                        <?= htmlspecialchars($m['scheduled_date']) ?>
+                        <?php if ($is_late): ?>
+                            (<?= $days_late ?> day<?= $days_late !== 1 ? 's' : '' ?> late)
+                        <?php endif; ?>
+                        – <?= htmlspecialchars($m['description'] ?? $m['category']) ?> 
+                        (<?= htmlspecialchars($m['acc_name']) ?>)
                     </span>
                     <span>£<?= number_format($m['amount'], 2) ?></span>
                 </li>
@@ -94,6 +104,7 @@ $missed_state = get_missed_statements($pdo);
         <p class="text-muted">No missed predicted transactions.</p>
     <?php endif; ?>
 </div>
+
 
 <!-- ⏳ Missed Statements -->
 <div class="mb-4">

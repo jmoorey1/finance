@@ -1,11 +1,16 @@
 <?php include '../layout/header.php'; ?>
-
 <?php
 require_once '../config/db.php';
 $conn = get_db_connection();
 
-// Get all non-transfer categories for selection
-$categoryOptions = $conn->query("SELECT id, name FROM categories WHERE type != 'transfer' or type is null ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+// Load full category hierarchy for dropdown rendering
+$allCategories = $conn->query("
+    SELECT c.id, c.name, c.type, c.parent_id, p.name AS parent_name
+    FROM categories c
+    LEFT JOIN categories p ON c.parent_id = p.id
+    WHERE c.type IN ('expense', 'income')
+    ORDER BY c.type, COALESCE(p.name, c.name), c.parent_id IS NOT NULL, c.name
+")->fetchAll(PDO::FETCH_ASSOC);
 
 // Fetch staging transactions
 $sql = "
@@ -14,7 +19,7 @@ $sql = "
            p.description AS predicted_description,
            t.id AS matched_transaction_id,
            t.description AS matched_transaction_desc,
-		   a.name AS account_name
+           a.name AS account_name
     FROM staging_transactions s
     LEFT JOIN predicted_instances p ON s.predicted_instance_id = p.id
     LEFT JOIN transactions t ON s.matched_transaction_id = t.id
@@ -25,13 +30,58 @@ $stmt = $conn->prepare($sql);
 $stmt->execute();
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Group transactions by status
-$grouped = [
-    'all' => $rows,
-    'new' => array_filter($rows, fn($r) => $r['status'] === 'new'),
-    'fulfills_prediction' => array_filter($rows, fn($r) => $r['status'] === 'fulfills_prediction'),
-    'potential_duplicate' => array_filter($rows, fn($r) => $r['status'] === 'potential_duplicate')
-];
+// Prepare helper queries
+$payeeMatchStmt = $conn->prepare("
+    SELECT payee_id
+    FROM payee_patterns
+    WHERE ? LIKE match_pattern
+    ORDER BY LENGTH(match_pattern) DESC
+    LIMIT 1
+");
+$topCatsStmt = $conn->prepare("
+    SELECT category_id, c.name
+    FROM (
+        SELECT t.category_id
+        FROM transactions t
+        LEFT JOIN transaction_splits ts ON ts.transaction_id = t.id
+        WHERE ts.id IS NULL AND (t.description LIKE ? OR (? != 0 AND t.payee_id = ?))
+        UNION ALL
+        SELECT ts.category_id
+        FROM transactions t
+        JOIN transaction_splits ts ON ts.transaction_id = t.id
+        WHERE t.description LIKE ? OR (? != 0 AND t.payee_id = ?)
+    ) usage_data
+    JOIN categories c ON c.id = usage_data.category_id
+    WHERE c.type IN ('expense', 'income')
+    GROUP BY category_id, c.name
+    ORDER BY COUNT(*) DESC
+    LIMIT 5
+");
+
+
+// Categorize transactions and attach top categories
+$grouped = ['all' => [], 'new' => [], 'fulfills_prediction' => [], 'potential_duplicate' => []];
+
+foreach ($rows as $row) {
+    $row['top_categories'] = [];
+
+    if ($row['status'] === 'new') {
+        $descPattern = '%' . $row['description'] . '%';
+        $desc = $row['description'];
+        $payeeMatchStmt->execute([$desc]);
+        $payee_id = (int) ($payeeMatchStmt->fetchColumn() ?? 0);
+
+        $topCatsStmt->execute([
+            $descPattern, $payee_id, $payee_id,
+            $descPattern, $payee_id, $payee_id
+        ]);
+
+        $row['top_categories'] = $topCatsStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    $grouped['all'][] = $row;
+    $grouped[$row['status']][] = $row;
+}
 ?>
 
 <!DOCTYPE html>
@@ -56,10 +106,7 @@ $grouped = [
         th, td { border: 1px solid #ccc; padding: 8px; vertical-align: top; }
         th { background-color: #f0f0f0; }
         tr:nth-child(even) { background-color: #fafafa; }
-        form { margin: 0; }
         .note { font-size: 0.85em; color: #666; }
-        .actions { margin-top: 10px; }
-        .split-section { margin-top: 10px; }
     </style>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
@@ -68,10 +115,9 @@ $grouped = [
 <h1>Review Staging Transactions</h1>
 
 <div class="tabs">
-    <span class="tab-btn" data-tab="all">All (<?= count($grouped['all']) ?>)</span>
-    <span class="tab-btn" data-tab="new">New (<?= count($grouped['new']) ?>)</span>
-    <span class="tab-btn" data-tab="fulfills_prediction">Predicted Matches (<?= count($grouped['fulfills_prediction']) ?>)</span>
-    <span class="tab-btn" data-tab="potential_duplicate">Duplicates (<?= count($grouped['potential_duplicate']) ?>)</span>
+    <?php foreach ($grouped as $key => $list): ?>
+        <span class="tab-btn" data-tab="<?= $key ?>"><?= ucfirst(str_replace('_', ' ', $key)) ?> (<?= count($list) ?>)</span>
+    <?php endforeach; ?>
 </div>
 
 <?php foreach ($grouped as $group => $entries): ?>
@@ -125,15 +171,41 @@ $grouped = [
                                     <input type="hidden" name="staging_transaction_id" value="<?= $row['id'] ?>">
 
                                     <!-- Category Dropdown -->
-                                    <label>
-                                        Category:
-                                        <select name="category_id" class="category-select" data-parent-id="<?= $row['id'] ?>">
-                                            <?php foreach ($categoryOptions as $cat): ?>
-                                                <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-                                            <?php endforeach; ?>
+
+									<label>Category:
+										<select name="category_id" class="category-select" data-parent-id="<?= $row['id'] ?>">
+											<?php if (isset($row['top_categories']) && is_array($row['top_categories']) && count($row['top_categories']) > 0): ?>
+												<optgroup label="Suggested Categories">
+												<?php foreach ($row['top_categories'] as $cat): ?>
+													<option value="<?= $cat['category_id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+												<?php endforeach; ?>
+												</optgroup>
+											<?php endif; ?>
+
+											<?php
+											$lastType = null;
+											foreach ($allCategories as $cat):
+												if ($cat['type'] !== $lastType):
+													if ($lastType !== null) echo "</optgroup>";
+													echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
+													$lastType = $cat['type'];
+												endif;
+
+												$indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+												
+												$alreadySuggested = isset($row['top_categories']) && is_array($row['top_categories']) ? array_column($row['top_categories'], 'category_id') : [];
+												if (!in_array($cat['id'], $alreadySuggested)):
+											?>
+												<option value="<?= $cat['id'] ?>"><?= $indent . htmlspecialchars($cat['name']) ?></option>
+											<?php
+												endif;
+											endforeach;
+											echo "</optgroup>";
+											?>
+											<option value="197">-- Split/Multiple Categories --</option>
 											<option value="-1">-- Mark as Transfer --</option>
-                                        </select>
-                                    </label>
+										</select>
+									</label>
 
 									<!-- 🔁 Transfer Pair Dropdown (shown only if category = -1) -->
 									<div class="transfer-section" style="display: none; margin-top: 10px;">
@@ -156,8 +228,9 @@ $grouped = [
 													  AND date BETWEEN ? AND ?
 												");
 												$candidates->execute([$row['id'], $opposite_amount, $start_date, $end_date]);
-												$candidates_count = $candidates->fetchAll(PDO::FETCH_ASSOC);
-												foreach ($candidates->fetchAll(PDO::FETCH_ASSOC) as $match) {
+												$candidates_list = $candidates->fetchAll(PDO::FETCH_ASSOC);
+												$candidates_count = count($candidates_list);
+												foreach ($candidates_list as $match) {
 													echo "<option value=\"staging_{$match['id']}\">[STAGING] {$match['description']} ({$match['date']}, {$match['amount']})</option>";
 												}
 
@@ -212,11 +285,38 @@ $grouped = [
                                             <tbody>
                                                 <tr>
                                                     <td>
-                                                        <select name="split_categories[]">
-                                                            <?php foreach ($categoryOptions as $cat): if ($cat['id'] != 197): ?>
-                                                                <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-                                                            <?php endif; endforeach; ?>
-                                                        </select>
+														<select name="split_categories[]">
+															<?php if (!empty($row['top_categories'])): ?>
+																<optgroup label="Suggested Categories">
+																<?php foreach ($row['top_categories'] as $cat): ?>
+																	<?php if ($cat['category_id'] != 197): ?>
+																		<option value="<?= $cat['category_id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+																	<?php endif; ?>
+																<?php endforeach; ?>
+																</optgroup>
+															<?php endif; ?>
+
+															<?php
+															$lastType = null;
+															foreach ($allCategories as $cat):
+																if ($cat['id'] == 197) continue;
+																if ($cat['type'] !== $lastType):
+																	if ($lastType !== null) echo "</optgroup>";
+																	echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
+																	$lastType = $cat['type'];
+																endif;
+
+																$alreadySuggested = isset($row['top_categories']) && is_array($row['top_categories']) ? array_column($row['top_categories'], 'category_id') : [];
+																if (!in_array($cat['id'], $alreadySuggested)):
+																	$indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+															?>
+																	<option value="<?= $cat['id'] ?>"><?= $indent . htmlspecialchars($cat['name']) ?></option>
+															<?php
+																endif;
+															endforeach;
+															echo "</optgroup>";
+															?>
+														</select>
                                                     </td>
                                                     <td><input type="number" step="0.01" name="split_amounts[]" required></td>
                                                     <td><button type="button" class="remove-split">−</button></td>
@@ -332,6 +432,4 @@ $(function () {
 
 
 
-</body>
-</html>
 <?php include '../layout/footer.php'; ?>

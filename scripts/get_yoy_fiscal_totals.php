@@ -3,53 +3,47 @@ require_once __DIR__ . '/../config/db.php';
 
 $pdo = get_db_connection();
 
-// Get the date range of available transactions
+// Step 1: Determine fiscal year boundaries
 $range_stmt = $pdo->query("SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM transactions");
 $range = $range_stmt->fetch();
 
 $min_date = new DateTime($range['min_date']);
 $max_date = new DateTime($range['max_date']);
 
-// Align to fiscal boundaries (Jan 13 – Jan 12)
-// If the min date is before Jan 13 of that year, FY starts Jan 13 of that year
-// Otherwise, first FY starts Jan 13 of the *next* year
-if ((int)$min_date->format('m') < 1 || ((int)$min_date->format('m') === 1 && (int)$min_date->format('d') < 13)) {
-    $first_fy_start = new DateTime($min_date->format('Y') . '-01-13');
-} else {
-    $first_fy_start = (new DateTime($min_date->format('Y') . '-01-13'))->modify('+1 year');
-}
+// Always begin fiscal years on January 13th
+$fiscal_years = [];
+$start = new DateTime($min_date->format('Y') . '-01-13');
+if ($min_date > $start) $start->modify('+1 year');
 
-// Extend until at least the FY that includes the max date
-$last_fy_end = new DateTime($max_date->format('Y-m-d'));
-if ($last_fy_end->format('m-d') > '01-12') {
-    $last_fy_end = new DateTime($last_fy_end->format('Y') . '-01-12');
-    $last_fy_end->modify('+1 year');
-} else {
-    $last_fy_end = new DateTime($last_fy_end->format('Y') . '-01-12');
-}
-
-// Build fiscal year boundaries
-$years = [];
-$current = clone $first_fy_start;
-while ($current < $last_fy_end) {
-    $start = clone $current;
-    $end = (clone $start)->modify('+1 year')->modify('-1 day');
+while ($start < $max_date) {
     $label = 'FY' . $start->format('Y');
-    $years[$label] = [$start->format('Y-m-d'), $end->format('Y-m-d')];
-    $current->modify('+1 year');
+    $end = (clone $start)->modify('+1 year')->modify('-1 day');
+    $fiscal_years[$label] = [$start->format('Y-m-d'), $end->format('Y-m-d')];
+    $start->modify('+1 year');
 }
 
-// Load parent categories
-$cat_stmt = $pdo->prepare("SELECT id, name FROM categories WHERE parent_id IS NULL AND type = 'expense'");
+// Step 2: Load parent categories for both income and expense
+$cat_stmt = $pdo->prepare("SELECT id, name, type FROM categories WHERE parent_id IS NULL AND type IN ('income', 'expense')");
 $cat_stmt->execute();
-$categories = $cat_stmt->fetchAll(PDO::FETCH_KEY_PAIR); // [id => name]
+$all_cats = $cat_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$results = [];
+$income_cats = [];
+$expense_cats = [];
 
-// Query totals per category for each FY
-foreach ($years as $label => [$start_date, $end_date]) {
+foreach ($all_cats as $cat) {
+    if ($cat['type'] === 'income') {
+        $income_cats[$cat['id']] = $cat['name'];
+    } else {
+        $expense_cats[$cat['id']] = $cat['name'];
+    }
+}
+
+$results = ['income' => [], 'expense' => []];
+
+// Step 3: Run the query per FY
+foreach ($fiscal_years as $fy => [$start_date, $end_date]) {
     $stmt = $pdo->prepare("
-        SELECT IFNULL(top.id, c.id) AS cat_id, SUM(amount) AS total
+        SELECT COALESCE(top.id, c.id) AS cat_id, COALESCE(top.type, c.type) AS cat_type, SUM(amount) AS total
         FROM (
             SELECT s.amount, s.category_id
             FROM transaction_splits s
@@ -70,22 +64,32 @@ foreach ($years as $label => [$start_date, $end_date]) {
         ) all_txn
         JOIN categories c ON all_txn.category_id = c.id
         LEFT JOIN categories top ON c.parent_id = top.id
-        WHERE COALESCE(top.type, c.type) = 'expense'
-        GROUP BY cat_id
+        GROUP BY cat_id, cat_type
     ");
     $stmt->execute([$start_date, $end_date, $start_date, $end_date]);
 
     foreach ($stmt->fetchAll() as $row) {
+        $type = $row['cat_type'];
         $cat_id = $row['cat_id'];
-        $cat_name = $categories[$cat_id] ?? "Unknown ($cat_id)";
-        $amount = round(-$row['total'], 2); // Flip sign to positive
+        $amount = round($row['total'], 2);
 
-        if (!isset($results[$cat_name])) {
-            $results[$cat_name] = [];
-        }
-
-        $results[$cat_name][$label] = $amount;
+		if ($type === 'income') {
+			$name = $income_cats[$cat_id] ?? "Unknown";
+			if (!isset($results['income'][$cat_id])) {
+				$results['income'][$cat_id] = ['category_id' => $cat_id, 'name' => $name];
+			}
+			$results['income'][$cat_id][$fy] = $amount;
+		} elseif ($type === 'expense') {
+			$name = $expense_cats[$cat_id] ?? "Unknown";
+			if (!isset($results['expense'][$cat_id])) {
+				$results['expense'][$cat_id] = ['category_id' => $cat_id, 'name' => $name];
+			}
+			$results['expense'][$cat_id][$fy] = -$amount; // flip to positive
+		}
     }
 }
 
-return $results;
+return [
+    'income' => array_values($results['income']),
+    'expense' => array_values($results['expense'])
+];

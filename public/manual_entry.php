@@ -5,8 +5,13 @@ require_once '../config/db.php';
 
 // Fetch accounts and categories
 $accounts = $pdo->query("SELECT id, name, type FROM accounts where active=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-$categories = $pdo->query("SELECT id, name FROM categories ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
-
+$categories = $pdo->query("
+    SELECT c.id, c.name, c.type, c.parent_id, p.name AS parent_name
+    FROM categories c
+    LEFT JOIN categories p ON c.parent_id = p.id
+    WHERE c.type IN ('income', 'expense')
+    ORDER BY c.type, COALESCE(p.name, c.name), c.parent_id IS NOT NULL, c.name
+")->fetchAll(PDO::FETCH_ASSOC);
 $success = null;
 $error = null;
 
@@ -119,13 +124,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php endforeach; ?>
     </select>
 
-    <label for="category_id">Category</label>
-    <select name="category_id" required>
-        <option value="">Select category</option>
-        <?php foreach ($categories as $cat): ?>
-            <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-        <?php endforeach; ?>
-    </select>
+	<label for="category_id">Category</label>
+	<select name="category_id" required>
+		<option value="">Select category</option>
+
+		<?php
+		$last_type = null;
+		foreach ($categories as $cat):
+			if ($cat['type'] !== $last_type):
+				if ($last_type !== null) echo "</optgroup>";
+				echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
+				$last_type = $cat['type'];
+			endif;
+
+			$indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+			$label = $indent . htmlspecialchars($cat['name']);
+		?>
+			<option value="<?= $cat['id'] ?>"><?= $label ?></option>
+		<?php endforeach; ?>
+		</optgroup>
+	</select>
 
     <label for="amount">Amount</label>
     <input type="number" name="amount" step="0.01" required />

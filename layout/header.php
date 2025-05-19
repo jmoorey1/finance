@@ -85,6 +85,8 @@
                         <li><a class="dropdown-item" href="/finance/public/earmarks.php">Fund Review</a></li>
                         <li><a class="dropdown-item" href="/finance/public/analytics_monthly.php">Monthly Analytics</a></li>
                         <li><a class="dropdown-item" href="/finance/public/analytics_yoy_totals.php">Year-on-Year Analytics</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/category_report.php">Category</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/subcategory_report.php">Subcategory</a></li>
                     </ul>
                 </li>
             </ul>

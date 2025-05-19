@@ -168,7 +168,8 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
 
 
                 $section_rows .= "<tr>
-                    <td>" . htmlspecialchars($cat['name']) . "</td>
+
+					<td><a href='category_report.php?category_id=" . htmlspecialchars($cat['id']) . "'>" . htmlspecialchars($cat['name']) . "</a></td>
                     <td class='text-end'>£" . number_format($budget, 2) . "</td>
                     <td class='text-end'>". $actual_link ."</td>
                     <td class='text-end'>". $forecast_link ."</td>

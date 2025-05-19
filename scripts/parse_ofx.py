@@ -134,7 +134,6 @@ for account in ofx.accounts:
                     FROM predicted_instances pi
                     JOIN predicted_transactions pt ON pi.predicted_transaction_id = pt.id
                     WHERE pi.from_account_id = %s
-                      AND pt.variable = 1
                       AND pi.description LIKE %s
                       AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
                     LIMIT 1

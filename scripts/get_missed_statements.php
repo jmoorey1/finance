@@ -32,7 +32,7 @@ function get_missed_statements(PDO $pdo): array {
 			  LPAD(a.statement_day, 2, '0')
 			),
 			'%Y-%m-%d'
-		  ) <= curdate()
+		  ) < curdate()
 		GROUP BY a.name, statement_date
 		ORDER BY a.name, statement_date
     ");
