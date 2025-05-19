@@ -71,7 +71,7 @@ if (!empty($selected_categories)) {
 // SQL query
 $query = "
 	SELECT 
-		'Actual' AS source, t.date, t.account_id,
+		'Actual' AS source, t.id, t.date, t.account_id,
 		CASE 
 			WHEN s.id IS NOT NULL THEN s.amount
 			ELSE t.amount
@@ -88,7 +88,7 @@ $query = "
       $earmarkFilter
       AND t.description LIKE ?
     UNION ALL
-    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, p.amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
+    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, p.amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
     WHERE c.type IN ('income', 'expense')
@@ -103,7 +103,7 @@ if (!empty($selected_categories)) {
 
 $query .= "
     UNION ALL
-    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
+    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
     WHERE c.type = 'transfer'
@@ -118,7 +118,7 @@ if (!empty($selected_categories)) {
 
 $query .= "
     UNION ALL
-    SELECT 'Predicted' AS source, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
+    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
     WHERE p.to_account_id IN ($account_placeholders)
@@ -190,56 +190,60 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </form>
 
 <?php if ($ledger): ?>
-    <table class="table table-striped table-sm align-middle">
-        <thead>
-            <tr>
-                <th>Date</th>
-                <th>Account</th>
-                <th>Description</th>
-                <th>Category</th>
-                <th class="text-end">Amount</th>
-                <th>Source</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php foreach ($ledger as $entry): ?>
-                <?php
-                    $acct_name = '';
-                    foreach ($accounts as $acct) {
-                        if ($acct['id'] == $entry['account_id']) {
-                            $acct_name = $acct['name'];
-                            break;
-                        }
-                    }
-                ?>
+	<table class="table table-striped table-sm align-middle">
+		<thead>
 			<tr>
-				<td><?= $entry['date'] ?></td>
-				<td><?= htmlspecialchars($acct_name) ?></td>
-				<td><?= htmlspecialchars($entry['description']) ?></td>
-				<td>
-					<?php if ($entry['cat_type'] !== 'transfer'): ?>
-						<?php if (!empty($entry['sub_flag']) && $entry['sub_flag'] == 1): ?>
-							<a href="subcategory_report.php?subcategory_id=<?= $entry['cat_id'] ?>">
-								<?= htmlspecialchars($entry['category']) ?>
-							</a>
-						<?php else: ?>
-							<a href="category_report.php?category_id=<?= $entry['cat_id'] ?>">
-								<?= htmlspecialchars($entry['category']) ?>
-							</a>
-						<?php endif; ?>
-					<?php else: ?>
-						<?= htmlspecialchars($entry['category']) ?>
-					<?php endif; ?>
-				</td>
-				<td class="text-end <?= $entry['amount'] < 0 ? 'text-danger' : '' ?>">
-					£<?= number_format($entry['amount'], 2) ?>
-				</td>
-				<td><?= $entry['source'] ?></td>
+				<th>Date</th>
+				<th>Account</th>
+				<th>Description</th>
+				<th>Category</th>
+				<th class="text-end">Amount</th>
+				<th>Source</th>
+				<th></th> <!-- Pencil column -->
 			</tr>
+		</thead>
+		<tbody>
+			<?php foreach ($ledger as $entry): ?>
+				<?php
+					$acct_name = '';
+					foreach ($accounts as $acct) {
+						if ($acct['id'] == $entry['account_id']) {
+							$acct_name = $acct['name'];
+							break;
+						}
+					}
+				?>
+				<tr>
+					<td><?= $entry['date'] ?></td>
+					<td><?= htmlspecialchars($acct_name) ?></td>
+					<td><?= htmlspecialchars($entry['description']) ?></td>
+					<td>
+						<?php if ($entry['cat_type'] !== 'transfer'): ?>
+							<?php if (!empty($entry['sub_flag']) && $entry['sub_flag'] == 1): ?>
+								<a href="subcategory_report.php?subcategory_id=<?= $entry['cat_id'] ?>">
+									<?= htmlspecialchars($entry['category']) ?>
+								</a>
+							<?php else: ?>
+								<a href="category_report.php?category_id=<?= $entry['cat_id'] ?>">
+									<?= htmlspecialchars($entry['category']) ?>
+								</a>
+							<?php endif; ?>
+						<?php else: ?>
+							<?= htmlspecialchars($entry['category']) ?>
+						<?php endif; ?>
+					</td>
+					<td class="text-end <?= $entry['amount'] < 0 ? 'text-danger' : '' ?>">
+						£<?= number_format($entry['amount'], 2) ?>
+					</td>
+					<td><?= $entry['source'] ?></td>
+					<td>
+						<?= $entry['id'] != '' ? '<a href="transaction_edit.php?id=' . $entry['id'] . '" title="Edit Transaction">✏️</a>' : '' ?>
+					</td>
+				</tr>
+			<?php endforeach; ?>
+		</tbody>
+	</table>
 
-            <?php endforeach; ?>
-        </tbody>
-    </table>
 <?php else: ?>
     <p>No results found for the selected criteria.</p>
 <?php endif; ?>

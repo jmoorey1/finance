@@ -78,7 +78,7 @@ while ($row = $sub_stmt->fetch(PDO::FETCH_ASSOC)) {
 
 
 $stmt = $pdo->prepare("
-	SELECT 'Actual' AS source, t.date, t.amount, t.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
+	SELECT 'Actual' AS source, t.id, t.date, t.amount, t.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
     FROM transactions t
     join categories c on t.category_id=c.id
     left join categories top on c.parent_id=top.id
@@ -89,7 +89,7 @@ $stmt = $pdo->prepare("
 	
 	UNION ALL
 	
-	Select 'Split' AS source, t.date, ts.amount, t.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
+	Select 'Split' AS source, t.id, t.date, ts.amount, t.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
 	from transaction_splits ts
 	join transactions t on t.id=ts.transaction_id
     join categories c on ts.category_id=c.id
@@ -99,7 +99,7 @@ $stmt = $pdo->prepare("
 	
     
     UNION ALL
-    SELECT 'Predicted' AS source, pi.scheduled_date, pi.amount, pi.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
+    SELECT 'Predicted' AS source, '' as id, pi.scheduled_date, pi.amount, pi.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
     FROM predicted_instances pi
     join categories c on pi.category_id=c.id
     left join categories top on c.parent_id=top.id
@@ -141,7 +141,7 @@ echo "<h2>Category Report: " . htmlspecialchars($cat_name) . "</h2>";
 
 <h3>Transactions (<?= $start->format('d M') ?>–<?= $end->format('d M Y') ?>)</h3>
 <table class="table table-striped table-sm align-middle">
-  <tr><th>Date</th><th>Amount</th><th>Description</th><th>Category</th><th>Source</th></tr>
+  <tr><th>Date</th><th>Amount</th><th>Description</th><th>Category</th><th>Source</th><th></th></tr>
   <?php foreach ($transactions as $tx): ?>
     <tr>
       <td><?= $tx['date'] ?></td>
@@ -159,6 +159,9 @@ echo "<h2>Category Report: " . htmlspecialchars($cat_name) . "</h2>";
         <?php endif; ?>
       </td>
       <td><?= $tx['source'] ?></td>
+      <td>
+	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '" title="Edit Transaction">✏️</a>' : '' ?>
+	  </td>
     </tr>
   <?php endforeach; ?>
 </table>

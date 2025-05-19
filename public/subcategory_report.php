@@ -84,15 +84,15 @@ while ($row = $sub_stmt->fetch(PDO::FETCH_ASSOC)) {
 
 // Transaction detail list
 $tx_stmt = $pdo->prepare("
-    SELECT 'Actual' AS source, t.date, t.amount, t.description FROM transactions t
+    SELECT 'Actual' AS source, t.id, t.date, t.amount, t.description FROM transactions t
     WHERE category_id = ? AND date BETWEEN ? AND ?
     UNION ALL
-    SELECT 'Split' AS source, t.date, ts.amount, t.description
+    SELECT 'Split' AS source, t.id, t.date, ts.amount, t.description
     FROM transaction_splits ts
     JOIN transactions t ON t.id = ts.transaction_id
     WHERE ts.category_id = ? AND t.date BETWEEN ? AND ?
     UNION ALL
-    SELECT 'Predicted' AS source, scheduled_date, amount, description
+    SELECT 'Predicted' AS source, '' as id, scheduled_date, amount, description
     FROM predicted_instances
     WHERE category_id = ? AND scheduled_date BETWEEN ? AND ?
     ORDER BY date DESC
@@ -143,13 +143,16 @@ $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <h3>Transactions (<?= $start->format('d M') ?>–<?= $end->format('d M Y') ?>)</h3>
 <table class="table table-striped table-sm align-middle">
-  <tr><th>Date</th><th>Amount</th><th>Description</th><th>Source</th></tr>
+  <tr><th>Date</th><th>Amount</th><th>Description</th><th>Source</th><th></th></tr>
   <?php foreach ($transactions as $tx): ?>
     <tr>
       <td><?= $tx['date'] ?></td>
       <td>£<?= number_format($tx['amount'], 2) ?></td>
       <td><?= htmlspecialchars($tx['description']) ?></td>
       <td><?= $tx['source'] ?></td>
+      <td>
+	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '" title="Edit Transaction">✏️</a>' : '' ?>
+	  </td>
     </tr>
   <?php endforeach; ?>
 </table>

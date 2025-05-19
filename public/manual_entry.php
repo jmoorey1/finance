@@ -82,23 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 ?>
 
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Manual Entry</title>
-    <style>
-        body { font-family: sans-serif; margin: 2em; }
-        form { margin-bottom: 2em; border: 1px solid #ccc; padding: 1em; }
-        label { display: block; margin-top: 0.5em; }
-        input, select { width: 100%; padding: 6px; margin-top: 2px; }
-        .section-title { font-weight: bold; font-size: 1.2em; margin-top: 1em; }
-        .submit-btn { margin-top: 1em; }
-        .message { padding: 10px; margin-bottom: 10px; }
-        .success { background: #e0ffe0; border: 1px solid #4caf50; }
-        .error { background: #ffe0e0; border: 1px solid #f44336; }
-    </style>
-</head>
-<body>
+
 
 <h1>Manually Add Transactions</h1>
 
