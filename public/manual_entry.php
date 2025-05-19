@@ -48,7 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->exec("INSERT INTO transfer_groups () VALUES ()");
             $group_id = $pdo->lastInsertId();
 
-            // Look up categories for both sides
             $stmt = $pdo->prepare("SELECT id FROM categories WHERE linked_account_id = ? AND name LIKE ?");
             $stmt->execute([$to_id, 'Transfer To :%']);
             $from_cat = $stmt->fetchColumn();
@@ -82,8 +81,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 ?>
 
-
-
 <h1>Manually Add Transactions</h1>
 
 <?php if ($success): ?>
@@ -92,85 +89,139 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="message error"><?= $error ?></div>
 <?php endif; ?>
 
+<style>
+    .form-section {
+        border: 1px solid #ccc;
+        padding: 20px;
+        margin-bottom: 30px;
+        border-radius: 8px;
+        background: #f9f9f9;
+    }
+    .form-section h2 {
+        margin-top: 0;
+        font-size: 1.3em;
+        color: #444;
+    }
+    .form-group {
+        margin-bottom: 15px;
+    }
+    label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    input[type="text"],
+    input[type="date"],
+    input[type="number"],
+    select {
+        width: 100%;
+        max-width: 400px;
+        padding: 6px;
+        font-size: 1em;
+    }
+    .submit-btn {
+        margin-top: 10px;
+        padding: 10px 16px;
+        font-size: 1em;
+    }
+</style>
+
 <!-- Single Transaction Form -->
-<form method="POST">
+<form method="POST" class="form-section">
     <input type="hidden" name="form_type" value="single" />
-    <div class="section-title">Add Single Transaction</div>
+    <h2>Add Single Transaction</h2>
 
-    <label for="date">Date</label>
-    <input type="date" name="date" value="<?= date('Y-m-d') ?>" required />
+    <div class="form-group">
+        <label for="date">Date</label>
+        <input type="date" name="date" value="<?= date('Y-m-d') ?>" required />
+    </div>
 
-    <label for="account_id">Account</label>
-    <select name="account_id" required>
-        <option value="">Select account</option>
-        <?php foreach ($accounts as $acct): ?>
-            <option value="<?= $acct['id'] ?>"><?= htmlspecialchars($acct['name']) ?></option>
-        <?php endforeach; ?>
-    </select>
+    <div class="form-group">
+        <label for="account_id">Account</label>
+        <select name="account_id" required>
+            <option value="">Select account</option>
+            <?php foreach ($accounts as $acct): ?>
+                <option value="<?= $acct['id'] ?>"><?= htmlspecialchars($acct['name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
 
-	<label for="category_id">Category</label>
-	<select name="category_id" required>
-		<option value="">Select category</option>
+    <div class="form-group">
+        <label for="category_id">Category</label>
+        <select name="category_id" required>
+            <option value="">Select category</option>
+            <?php
+            $last_type = null;
+            foreach ($categories as $cat):
+                if ($cat['type'] !== $last_type):
+                    if ($last_type !== null) echo "</optgroup>";
+                    echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
+                    $last_type = $cat['type'];
+                endif;
 
-		<?php
-		$last_type = null;
-		foreach ($categories as $cat):
-			if ($cat['type'] !== $last_type):
-				if ($last_type !== null) echo "</optgroup>";
-				echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
-				$last_type = $cat['type'];
-			endif;
+                $indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+                $label = $indent . htmlspecialchars($cat['name']);
+            ?>
+                <option value="<?= $cat['id'] ?>"><?= $label ?></option>
+            <?php endforeach; ?>
+            </optgroup>
+        </select>
+    </div>
 
-			$indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
-			$label = $indent . htmlspecialchars($cat['name']);
-		?>
-			<option value="<?= $cat['id'] ?>"><?= $label ?></option>
-		<?php endforeach; ?>
-		</optgroup>
-	</select>
+    <div class="form-group">
+        <label for="amount">Amount</label>
+        <input type="number" name="amount" step="0.01" required />
+    </div>
 
-    <label for="amount">Amount</label>
-    <input type="number" name="amount" step="0.01" required />
-
-    <label for="description">Description</label>
-    <input type="text" name="description" required />
+    <div class="form-group">
+        <label for="description">Description</label>
+        <input type="text" name="description" required />
+    </div>
 
     <button class="submit-btn" type="submit">Add Transaction</button>
 </form>
 
 <!-- Transfer Form -->
-<form method="POST">
+<form method="POST" class="form-section">
     <input type="hidden" name="form_type" value="transfer" />
-    <div class="section-title">Add Transfer Between Accounts</div>
+    <h2>Add Transfer Between Accounts</h2>
 
-    <label for="date">Date</label>
-    <input type="date" name="date" value="<?= date('Y-m-d') ?>" required />
+    <div class="form-group">
+        <label for="date">Date</label>
+        <input type="date" name="date" value="<?= date('Y-m-d') ?>" required />
+    </div>
 
-    <label for="from_account_id">From Account</label>
-    <select name="from_account_id" required>
-        <option value="">Select account</option>
-        <?php foreach ($accounts as $acct): ?>
-            <option value="<?= $acct['id'] ?>"><?= htmlspecialchars($acct['name']) ?></option>
-        <?php endforeach; ?>
-    </select>
+    <div class="form-group">
+        <label for="from_account_id">From Account</label>
+        <select name="from_account_id" required>
+            <option value="">Select account</option>
+            <?php foreach ($accounts as $acct): ?>
+                <option value="<?= $acct['id'] ?>"><?= htmlspecialchars($acct['name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
 
-    <label for="to_account_id">To Account</label>
-    <select name="to_account_id" required>
-        <option value="">Select account</option>
-        <?php foreach ($accounts as $acct): ?>
-            <option value="<?= $acct['id'] ?>"><?= htmlspecialchars($acct['name']) ?></option>
-        <?php endforeach; ?>
-    </select>
+    <div class="form-group">
+        <label for="to_account_id">To Account</label>
+        <select name="to_account_id" required>
+            <option value="">Select account</option>
+            <?php foreach ($accounts as $acct): ?>
+                <option value="<?= $acct['id'] ?>"><?= htmlspecialchars($acct['name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
 
-    <label for="amount">Amount</label>
-    <input type="number" name="amount" step="0.01" required />
+    <div class="form-group">
+        <label for="amount">Amount</label>
+        <input type="number" name="amount" step="0.01" required />
+    </div>
 
-    <label for="description">Description</label>
-    <input type="text" name="description" required />
+    <div class="form-group">
+        <label for="description">Description</label>
+        <input type="text" name="description" required />
+    </div>
 
     <button class="submit-btn" type="submit">Add Transfer</button>
 </form>
 
-</body>
-</html>
 <?php include '../layout/footer.php'; ?>
