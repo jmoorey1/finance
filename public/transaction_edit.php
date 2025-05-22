@@ -143,50 +143,76 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
         </select>
     </div>
 
-    <!-- Split Section -->
-    <div id="split-section" style="margin-top: 20px; <?= $transaction['category_id'] == 197 ? '' : 'display: none;' ?>">
-        <h3>Split Categories</h3>
-        <table id="split-table">
-            <thead>
-                <tr>
-                    <th>Category</th>
-                    <th>Amount</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php if (!empty($splits)): foreach ($splits as $s): ?>
-                <tr>
-                    <td>
-                        <select name="split_categories[]">
-                            <?php foreach ($categories as $cat): ?>
-                                <option value="<?= $cat['id'] ?>" <?= $s['category_id'] == $cat['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($cat['name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </td>
-                    <td><input type="number" step="0.01" name="split_amounts[]" value="<?= $s['amount'] ?>" required></td>
-                    <td><button type="button" class="remove-split">−</button></td>
-                </tr>
-            <?php endforeach; else: ?>
-                <tr>
-                    <td>
-                        <select name="split_categories[]">
-                            <?php foreach ($categories as $cat): ?>
-                                <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </td>
-                    <td><input type="number" step="0.01" name="split_amounts[]" required></td>
-                    <td><button type="button" class="remove-split">−</button></td>
-                </tr>
-            <?php endif; ?>
-            </tbody>
-        </table>
-        <button type="button" id="add-split">+ Add Split</button>
-        <p id="split-warning" style="color: red; display: none;">⚠️ Split total must match <?= number_format($transaction['amount'], 2) ?></p>
-    </div>
+<!-- Split Section -->
+<div id="split-section" style="margin-top: 20px; <?= $transaction['category_id'] == 197 ? '' : 'display: none;' ?>">
+    <h3>Split Categories</h3>
+    <table id="split-table">
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Amount</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php if (!empty($splits)): foreach ($splits as $s): ?>
+            <tr>
+                <td>
+                    <select name="split_categories[]">
+                        <?php
+                        $lastType = null;
+                        foreach ($categories as $cat):
+                            if ($cat['type'] !== $lastType):
+                                if ($lastType !== null) echo "</optgroup>";
+                                echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
+                                $lastType = $cat['type'];
+                            endif;
+
+                            $indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+                            $selected = ($s['category_id'] == $cat['id']) ? 'selected' : '';
+                        ?>
+                            <option value="<?= $cat['id'] ?>" <?= $selected ?>>
+                                <?= $indent . htmlspecialchars($cat['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                        </optgroup>
+                    </select>
+                </td>
+                <td><input type="number" step="0.01" name="split_amounts[]" value="<?= $s['amount'] ?>" required></td>
+                <td><button type="button" class="remove-split">−</button></td>
+            </tr>
+        <?php endforeach; else: ?>
+            <tr>
+                <td>
+                    <select name="split_categories[]">
+                        <?php
+                        $lastType = null;
+                        foreach ($categories as $cat):
+                            if ($cat['type'] !== $lastType):
+                                if ($lastType !== null) echo "</optgroup>";
+                                echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
+                                $lastType = $cat['type'];
+                            endif;
+
+                            $indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+                        ?>
+                            <option value="<?= $cat['id'] ?>">
+                                <?= $indent . htmlspecialchars($cat['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                        </optgroup>
+                    </select>
+                </td>
+                <td><input type="number" step="0.01" name="split_amounts[]" required></td>
+                <td><button type="button" class="remove-split">−</button></td>
+            </tr>
+        <?php endif; ?>
+        </tbody>
+    </table>
+    <button type="button" id="add-split">+ Add Split</button>
+    <p id="split-warning" style="color: red; display: none;">⚠️ Split total must match <?= number_format($transaction['amount'], 2) ?></p>
+</div>
+
 
     <?php if ($counterparty): ?>
         <p><strong>Transfer Counterparty:</strong> <a href="transaction_edit.php?id=<?= $counterparty ?>">Edit Transaction #<?= $counterparty ?></a></p>
@@ -197,31 +223,59 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
 </form>
 
 <script>
-document.getElementById('category_id').addEventListener('change', function () {
+function toggleSplitSection() {
     const splitSection = document.getElementById('split-section');
-    if (parseInt(this.value) === 197) {
+    const inputs = splitSection.querySelectorAll('input, select');
+    const selectedCategory = parseInt(document.getElementById('category_id').value);
+
+    if (selectedCategory === 197) {
         splitSection.style.display = '';
+        inputs.forEach(el => el.disabled = false);
     } else {
         splitSection.style.display = 'none';
+        inputs.forEach(el => el.disabled = true);
     }
-});
+}
 
-document.getElementById('add-split').addEventListener('click', function () {
-    const table = document.getElementById('split-table').querySelector('tbody');
-    const row = table.querySelector('tr').cloneNode(true);
-    row.querySelector('input').value = '';
-    table.appendChild(row);
-});
-
-document.querySelectorAll('.remove-split').forEach(btn => {
-    btn.addEventListener('click', function () {
-        const row = this.closest('tr');
-        const table = row.parentNode;
-        if (table.children.length > 1) {
-            table.removeChild(row);
-        }
+function bindRemoveButtons() {
+    document.querySelectorAll('.remove-split').forEach(btn => {
+        btn.removeEventListener('click', handleRemoveSplit); // prevent duplicate binding
+        btn.addEventListener('click', handleRemoveSplit);
     });
+}
+
+function handleRemoveSplit(e) {
+    const row = this.closest('tr');
+    const table = row.parentNode;
+    if (table.children.length > 1) {
+        table.removeChild(row);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    // Initial toggle state
+    toggleSplitSection();
+
+    // Hook category selector
+    document.getElementById('category_id').addEventListener('change', toggleSplitSection);
+
+    // Add split row
+    document.getElementById('add-split').addEventListener('click', function () {
+        const table = document.getElementById('split-table').querySelector('tbody');
+        const row = table.querySelector('tr').cloneNode(true);
+
+        // Clear values
+        row.querySelector('input').value = '';
+        row.querySelectorAll('input, select').forEach(el => el.disabled = false);
+
+        table.appendChild(row);
+        bindRemoveButtons();
+    });
+
+    // Bind remove buttons initially
+    bindRemoveButtons();
 });
 </script>
+
 
 <?php include '../layout/footer.php'; ?>

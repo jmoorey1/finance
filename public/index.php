@@ -49,11 +49,12 @@ $missed_state = get_missed_statements($pdo);
 <!-- 💼 Account Balances -->
 <div class="mb-4">
     <h4>💼 Account Balances (As of Last Night)</h4>
-    <table class="table table-sm table-bordered">
+    <table class="table table-striped table-sm align-middle"">
         <thead class="table-light">
             <tr>
                 <th>Account</th>
                 <th>Type</th>
+                <th>Last Transaction</th>
                 <th class="text-end">Balance</th>
             </tr>
         </thead>
@@ -62,10 +63,15 @@ $missed_state = get_missed_statements($pdo);
                 <?php
                     $bal = (float) $b['balance_as_of_last_night'];
                     $is_negative = $b['account_type'] === 'current' && $bal < 0;
+					$last_tx = new DateTime($b['last_transaction']);
+					$start_query = (clone $last_tx)->modify('-1 month');
+                    $today = new DateTime();
+                    $days_ago = $today->diff($last_tx)->days;
                 ?>
                 <tr>
-                    <td><?= htmlspecialchars($b['account_name']) ?></td>
-                    <td><?= $b['account_type'] ?></td>
+                    <td><a href='ledger.php?accounts[]=<?= $b['account_id'] ?>&start=<?= $start_query->format('Y-m-d') ?>&end=<?= $today->format('Y-m-d') ?>'><?= htmlspecialchars($b['account_name']) ?></a></td>
+                    <td><?= ucfirst($b['account_type']) ?></td>
+                    <td><?= $last_tx->format('d M Y') ?> (<?= $days_ago ?> day<?= $days_ago !== 1 ? 's' : '' ?> ago)</td>
                     <td class="text-end <?= $is_negative ? 'text-danger fw-bold' : '' ?>">
                         £<?= number_format($bal, 2) ?>
                     </td>

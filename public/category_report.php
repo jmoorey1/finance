@@ -78,31 +78,38 @@ while ($row = $sub_stmt->fetch(PDO::FETCH_ASSOC)) {
 
 
 $stmt = $pdo->prepare("
-	SELECT 'Actual' AS source, t.id, t.date, t.amount, t.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
+	SELECT 'Actual' AS source, t.id, t.date, t.amount, a.name as account, COALESCE(p.name, t.description) as description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
     FROM transactions t
     join categories c on t.category_id=c.id
+    join accounts a on t.account_id=a.id
     left join categories top on c.parent_id=top.id
 	LEFT JOIN transaction_splits ts ON ts.transaction_id = t.id
+	left join payees p on p.id = t.payee_id
     WHERE coalesce(top.id, c.id) = ?
      AND t.date between ? and ?
 	 AND ts.transaction_id IS NULL
 	
 	UNION ALL
 	
-	Select 'Split' AS source, t.id, t.date, ts.amount, t.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
+	Select 'Split' AS source, t.id, t.date, ts.amount, a.name as account, COALESCE(p.name, t.description) as description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
 	from transaction_splits ts
 	join transactions t on t.id=ts.transaction_id
     join categories c on ts.category_id=c.id
+    join accounts a on t.account_id=a.id
     left join categories top on c.parent_id=top.id
+	left join payees p on p.id = t.payee_id
     WHERE coalesce(top.id, c.id) = ?
      AND t.date between ? and ?
 	
     
     UNION ALL
-    SELECT 'Predicted' AS source, '' as id, pi.scheduled_date, pi.amount, pi.description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
+    SELECT 'Predicted' AS source, '' as id, pi.scheduled_date, pi.amount, a.name as account, COALESCE(p.name, pi.description) as description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
     FROM predicted_instances pi
     join categories c on pi.category_id=c.id
+    join accounts a on pi.from_account_id=a.id
     left join categories top on c.parent_id=top.id
+	left join payee_patterns pp on pi.description like pp.match_pattern
+	left join payees p on pp.payee_id = p.id
     WHERE coalesce(top.id, c.id) = ?
     AND pi.scheduled_date between ? and ?
     
@@ -141,11 +148,12 @@ echo "<h2>Category Report: " . htmlspecialchars($cat_name) . "</h2>";
 
 <h3>Transactions (<?= $start->format('d M') ?>–<?= $end->format('d M Y') ?>)</h3>
 <table class="table table-striped table-sm align-middle">
-  <tr><th>Date</th><th>Amount</th><th>Description</th><th>Category</th><th>Source</th><th></th></tr>
+  <tr><th>Date</th><th>Amount</th><th>Account</th><th>Description</th><th>Category</th><th>Source</th><th></th></tr>
   <?php foreach ($transactions as $tx): ?>
     <tr>
       <td><?= $tx['date'] ?></td>
       <td>£<?= number_format($tx['amount'], 2) ?></td>
+      <td><?= htmlspecialchars($tx['account']) ?></td>
       <td><?= htmlspecialchars($tx['description']) ?></td>
       <td>
         <?php if (!empty($tx['sub_flag']) && $tx['sub_flag'] == 1): ?>

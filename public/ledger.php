@@ -88,13 +88,15 @@ $query = "
       $earmarkFilter
       AND t.description LIKE ?
     UNION ALL
-    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, p.amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
+    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, p.amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
+	left join payee_patterns pp on p.description like pp.match_pattern
+	left join payees pay on pp.payee_id = pay.id
     WHERE c.type IN ('income', 'expense')
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
-      AND p.description LIKE ?
+      AND COALESCE(pay.name, p.description) LIKE ?
 ";
 
 if (!empty($selected_categories)) {
@@ -103,13 +105,15 @@ if (!empty($selected_categories)) {
 
 $query .= "
     UNION ALL
-    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
+    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
+	left join payee_patterns pp on p.description like pp.match_pattern
+	left join payees pay on pp.payee_id = pay.id
     WHERE c.type = 'transfer'
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
-      AND p.description LIKE ?
+      AND COALESCE(pay.name, p.description) LIKE ?
 ";
 
 if (!empty($selected_categories)) {
@@ -118,12 +122,14 @@ if (!empty($selected_categories)) {
 
 $query .= "
     UNION ALL
-    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, p.description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
+    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
     JOIN categories c ON p.category_id = c.id
+	left join payee_patterns pp on p.description like pp.match_pattern
+	left join payees pay on pp.payee_id = pay.id
     WHERE p.to_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
-      AND p.description LIKE ?
+      AND COALESCE(pay.name, p.description) LIKE ?
 ";
 
 if (!empty($selected_categories)) {
