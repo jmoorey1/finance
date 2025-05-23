@@ -87,7 +87,7 @@ $past = $pdo->query("
         <tr>
             <th>Account</th>
             <th>Statement Date</th>
-            <th class="text-end">Ending Balance</th>
+            <th>Ending Balance</th>
             <th>Action</th>
         </tr>
     </thead>
@@ -96,7 +96,7 @@ $past = $pdo->query("
             <tr>
                 <td><?= htmlspecialchars($stmt['account_name']) ?></td>
                 <td><?= htmlspecialchars($stmt['statement_date']) ?></td>
-                <td class="text-end">£<?= number_format($stmt['end_balance'], 2) ?></td>
+                <td>£<?= number_format($stmt['end_balance'], 2) ?></td>
 				<td>
 				<?php if ((int)($stmt['reconciled'] ?? 0) === 1): ?>
 					<a href="view_statement.php?id=<?= $stmt['id'] ?>" class="btn btn-sm btn-secondary">View Statement</a>

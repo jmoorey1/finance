@@ -133,8 +133,9 @@ def predict_fixed_transactions(cursor, today, end_date):
             current += relativedelta(months=months_interval)
 
 
-
 def predict_credit_card_repayments(cursor, today, end_date):
+    print("🔄 Starting credit card repayment predictions")
+
     cursor.execute("""
         SELECT * FROM accounts 
         WHERE type='credit' AND active=1 
@@ -145,15 +146,21 @@ def predict_credit_card_repayments(cursor, today, end_date):
     cards = cursor.fetchall()
 
     for card in cards:
+        print(f"\n🧾 Processing card: {card['name']}")
+
+        avg_daily = None
+        previous_statement_date = None
+
         for i in range(3):
             ref = today.replace(day=1) + relativedelta(months=i)
             year, month = ref.year, ref.month
 
             try:
                 statement_date = datetime(year, month, card['statement_day'])
+                statement_date = adjust_date(statement_date, 'next_business_day')
             except ValueError:
+                print(f"⚠️ Invalid statement date for {card['name']} in {month}/{year}")
                 continue
-            statement_date = adjust_date(statement_date, 'next_business_day')
 
             if card['payment_day'] < card['statement_day']:
                 pay_month = month + 1 if month < 12 else 1
@@ -164,23 +171,18 @@ def predict_credit_card_repayments(cursor, today, end_date):
 
             try:
                 payment_date = datetime(pay_year, pay_month, card['payment_day'])
+                payment_date = adjust_date(payment_date, 'next_business_day')
             except ValueError:
+                print(f"⚠️ Invalid payment date for {card['name']} in {pay_month}/{pay_year}")
                 continue
-            payment_date = adjust_date(payment_date, 'next_business_day')
+
+            print(f"📆 Statement date: {statement_date.date()} | Payment date: {payment_date.date()}")
 
             if not (today <= payment_date.date() <= end_date):
+                print("⏩ Payment date outside forecast window")
                 continue
 
-            # Skip if confirmed
-            cursor.execute("""
-                SELECT id FROM predicted_instances
-                WHERE from_account_id = %s AND to_account_id = %s
-                  AND scheduled_date = %s AND confirmed = 1
-            """, (card['paid_from'], card['id'], payment_date.date()))
-            if cursor.fetchone():
-                continue
-
-            # Skip if real transactions already happened
+            # Skip if real transaction already happened
             cursor.execute("""
                 SELECT 1 FROM transactions
                 WHERE (account_id = %s OR account_id = %s)
@@ -189,18 +191,72 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 LIMIT 1
             """, (card['paid_from'], card['id'], payment_date.date()))
             if cursor.fetchone():
+                print("⏩ Skipping – actual repayment already found")
                 continue
 
-            cursor.execute("""
-                SELECT SUM(amount) AS balance FROM transactions
-                WHERE account_id = %s AND date <= %s
-            """, (card['id'], statement_date.date()))
-            result = cursor.fetchone()
-            balance = result['balance'] if result and result['balance'] is not None else 0.00
+            if i == 0:
+                # First iteration — determine last actual statement date
+                stmt_day = card['statement_day']
+                if today.day >= stmt_day:
+                    last_stmt_month = today.month
+                    last_stmt_year = today.year
+                else:
+                    last_stmt_month = today.month - 1 if today.month > 1 else 12
+                    last_stmt_year = today.year if today.month > 1 else today.year - 1
 
-            if abs(balance) < 1.00:
+                try:
+                    previous_statement_date = datetime(last_stmt_year, last_stmt_month, stmt_day)
+                    previous_statement_date = adjust_date(previous_statement_date, 'next_business_day')
+                except ValueError:
+                    print("⚠️ Could not calculate initial last statement date – skipping")
+                    continue
+
+                start_of_cycle = previous_statement_date.date()
+                end_of_cycle = statement_date.date()
+                days_so_far = (today - start_of_cycle).days or 1
+                days_total = (end_of_cycle - start_of_cycle).days or 1
+
+                # Get real spending in this cycle so far
+                cursor.execute("""
+                    SELECT SUM(t.amount) AS current_balance
+                    FROM transactions t
+                    JOIN categories c ON t.category_id = c.id
+                    WHERE t.account_id = %s
+                      AND t.date BETWEEN %s AND %s
+                      AND c.type != 'transfer'
+                """, (card['id'], start_of_cycle, today))
+                spend_now_row = cursor.fetchone()
+                current_balance = spend_now_row['current_balance'] or 0
+
+                avg_daily = current_balance / days_so_far
+                estimated_future_spend = avg_daily * (days_total - days_so_far)
+                balance = current_balance + estimated_future_spend
+
+            else:
+                if avg_daily is None or previous_statement_date is None:
+                    print("⚠️ Cannot project future repayment — missing previous data")
+                    continue
+
+                start_of_cycle = previous_statement_date.date()
+                end_of_cycle = statement_date.date()
+                days_total = (end_of_cycle - start_of_cycle).days or 1
+                balance = avg_daily * days_total
+                current_balance = 0  # simulated
+                days_so_far = days_total
+                estimated_future_spend = balance
+
+            print(f"📌 Last statement date: {start_of_cycle}")
+            print(f"💸 Current balance{' (simulated)' if i > 0 else ' (excluding transfers)'}: £{current_balance:.2f}")
+            print(f"📈 Days so far: {days_so_far}, total days in cycle: {days_total}")
+            print(f"📊 Avg daily: £{avg_daily:.2f} | Est future spend: £{estimated_future_spend:.2f}")
+            print(f"🧮 Predicted statement balance: £{balance:.2f}")
+
+            if round(abs(balance), 2) < 1.00:
+                print("⏩ Skipping – predicted amount < £1.00")
+                previous_statement_date = statement_date
                 continue
 
+            # Get category for repayment
             cursor.execute("""
                 SELECT id FROM categories
                 WHERE linked_account_id = %s AND name LIKE 'Transfer To : %%'
@@ -208,9 +264,23 @@ def predict_credit_card_repayments(cursor, today, end_date):
             """, (card['id'],))
             category_result = cursor.fetchone()
             if not category_result:
+                print("⚠️ No category found for this repayment")
+                previous_statement_date = statement_date
                 continue
 
             category_id = category_result['id']
+            amount_to_insert = round(-balance, 2)
+
+            # Check if this repayment was already confirmed — skip INSERT but preserve state
+            cursor.execute("""
+                SELECT id FROM predicted_instances
+                WHERE from_account_id = %s AND to_account_id = %s
+                  AND scheduled_date = %s AND confirmed = 1
+            """, (card['paid_from'], card['id'], payment_date.date()))
+            if cursor.fetchone():
+                print("⏩ Skipping INSERT – already confirmed predicted instance")
+                previous_statement_date = statement_date
+                continue
 
             cursor.execute("""
                 INSERT INTO predicted_instances
@@ -223,9 +293,18 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 card['paid_from'],
                 card['id'],
                 category_id,
-                round(-balance, 2),
-                "Predicted Credit Card Payment"
+                amount_to_insert,
+                card['name']
             ))
+            print(f"✅ Inserted prediction: {payment_date.date()} | £{amount_to_insert:.2f}")
+
+            # Update previous statement anchor for next cycle
+            previous_statement_date = statement_date
+
+    print("\n✅ Credit card repayment predictions complete.")
+
+
+
 
 def main():
     db = mysql.connector.connect(

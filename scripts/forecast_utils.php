@@ -10,7 +10,7 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
     $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Transactions to date
-    $stmt = $db->prepare("SELECT account_id, date, amount, description FROM transactions WHERE date <= ?");
+    $stmt = $db->prepare("SELECT account_id, date, amount, description FROM transactions WHERE date < ?");
     $stmt->execute([$today->format('Y-m-d')]);
     $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -20,7 +20,7 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
                c.type AS category_type, p.from_account_id, p.to_account_id
         FROM predicted_instances p
         INNER JOIN categories c ON p.category_id = c.id
-        WHERE p.scheduled_date > ?
+        WHERE p.scheduled_date >= ?
     ");
     $stmt->execute([$today->format('Y-m-d')]);
     $predictions = $stmt->fetchAll(PDO::FETCH_ASSOC);
