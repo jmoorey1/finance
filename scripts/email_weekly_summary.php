@@ -1,8 +1,10 @@
 <?php
-require_once '/var/www/html/finance/config/db.php';
+require_once __DIR__ . '/../config/db.php';
 
 // Email Recipients
+//$to = 'john@moorey.uk.com';
 $to = 'john@moorey.uk.com, india@moorey.uk.com, indiamo@amazon.co.uk';
+
 $subject = 'Weekly Budget Summary – Variable Expenses';
 $headers = "MIME-Version: 1.0\r\n";
 $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
@@ -108,6 +110,9 @@ function load_forecast($pdo, $start, $end) {
 $monthly_forecast = load_forecast($pdo, $today, $end_month);
 $ytd_forecast = load_forecast($pdo, $today, $end_month);
 
+$headlines = require_once __DIR__ . '/../scripts/get_insights.php';
+
+
 // Build HTML
 function build_table($label, $categories, $budget, $actual, $forecast, $priorities) {
     $html = "<h3 style='margin-top:30px; font-family:sans-serif;'>$label</h3>";
@@ -155,11 +160,29 @@ function build_table($label, $categories, $budget, $actual, $forecast, $prioriti
     return $html;
 }
 
+function build_headlines_table($headlines) {
+    if (empty($headlines)) return '';
+
+    $html = "<h3 style='font-family:sans-serif;'>Key Budget Headlines</h3>";
+    $html .= "<table cellpadding='6' cellspacing='0' style='border-collapse: collapse; font-family: sans-serif; font-size: 14px; width: 100%;'>";
+    $html .= "<tr style='background:#333; color:#fff;'>
+                <th align='left'>Considering current and planned spending this financial month</th>
+              </tr>";
+    foreach ($headlines as $line) {
+        $html .= "<tr><td style='border:1px solid #ccc;'>$line</td></tr>";
+    }
+    $html .= "</table><br>";
+    return $html;
+}
+
+
 
 $month_label = $start_month->format('j M') . " – " . $end_month->format('j M');
 $ytd_label = $start_ytd->format('j M') . " – " . $end_month->format('j M Y');
 
 $body = "<h2 style='font-family:sans-serif;'>Weekly Budget Summary</h2>";
+$body .= build_headlines_table($headlines);
+
 $body .= "<p style='font-family:sans-serif;'>This email includes <strong>variable expense categories</strong> only.</p>";
 $body .= build_table("This Month: $month_label", $categories, $monthly_budget, $monthly_actual, $monthly_forecast, $priorities);
 $body .= build_table("Year to Date: $ytd_label", $categories, $ytd_budget, $ytd_actual, $ytd_forecast, $priorities);

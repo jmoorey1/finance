@@ -74,11 +74,18 @@ try {
     }
 
     $conn->commit();
-    header("Location: transaction_edit.php?id=" . $id . "&success=1");
+	if (!isset($_POST['redirect']) || strpos($_POST['redirect'], '/') !== 0) {
+		$redirect = 'ledger.php';
+	} else {
+		$redirect = $_POST['redirect'];
+	}
+	header("Location: $redirect");
     exit;
 } catch (Exception $e) {
     $conn->rollBack();
+	include '../layout/header.php';
     echo "<p>Error updating transaction: " . htmlspecialchars($e->getMessage()) . "</p>";
     echo "<p><a href='transaction_edit.php?id=$id'>Go Back</a></p>";
+	include '../layout/footer.php';
 }
 ?>

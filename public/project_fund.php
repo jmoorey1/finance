@@ -177,26 +177,48 @@ foreach ($months as $m) {
     $label = $m['start']->format('F') . ' – ' . $m['end']->format('F Y');
     $budget = $budgets[$key] ?? 0;
 
-    if ($today > $m['end']) {
-        $actual = $actuals[$key] ?? 0;
-        $variance = $actual - $budget;
-        $deficit = $actual;
-        $running_deficit += $actual;
+	if ($today > $m['end']) {
+		// Historical month – use actual recorded balance
+		$actual = $actuals[$key] ?? 0;
+		$variance = $actual - $budget;
+		$deficit = $actual;
+		$running_deficit += $actual;
 		$savings_balance = $savings_balances[$key] ?? 0;
-    } else {
-        $actual = 0;
-        $variance = 0;
-        $deficit = $budget;
-        $running_deficit += $budget;
-		$month_key = $m['start']->format('Y-m-d');
-		$topup = $topups_by_month[$month_key] ?? 0;
+
+	} elseif ($today >= $m['start'] && $today <= $m['end']) {
+		// Current month – use live balance as of last night
+		$actual = 0;
+		$variance = 0;
+		$deficit = $budget;
+		$running_deficit += $budget;
+		$topup = $topups_by_month[$key] ?? 0;
+		$savings_balance = $current_balance;
 
 		if ($topup > 0) {
 			$savings_balance -= $topup;
 		} else {
 			$savings_balance += $deficit;
 		}
-    }
+
+	} else {
+		// Future month – project forward from previous balance
+		$actual = 0;
+		$variance = 0;
+		$deficit = $budget;
+		$running_deficit += $budget;
+		$topup = $topups_by_month[$key] ?? 0;
+
+		if (!isset($savings_balance)) {
+			$savings_balance = $current_balance;
+		}
+
+		if ($topup > 0) {
+			$savings_balance -= $topup;
+		} else {
+			$savings_balance += $deficit;
+		}
+	}
+
 	$excess_solvency = 0;
     $running_solvency_fund = $solvency_fund + $running_deficit;
     if ($running_solvency_fund > $solvency_fund) {
@@ -265,6 +287,7 @@ for ($i = count($rows) - 1; $i >= 0; $i--) {
                 <th class="text-end">Actual</th>
                 <th class="text-end">Variance</th>
                 <th class="text-end">Running Deficit</th>
+                <th class="text-end">Savings Balance</th>
             </tr>
         </thead>
         <tbody>
@@ -275,6 +298,7 @@ for ($i = count($rows) - 1; $i >= 0; $i--) {
                     <td class="text-end">£<?= number_format($r['actual'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['variance'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['running_deficit'], 2) ?></td>
+                    <td class="text-end">£<?= number_format($r['savings_balance'], 2) ?></td>
                 </tr>
             <?php endforeach; ?>
         </tbody>

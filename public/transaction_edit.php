@@ -58,7 +58,7 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
 
 <form method="post" action="transaction_edit_submit.php">
     <input type="hidden" name="id" value="<?= $id ?>">
-
+	<input type="hidden" name="redirect" value="<?= htmlspecialchars($_GET['redirect'] ?? '') ?>">
     <div style="display: grid; grid-template-columns: max-content auto; gap: 10px 20px; align-items: center; max-width: 700px;">
         <label>Date:</label>
         <input type="date" name="date" value="<?= htmlspecialchars($transaction['date']) ?>">
@@ -219,7 +219,6 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
     <?php endif; ?>
 
     <p><button type="submit">Save Changes</button></p>
-    <p><a href="ledger.php">← Back to Ledger</a></p>
 </form>
 
 <script>

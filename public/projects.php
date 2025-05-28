@@ -1,7 +1,40 @@
 <?php
 require_once '../config/db.php';
-include '../layout/header.php';
 
+// Handle form submission to create a new statement
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $name = $_POST['name'];
+    $description = $_POST['description'];
+
+    $stmt = $pdo->prepare("INSERT INTO projects (name, description) VALUES (?, ?)");
+    $stmt->execute([$name, $description]);
+
+    // Redirect back to projects to reload the page
+    header("Location: projects.php?success=1");
+    exit;
+}
+include '../layout/header.php';
+echo "<h2>🏗 Project and Trip Summary</h2>";
+?>
+
+
+<form method="POST" class="mb-4">
+    <div class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">Project Name</label>
+            <input type="text" name="name" class="form-control" value="">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Project Description</label>
+            <input type="text" name="description" class="form-control" value="">
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary w-100">Create Project/Trip</button>
+        </div>
+    </div>
+</form>
+
+<?php
 $stmt = $pdo->query("
     SELECT p.id, p.name, p.description, 
            IFNULL(SUM(-t.amount), 0) AS total_amount,
@@ -19,7 +52,7 @@ $account_ids = array_column($acct_stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
 $account_query = implode('&', array_map(fn($id) => "accounts[]=$id", $account_ids));
 
 
-echo "<h2>Project and Trip Summary</h2>";
+
 echo "<table class='table table-striped table-sm align-middle'>";
 
 echo "<thead><tr><th>Project/Trip Name</th><th>Description</th><th>First Spend</th><th>Last Spend</th><th>Total Spend</th></tr></thead><tbody>";

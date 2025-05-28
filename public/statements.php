@@ -1,6 +1,5 @@
 <?php
 require_once '../config/db.php';
-include '../layout/header.php';
 
 // Get list of active accounts
 $stmt = $pdo->query("SELECT id, name FROM accounts WHERE active = 1 ORDER BY name");
@@ -45,6 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header("Location: reconcile.php?id=$new_id");
     exit;
 }
+include '../layout/header.php';
 
 // Load past statements
 $past = $pdo->query("

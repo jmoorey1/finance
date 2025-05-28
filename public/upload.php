@@ -75,7 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ofxfile'])) {
 
 <?php if ($uploadStatus): ?>
     <hr>
-    <div><strong>Status:</strong><br><?= $uploadStatus ?></div>
+    <div><p><strong>Status:</strong><br><?= $uploadStatus ?></p>
+    <p><a href="review.php">To Review →</a></p></div>
 <?php endif; ?>
 
 </body>

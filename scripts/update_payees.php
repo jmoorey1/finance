@@ -37,6 +37,21 @@ try {
         }
     }
 
+		$update = $pdo->prepare("UPDATE transactions SET payee_id = 72 WHERE payee_id IS NULL AND predicted_transaction_id = 23");
+		$update->execute();
+		$count = $update->rowCount();
+        if ($count > 0) {
+            echo "Updated {$count} transactions for payee 'N.F. Collins'\n";
+            $totalUpdated += $count;
+        }
+		$update = $pdo->prepare("UPDATE transactions SET payee_id = 71 WHERE payee_id IS NULL AND predicted_transaction_id = 20");
+		$update->execute();
+		$count = $update->rowCount();
+        if ($count > 0) {
+            echo "Updated {$count} transactions for payee 'Integra Networks'\n";
+            $totalUpdated += $count;
+        }
+
     echo "\nDone. Total transactions updated: {$totalUpdated}\n";
 
 } catch (PDOException $e) {

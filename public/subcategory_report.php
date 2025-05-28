@@ -9,7 +9,7 @@ $selected_subcategory = isset($_GET['subcategory_id']) ? intval($_GET['subcatego
 
 // Load all subcategories, sorted by parent type, parent name, then subcategory name
 $stmt = $pdo->query("
-    SELECT c.id, c.name AS sub_name, p.name AS parent_name, p.type AS parent_type
+    SELECT c.id, c.name AS sub_name, p.id as parent_id, p.name AS parent_name, p.type AS parent_type
     FROM categories c
     JOIN categories p ON c.parent_id = p.id
     WHERE c.parent_id IS NOT NULL and c.type in ('expense', 'income')
@@ -113,7 +113,7 @@ $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <h2>Subcategory Report: <?= htmlspecialchars($selected_meta['sub_name']) ?></h2>
-
+<p><a href="category_report.php?category_id=<?= htmlspecialchars($selected_meta['parent_id']) ?>">Go to <?= htmlspecialchars($selected_meta['parent_name']) ?> →</a></p>
 <form method="get">
   <label for="subcategory_id">Select Subcategory:</label>
   <select name="subcategory_id" id="subcategory_id" onchange="this.form.submit()">
@@ -159,7 +159,7 @@ $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
       <td><?= htmlspecialchars($tx['description']) ?></td>
       <td><?= $tx['source'] ?></td>
       <td>
-	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '" title="Edit Transaction">✏️</a>' : '' ?>
+	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) .'" title="Edit Transaction">✏️</a>' : '' ?>
 	  </td>
     </tr>
   <?php endforeach; ?>

@@ -27,6 +27,9 @@
             margin-bottom: 20px;
             box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         }
+		.forecast-panel.amber {
+			border-color: #ffc107;
+		}
         .forecast-panel.good {
             border-color: #198754;
         }

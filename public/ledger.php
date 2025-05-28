@@ -71,7 +71,10 @@ if (!empty($selected_categories)) {
 // SQL query
 $query = "
 	SELECT 
-		'Actual' AS source, t.id, t.date, t.account_id,
+		CASE
+				WHEN s.id IS NOT NULL THEN 'Split'
+				ELSE 'Actual'
+		END AS source, t.id, t.date, t.account_id,
 		CASE 
 			WHEN s.id IS NOT NULL THEN s.amount
 			ELSE t.amount
@@ -86,7 +89,7 @@ $query = "
       $category_clause
       $projectFilter
       $earmarkFilter
-      AND t.description LIKE ?
+      AND COALESCE(p.name, t.description) LIKE ?
     UNION ALL
     SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, p.amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
@@ -243,7 +246,7 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 					</td>
 					<td><?= $entry['source'] ?></td>
 					<td>
-						<?= $entry['id'] != '' ? '<a href="transaction_edit.php?id=' . $entry['id'] . '" title="Edit Transaction">✏️</a>' : '' ?>
+						<?= $entry['id'] != '' ? '<a href="transaction_edit.php?id=' . $entry['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) .'" title="Edit Transaction">✏️</a>' : '' ?>
 					</td>
 				</tr>
 			<?php endforeach; ?>

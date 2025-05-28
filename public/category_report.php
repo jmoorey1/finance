@@ -168,7 +168,7 @@ echo "<h2>Category Report: " . htmlspecialchars($cat_name) . "</h2>";
       </td>
       <td><?= $tx['source'] ?></td>
       <td>
-	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '" title="Edit Transaction">✏️</a>' : '' ?>
+	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) .'" title="Edit Transaction">✏️</a>' : '' ?>
 	  </td>
     </tr>
   <?php endforeach; ?>

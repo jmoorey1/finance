@@ -20,6 +20,12 @@ $start_date = new DateTime($inputMonth->format('Y-m-13'));
 // End date is 12th of the next month
 $end_date = (clone $start_date)->modify('+1 month')->modify('-1 day');
 
+
+$total_days = $start_date->diff($end_date)->days + 1;
+$elapsed_days = $start_date->diff($today)->days + 1;
+$month_elapsed_fac = min(100, round($elapsed_days / $total_days, 2));
+$month_elapsed_pct = min(100, round(($elapsed_days / $total_days) * 100));
+
 // ----------------------------
 // Load Expense Category Metadata
 // ----------------------------
@@ -41,6 +47,11 @@ foreach ($stmt as $row) {
     $budgets[$row['category_id']] = floatval($row['amount']);
 }
 
+// Load IDs of all current/credit/savings accounts for linking
+$acct_stmt = $pdo->query("SELECT id FROM accounts WHERE type IN ('current','credit','savings') and active=1");
+$account_ids = array_column($acct_stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+$account_query = implode('&', array_map(fn($id) => "accounts[]=$id", $account_ids));
+
 // ----------------------------
 // Load Actual Spend Data (Transactions + Splits + Predicted Instances)
 // Grouped by Parent Category ID if exists
@@ -56,7 +67,6 @@ $stmt = $pdo->prepare("
         JOIN categories c ON t.category_id = c.id
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
         WHERE c.type = 'expense'
-          AND par_cat.fixedness = 'variable'
           AND t.date BETWEEN ? AND ?
 
         UNION ALL
@@ -68,7 +78,6 @@ $stmt = $pdo->prepare("
         JOIN transactions tr ON tr.id = sp.transaction_id
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
         WHERE c.type = 'expense'
-          AND par_cat.fixedness = 'variable'
           AND tr.date BETWEEN ? AND ?
 
         UNION ALL
@@ -79,7 +88,6 @@ $stmt = $pdo->prepare("
         JOIN categories c ON pi.category_id = c.id
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
         WHERE c.type = 'expense'
-          AND par_cat.fixedness = 'variable'
           AND pi.scheduled_date BETWEEN ? AND ?
     ) raw_data
     GROUP BY category_id
@@ -100,6 +108,7 @@ foreach ($stmt as $row) {
 
 $overspent = [];
 $underspent = [];
+$highspent = [];
 $totals = [];
 
 foreach ($actuals as $cat_id => $actual) {
@@ -119,15 +128,26 @@ foreach ($actuals as $cat_id => $actual) {
                 'name' => $meta['name'],
                 'actual' => $actual,
                 'budget' => $budget,
-                'variance' => $actual - $budget
+                'variance' => $actual - $budget,
+                'id' => $cat_id
             ];
-        } elseif ($actual < 0.5 * $budget) {
-            // Underspent significantly (less than 50%)
+        } elseif ($actual < $month_elapsed_fac * $budget) {
+            // Underspent compared to elapsed time of month
             $underspent[] = [
                 'name' => $meta['name'],
                 'actual' => $actual,
                 'budget' => $budget,
-                'variance' => $budget - $actual
+                'variance' => $budget - $actual,
+                'id' => $cat_id
+            ];
+        } elseif ($actual >= $month_elapsed_fac * $budget) {
+            // Overspent compared to elapsed time of month
+            $highspent[] = [
+                'name' => $meta['name'],
+                'actual' => $actual,
+                'budget' => $budget,
+                'variance' => $budget - $actual,
+                'id' => $cat_id
             ];
         }
     }
@@ -139,11 +159,31 @@ foreach ($actuals as $cat_id => $actual) {
 }
 
 // ----------------------------
-// Identify Top Spending Categories
+// Identify Top Spending Categories (Discretionary Only)
 // ----------------------------
 
-arsort($totals); // Descending by spend
-$top_categories = array_slice($totals, 0, 5, true);
+$discretionary_totals = [];
+
+foreach ($actuals as $cat_id => $actual) {
+    $meta = $categories[$cat_id] ?? null;
+
+    // Skip if no metadata or not discretionary
+    if (!$meta || $meta['priority'] !== 'discretionary') continue;
+
+    $parent_id = $meta['parent_id'] ?? null;
+    $canonical_id = $parent_id ?: $cat_id;
+    $canonical_name = $parent_id ? $categories[$parent_id]['name'] : $meta['name'];
+
+	if (!isset($discretionary_totals[$canonical_id])) {
+		$discretionary_totals[$canonical_id] = ['id' => $canonical_id, 'name' => $canonical_name, 'total' => 0];
+	}
+
+    $discretionary_totals[$canonical_id]['total'] += $actual;
+}
+
+// Sort and take top 5
+usort($discretionary_totals, fn($a, $b) => $b['total'] <=> $a['total']);
+$top_categories = array_slice($discretionary_totals, 0, 5);
 
 // ----------------------------
 // Identify Top Vendors by Description
@@ -153,35 +193,39 @@ $top_categories = array_slice($totals, 0, 5, true);
 $stmt = $pdo->prepare("
     SELECT description, -SUM(amount) AS total FROM (
         -- Direct transactions
-        SELECT t.description, t.amount
+        SELECT COALESCE(pay.name, t.description) as description, t.amount
         FROM transactions t
         JOIN categories c ON t.category_id = c.id
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+		LEFT JOIN payees pay on t.payee_id = pay.id
         WHERE c.type = 'expense'
-          AND par_cat.fixedness = 'variable'
+          AND par_cat.priority = 'discretionary'
           AND t.date BETWEEN ? AND ?
 
         UNION ALL
 
         -- Split transactions
-        SELECT tr.description, sp.amount
+        SELECT COALESCE(pay.name, tr.description) as description, sp.amount
         FROM transaction_splits sp
         JOIN categories c ON sp.category_id = c.id
         JOIN transactions tr ON tr.id = sp.transaction_id
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+		LEFT JOIN payees pay on tr.payee_id = pay.id
         WHERE c.type = 'expense'
-          AND par_cat.fixedness = 'variable'
+          AND par_cat.priority = 'discretionary'
           AND tr.date BETWEEN ? AND ?
 
         UNION ALL
 
         -- Predicted entries
-        SELECT pi.description, pi.amount
+        SELECT COALESCE(pay.name, pi.description) as description, pi.amount
         FROM predicted_instances pi
         JOIN categories c ON pi.category_id = c.id
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
+		LEFT JOIN payee_patterns pp on pi.description like pp.match_pattern
+		LEFT JOIN payees pay on pp.payee_id = pay.id
         WHERE c.type = 'expense'
-          AND par_cat.fixedness = 'variable'
+          AND par_cat.priority = 'discretionary'
           AND pi.scheduled_date BETWEEN ? AND ?
     ) raw_data
     GROUP BY description
@@ -196,6 +240,7 @@ $stmt->execute([
 ]);
 
 $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
 
 <!-- HTML Rendering -->
@@ -208,8 +253,12 @@ $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <h4>🚨 Overspent Categories</h4>
         <ul class="list-group">
             <?php foreach ($overspent as $c): ?>
+				<?php
+					$link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$c['id']}";
+					$variance_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . "£" . number_format($c['variance'], 2) . "</a>";
+				?>
                 <li class="list-group-item">
-                    <?= htmlspecialchars($c['name']) ?> – Overspent by £<?= number_format($c['variance'], 2) ?> (Budget: £<?= number_format($c['budget'], 2) ?>)
+                    <a href="category_report.php?category_id=<?= htmlspecialchars($c['id']) ?>"><?= htmlspecialchars($c['name']) ?></a> – Overspent by <?= $variance_link ?> (Budget: £<?= number_format($c['budget'], 2) ?>)
                 </li>
             <?php endforeach; ?>
         </ul>
@@ -219,11 +268,30 @@ $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <!-- Underspent -->
 <?php if (count($underspent)): ?>
     <div class="mb-4">
-        <h4>📉 Underutilised Categories</h4>
+        <h4>📉 Category Utilisation (<?= $month_elapsed_pct ?>% of month elapsed)</h4>
         <ul class="list-group">
-            <?php foreach ($underspent as $c): ?>
+            <?php foreach ($highspent as $c): ?>
+				<?php
+					$link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$c['id']}";
+					$actual_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . "£" . number_format($c['actual'], 2) . "</a>";
+				?>
                 <li class="list-group-item">
-                    <?= htmlspecialchars($c['name']) ?> – Only £<?= number_format($c['actual'], 2) ?> spent from £<?= number_format($c['budget'], 2) ?> budget
+                    <?php
+					$actual_pct = round(($c['actual'] / $c['budget']) * 100);
+					?>
+					<a href="category_report.php?category_id=<?= htmlspecialchars($c['id']) ?>"><?= htmlspecialchars($c['name']) ?></a> – <?= $actual_link ?> (<?= $actual_pct ?>%) spent from £<?= number_format($c['budget'], 2) ?> budget
+                </li>
+            <?php endforeach; ?>
+            <?php foreach ($underspent as $c): ?>
+				<?php
+					$link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$c['id']}";
+					$actual_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . "£" . number_format($c['actual'], 2) . "</a>";
+				?>
+                <li class="list-group-item">
+                    <?php
+					$actual_pct = round(($c['actual'] / $c['budget']) * 100);
+					?>
+					<a href="category_report.php?category_id=<?= htmlspecialchars($c['id']) ?>"><?= htmlspecialchars($c['name']) ?></a> – Only <?= $actual_link ?> (<?= $actual_pct ?>%) spent from £<?= number_format($c['budget'], 2) ?> budget
                 </li>
             <?php endforeach; ?>
         </ul>
@@ -232,20 +300,28 @@ $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <!-- Top Spending Categories -->
 <div class="mb-4">
-    <h4>💰 Top 5 Spending Categories</h4>
+    <h4>💰 Top 5 Discretionary Categories</h4>
     <ul class="list-group">
-        <?php foreach ($top_categories as $name => $amt): ?>
-            <li class="list-group-item"><?= htmlspecialchars($name) ?> – £<?= number_format($amt, 2) ?></li>
+        <?php foreach ($top_categories as $cat): ?>
+				<?php
+					$link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$cat['id']}";
+					$total_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . "£" . number_format($cat['total'], 2) . "</a>";
+				?>
+            <li class="list-group-item"><a href="category_report.php?category_id=<?= htmlspecialchars($cat['id']) ?>"><?= htmlspecialchars($cat['name']) ?></a> – <?= $total_link ?></li>
         <?php endforeach; ?>
     </ul>
 </div>
 
 <!-- Top Vendors -->
 <div class="mb-4">
-    <h4>🧾 Top 5 Vendors</h4>
+    <h4>🧾 Top 5 Vendors in Discretionary Categories</h4>
     <ul class="list-group">
         <?php foreach ($top_vendors as $v): ?>
-            <li class="list-group-item"><?= htmlspecialchars($v['description']) ?> – £<?= number_format($v['total'], 2) ?></li>
+				<?php
+					$link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&description=" . urlencode($v['description']);
+					$total_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . "£" . number_format($v['total'], 2) . "</a>";
+				?>
+            <li class="list-group-item"><?= htmlspecialchars($v['description']) ?> – <?= $total_link ?></li>
         <?php endforeach; ?>
     </ul>
 </div>

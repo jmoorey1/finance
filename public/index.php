@@ -1,4 +1,6 @@
 <?php
+session_start();
+
 require_once '../config/db.php';
 require_once '../scripts/forecast_utils.php';
 require_once '../scripts/get_upcoming_predictions.php';
@@ -15,11 +17,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reforecast'])) {
     $return_code = 0;
     exec('python3 ../scripts/predict_instances.py 2>&1', $output, $return_code);
     if ($return_code === 0) {
-        echo "<div class='alert alert-success'>Reforecasting complete.</div>";
+        echo "<div class='alert alert-success'>✅ Reforecasting complete.</div>";
     } else {
         echo "<div class='alert alert-danger'><strong>Error running reforecast:</strong><br><pre>" .
              htmlspecialchars(implode("\n", $output)) . "</pre></div>";
     }
+}
+
+if (isset($_SESSION['prediction_deleted'])) {
+    echo "<div class='alert alert-success'>✅ Prediction successfully deleted.</div>";
+    unset($_SESSION['prediction_deleted']);
 }
 
 $balance_issues = get_forecast_shortfalls($pdo);
@@ -33,7 +40,7 @@ $missed_state = get_missed_statements($pdo);
 
 <!-- 📊 Monthly Financial Insights -->
 <div class="mb-4">
-    <h4>📊 Monthly Insights (<?= $start_month->format('F Y') ?>)</h4>
+    <h4>📊 Monthly Insights (<?= $start_month->format('F') . "/" . $end_month->format('F Y')?>)</h4>
     <?php if (count($headlines) > 0): ?>
         <ul class="list-group">
             <?php foreach ($headlines as $line): ?>
@@ -94,15 +101,21 @@ $missed_state = get_missed_statements($pdo);
                     $is_late = $today > $scheduled;
                 ?>
                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <span>
-                        <?= htmlspecialchars($m['scheduled_date']) ?>
-                        <?php if ($is_late): ?>
-                            (<?= $days_late ?> day<?= $days_late !== 1 ? 's' : '' ?> late)
-                        <?php endif; ?>
-                        – <?= htmlspecialchars($m['description'] ?? $m['category']) ?> 
-                        (<?= htmlspecialchars($m['acc_name']) ?>)
-                    </span>
-                    <span>£<?= number_format($m['amount'], 2) ?></span>
+                    <form method="post" action="delete_prediction.php" class="d-flex justify-content-between w-100">
+                        <input type="hidden" name="id" value="<?= $m['id'] ?>">
+                        <span>
+                            <?= htmlspecialchars($m['scheduled_date']) ?>
+                            <?php if ($is_late): ?>
+                                (<?= $days_late ?> day<?= $days_late !== 1 ? 's' : '' ?> late)
+                            <?php endif; ?>
+                            – <?= htmlspecialchars($m['description'] ?? $m['category']) ?> 
+                            (<?= htmlspecialchars($m['acc_name']) ?>)
+                        </span>
+                        <span class="d-flex align-items-center">
+                            £<?= number_format($m['amount'], 2) ?>
+                            <button type="submit" class="btn btn-sm btn-outline-danger ms-2" title="Delete Prediction">🗑️</button>
+                        </span>
+                    </form>
                 </li>
             <?php endforeach; ?>
         </ul>
@@ -110,6 +123,7 @@ $missed_state = get_missed_statements($pdo);
         <p class="text-muted">No missed predicted transactions.</p>
     <?php endif; ?>
 </div>
+
 
 
 <!-- ⏳ Missed Statements -->
@@ -152,13 +166,57 @@ $missed_state = get_missed_statements($pdo);
 
 <?php if (count($balance_issues) > 0): ?>
     <div class="mb-4">
-        <h4>⚠️ Forecasted Balance Issues</h4>
+        <h4>💰 Upcoming Required Transfers</h4>
         <?php foreach ($balance_issues as $f): ?>
-            <div class="forecast-panel">
+            <?php
+                $days_until = (new DateTime($f['start_day']))->diff(new DateTime())->days;
+                $highlight_class = 'forecast-panel'; // default red
+
+                if ((new DateTime($f['start_day'])) < new DateTime()) {
+                    // already started – keep red
+                    $highlight_class = 'forecast-panel';
+                } elseif ($days_until <= 3) {
+                    $highlight_class = 'forecast-panel'; // red (default)
+                } elseif ($days_until <= 7) {
+                    $highlight_class = 'forecast-panel amber';
+                } else {
+                    $highlight_class = 'forecast-panel good';
+                }
+            ?>
+            <div class="<?= $highlight_class ?>">
                 <h5>💸 <?= htmlspecialchars($f['account_name']) ?></h5>
                 <p>Today's Balance: <strong>£<?= number_format($f['today_balance'], 2) ?></strong></p>
                 <p>Projected to hit <strong>£<?= number_format($f['min_balance'], 2) ?></strong> on <?= $f['min_day'] ?></p>
-                <p>👉 Recommended Top-Up: <strong>£<?= number_format($f['top_up'], 2) ?></strong></p>
+				<?php
+					$start_date = new DateTime($f['start_day']);
+					$today = new DateTime();
+					$diff_days = (int)$today->diff($start_date)->format('%r%a');
+					$weekday = $start_date->format('l');
+					$short_date = $start_date->format('D d M');
+
+					if ($diff_days === 0) {
+						$label = "today";
+					} elseif ($diff_days === 1) {
+						$label = "tomorrow";
+					} elseif ($diff_days < 7) {
+						$label = "this $weekday";
+					} elseif ($diff_days == 7) {
+						$label = "1 week tomorrow";
+					} elseif ($diff_days < 14) {
+						$label = "$weekday week";
+					} elseif (($diff_days + 1) % 7 === 0) {
+						$weeks = ($diff_days + 1 ) / 7;
+						$label = "$weeks week" . ($weeks > 1 ? "s" : "") . " today";
+					} elseif (($diff_days + 1) % 7 === 1) {
+						$weeks = ($diff_days ) / 7;
+						$label = "$weeks week" . ($weeks > 1 ? "s" : "") . " tomorrow";
+					} else {
+						$weeks = floor($diff_days / 7);
+						$label = "$weeks week" . ($weeks > 1 ? "s" : "") . " on $weekday";
+					}
+				?>
+
+				<p>👉 Recommended Top-Up: <strong>£<?= number_format($f['top_up'], 2) ?></strong> by <?= $label ?> (<?= $short_date ?>)</p>
                 <p>🔍 Window: <?= $f['start_day'] ?> ➞ <?= $f['min_day'] ?></p>
                 <ul class="mb-0">
                     <?php foreach ($f['events'] as $e): ?>
@@ -179,6 +237,7 @@ $missed_state = get_missed_statements($pdo);
         <p>No projected shortfalls in the next 31 days.</p>
     </div>
 <?php endif; ?>
+
 
 
 
