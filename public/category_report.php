@@ -122,6 +122,7 @@ $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <?php
 $cat_name = array_column($categories, 'name', 'id')[$selected_category] ?? 'Unknown';
 echo "<h2>Category Report: " . htmlspecialchars($cat_name) . "</h2>";
+echo "<p><a href='category_edit.php?id=" . $selected_category . "'>Edit " . $cat_name . " →</a><p>";
 ?>
 
 <form method="get">

@@ -114,6 +114,7 @@ $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <h2>Subcategory Report: <?= htmlspecialchars($selected_meta['sub_name']) ?></h2>
 <p><a href="category_report.php?category_id=<?= htmlspecialchars($selected_meta['parent_id']) ?>">Go to <?= htmlspecialchars($selected_meta['parent_name']) ?> →</a></p>
+<p><a href="category_edit.php?id=<?= htmlspecialchars($selected_meta['id']) ?>">Edit <?= htmlspecialchars($selected_meta['sub_name']) ?> →</a></p>
 <form method="get">
   <label for="subcategory_id">Select Subcategory:</label>
   <select name="subcategory_id" id="subcategory_id" onchange="this.form.submit()">

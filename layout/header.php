@@ -71,6 +71,7 @@
                         <li><a class="dropdown-item" href="/finance/public/statements.php">Statements</a></li>
                         <li><a class="dropdown-item" href="/finance/public/manual_entry.php">Manual Entry</a></li>
                         <li><a class="dropdown-item" href="/finance/public/ledger.php">Ledger</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/categories.php">Manage Categories</a></li>
                     </ul>
                 </li>
 		<li class="nav-item dropdown">
