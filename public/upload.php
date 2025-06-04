@@ -48,12 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ofxfile'])) {
 }
 ?>
 
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Upload Transactions</title>
-</head>
-<body>
+
 <h1>Upload Transaction File</h1>
 
 <form method="post" enctype="multipart/form-data">
@@ -79,6 +74,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ofxfile'])) {
     <p><a href="review.php">To Review →</a></p></div>
 <?php endif; ?>
 
-</body>
-</html>
+
 <?php include '../layout/footer.php'; ?>

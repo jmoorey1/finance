@@ -70,21 +70,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $existing[$row['category_id']][$row['month_start']] = $row['amount'];
 }
 ?>
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Annual Budgets</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 2em; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 6px; text-align: right; }
-        th.sticky-col, td.sticky-col { position: sticky; left: 0; background: #fff; text-align: left; }
-        input[type='number'] { width: 80px; }
-        thead th { background: #f8f8f8; position: sticky; top: 0; }
-        tfoot td { font-weight: bold; background: #f0f0f0; }
-    </style>
-</head>
-<body>
+
 
     <h1>Annual Budget for <?= $year ?></h1>
 
@@ -104,7 +90,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     <?php endif; ?>
 
     <form method="POST">
-        <table>
+		<table class="table budget-table">
             <thead>
                 <tr>
                     <th class="sticky-col">Category</th>
@@ -161,9 +147,21 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 <tr>
                     <td class="sticky-col">Net Total</td>
                     <?php for ($i = 0; $i < 12; $i++): ?>
+						<?php $running_total += $type_totals['income'][$i]; ?>
+						<?php $running_total -= $type_totals['expense'][$i]; ?>
                         <td><?= number_format($type_totals['income'][$i] - $type_totals['expense'][$i], 2) ?></td>
                     <?php endfor; ?>
                     <td><?= number_format($type_grand['income'] - $type_grand['expense'], 2) ?></td>
+                </tr>
+                <tr>
+                    <td class="sticky-col">Running Total</td>
+                    <?php $running_total = 0; ?>
+                    <?php for ($i = 0; $i < 12; $i++): ?>
+						<?php $running_total += $type_totals['income'][$i]; ?>
+						<?php $running_total -= $type_totals['expense'][$i]; ?>
+                        <td><?= number_format($running_total, 2) ?></td>
+                    <?php endfor; ?>
+                    <td></td>
                 </tr>
             </tfoot>
         </table>

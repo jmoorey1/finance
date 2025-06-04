@@ -89,42 +89,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="message error"><?= $error ?></div>
 <?php endif; ?>
 
-<style>
-    .form-section {
-        border: 1px solid #ccc;
-        padding: 20px;
-        margin-bottom: 30px;
-        border-radius: 8px;
-        background: #f9f9f9;
-    }
-    .form-section h2 {
-        margin-top: 0;
-        font-size: 1.3em;
-        color: #444;
-    }
-    .form-group {
-        margin-bottom: 15px;
-    }
-    label {
-        display: block;
-        margin-bottom: 5px;
-        font-weight: bold;
-    }
-    input[type="text"],
-    input[type="date"],
-    input[type="number"],
-    select {
-        width: 100%;
-        max-width: 400px;
-        padding: 6px;
-        font-size: 1em;
-    }
-    .submit-btn {
-        margin-top: 10px;
-        padding: 10px 16px;
-        font-size: 1em;
-    }
-</style>
 
 <!-- Single Transaction Form -->
 <form method="POST" class="form-section">

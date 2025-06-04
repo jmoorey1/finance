@@ -18,6 +18,7 @@ $sql = "
            p.scheduled_date, 
            p.description AS predicted_description,
            t.id AS matched_transaction_id,
+           t.date AS matched_transaction_date,
            t.description AS matched_transaction_desc,
            a.name AS account_name
     FROM staging_transactions s
@@ -84,48 +85,21 @@ foreach ($rows as $row) {
 }
 ?>
 
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Review Transactions</title>
-    <style>
-        body { font-family: sans-serif; margin: 20px; }
-        .tabs { margin-bottom: 20px; }
-        .tab-btn {
-            padding: 10px 20px;
-            display: inline-block;
-            border: 1px solid #ccc;
-            background: #eee;
-            margin-right: 5px;
-            cursor: pointer;
-        }
-        .tab-btn.active { background: #ddd; font-weight: bold; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { border: 1px solid #ccc; padding: 8px; vertical-align: top; }
-        th { background-color: #f0f0f0; }
-        tr:nth-child(even) { background-color: #fafafa; }
-        .note { font-size: 0.85em; color: #666; }
-    </style>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-</head>
-<body>
-
 <h1>Review Staging Transactions</h1>
 
-<div class="tabs">
+<div class="review-tabs">
     <?php foreach ($grouped as $key => $list): ?>
-        <span class="tab-btn" data-tab="<?= $key ?>"><?= ucfirst(str_replace('_', ' ', $key)) ?> (<?= count($list) ?>)</span>
+        <span class="tab-btn" data-tab="<?= $key ?>"><?= ucwords(str_replace('_', ' ', $key)) ?> (<?= count($list) ?>)</span>
     <?php endforeach; ?>
 </div>
 
+<?php if (!empty($rows)): ?>
 <?php foreach ($grouped as $group => $entries): ?>
     <div class="tab-content" id="tab-<?= $group ?>">
         <?php if (empty($entries)): ?>
             <p>No transactions found.</p>
         <?php else: ?>
-            <table>
+            <table class="review-table">
                 <thead>
                     <tr>
                         <th>Date</th>
@@ -143,7 +117,7 @@ foreach ($rows as $row) {
                         <td><?= htmlspecialchars($row['account_name']) ?></td>
                         <td><?= htmlspecialchars($row['description']) ?></td>
                         <td><?= number_format($row['amount'], 2) ?></td>
-                        <td><?= htmlspecialchars($row['status']) ?></td>
+                        <td><?= htmlspecialchars(ucwords(str_replace('_', ' ', $row['status']))) ?></td>
                         <td>
                             <?php if ($row['status'] === 'fulfills_prediction'): ?>
                                 <form method="post" action="review_actions.php">
@@ -160,7 +134,7 @@ foreach ($rows as $row) {
                                 <form method="post" action="review_actions.php">
                                     <input type="hidden" name="staging_transaction_id" value="<?= $row['id'] ?>">
                                     <input type="hidden" name="matched_transaction_id" value="<?= $row['matched_transaction_id'] ?>">
-                                    <p class="note">⚠️ Possibly matches: <?= htmlspecialchars($row['matched_transaction_desc']) ?></p>
+                                    <p class="note">⚠️ Possibly matches: <?= htmlspecialchars($row['matched_transaction_desc']) ?> (<?= htmlspecialchars($row['matched_transaction_date']) ?>)</p>
                                     <div class="actions">
                                         <button type="submit" name="action" value="confirm_duplicate">Confirm Duplicate</button>
                                         <button type="submit" name="action" value="reject_duplicate">Not a Duplicate</button>
@@ -342,6 +316,10 @@ foreach ($rows as $row) {
     </div>
 <?php endforeach; ?>
 
+<?php else: ?>
+            <p>No transactions found in any category.</p>
+<?php endif; ?>
+
 <script>
 function toggleSplitSection(select) {
     const selected = parseInt($(select).val());
@@ -380,8 +358,12 @@ $(function () {
         $('#tab-' + tab).addClass('active');
     });
 
+    // Explicitly activate the saved tab on page load (no reliance on .click())
     const savedTab = localStorage.getItem(tabKey) || 'all';
-    $('.tab-btn[data-tab="' + savedTab + '"]').click();
+    $('.tab-btn').removeClass('active');
+    $('.tab-btn[data-tab="' + savedTab + '"]').addClass('active');
+    $('.tab-content').removeClass('active');
+    $('#tab-' + savedTab).addClass('active');
 
     // Initial toggle of split/transfer UI
     $('.category-select').each(function () {
@@ -428,6 +410,7 @@ $(function () {
     });
 });
 </script>
+
 
 
 

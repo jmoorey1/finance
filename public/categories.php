@@ -46,7 +46,7 @@ foreach ($categories as $cat) {
 ?>
 
 <div class="container mt-4">
-    <h2>📂 Category Maintenance</h2>
+    <h2>📂 Category Management</h2>
 
     <table class="table table-bordered table-striped mt-3">
         <thead class="table-dark">
