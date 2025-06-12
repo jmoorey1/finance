@@ -20,7 +20,6 @@
 		}
 		.container {
 			max-width: 960px;
-			margin-left: 20px;
 		}
 		.forecast-panel {
 			background: #fff;
@@ -55,12 +54,17 @@
 			border-collapse: collapse;
 			width: 100%;
 		}
-		.budget-table th, .budget-table td {
+		.budget-table th,
+		.budget-table td {
 			border: 1px solid #ccc;
 			padding: 6px;
-			text-align: right;
+			text-align: center;
+			width: 95px; /* match input width exactly */
+			min-width: 95px;
+			max-width: 95px;
 		}
-		.budget-table th.sticky-col, .budget-table td.sticky-col {
+		.budget-table th.sticky-col,
+		.budget-table td.sticky-col {
 			position: sticky;
 			left: 0;
 			background: #fff;
@@ -68,17 +72,20 @@
 			z-index: 1;
 		}
 		.budget-table input[type='number'] {
-			width: 80px;
+			width: 95px;
 		}
 		.budget-table thead th {
 			background: #f8f8f8;
 			position: sticky;
-			top: 0;
+			top: 56px; /* navbar offset */
 			z-index: 2;
 		}
 		.budget-table tfoot td {
 			font-weight: bold;
 			background: #f0f0f0;
+		}
+
+
 		}
 		/* Review Page Styles */
 		.review-tabs { margin-bottom: 20px; }
@@ -193,4 +200,9 @@
         </div>
     </div>
 </nav>
-<div class="container">
+<?php
+$page = basename($_SERVER['PHP_SELF']);
+if ($page !== 'budgets.php') {
+    echo '<div class="container">';
+}
+?>

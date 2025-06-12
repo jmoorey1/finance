@@ -1,5 +1,7 @@
 <?php include '../layout/header.php'; ?>
-
+<style>
+  .container.budget-container { max-width: 100%; }
+</style>
 <?php
 
 require_once '../config/db.php';
@@ -71,6 +73,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 }
 ?>
 
+<div class="container budget-container">
 
     <h1>Annual Budget for <?= $year ?></h1>
 
@@ -124,7 +127,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                                     value="<?= $val ?>" />
                             </td>
                         <?php endforeach; ?>
-                        <td><?= number_format($row_total, 2) ?></td>
+                        <td>£<?= number_format($row_total, 2) ?></td>
                         <?php $type_grand[$cat['type']] += $row_total; ?>
                     </tr>
                 <?php endforeach; ?>
@@ -133,25 +136,25 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 <tr>
                     <td class="sticky-col">Total Income</td>
                     <?php foreach ($type_totals['income'] as $total): ?>
-                        <td><?= number_format($total, 2) ?></td>
+                        <td>£<?= number_format($total, 2) ?></td>
                     <?php endforeach; ?>
-                    <td><?= number_format($type_grand['income'], 2) ?></td>
+                    <td>£<?= number_format($type_grand['income'], 2) ?></td>
                 </tr>
                 <tr>
                     <td class="sticky-col">Total Expenses</td>
                     <?php foreach ($type_totals['expense'] as $total): ?>
-                        <td><?= number_format($total, 2) ?></td>
+                        <td>£<?= number_format($total, 2) ?></td>
                     <?php endforeach; ?>
-                    <td><?= number_format($type_grand['expense'], 2) ?></td>
+                    <td>£<?= number_format($type_grand['expense'], 2) ?></td>
                 </tr>
                 <tr>
                     <td class="sticky-col">Net Total</td>
                     <?php for ($i = 0; $i < 12; $i++): ?>
 						<?php $running_total += $type_totals['income'][$i]; ?>
 						<?php $running_total -= $type_totals['expense'][$i]; ?>
-                        <td><?= number_format($type_totals['income'][$i] - $type_totals['expense'][$i], 2) ?></td>
+                        <td>£<?= number_format($type_totals['income'][$i] - $type_totals['expense'][$i], 2) ?></td>
                     <?php endfor; ?>
-                    <td><?= number_format($type_grand['income'] - $type_grand['expense'], 2) ?></td>
+                    <td>£<?= number_format($type_grand['income'] - $type_grand['expense'], 2) ?></td>
                 </tr>
                 <tr>
                     <td class="sticky-col">Running Total</td>
@@ -159,7 +162,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                     <?php for ($i = 0; $i < 12; $i++): ?>
 						<?php $running_total += $type_totals['income'][$i]; ?>
 						<?php $running_total -= $type_totals['expense'][$i]; ?>
-                        <td><?= number_format($running_total, 2) ?></td>
+                        <td>£<?= number_format($running_total, 2) ?></td>
                     <?php endfor; ?>
                     <td></td>
                 </tr>
@@ -168,6 +171,6 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         <br>
         <button type="submit">Save Annual Budget</button>
     </form>
-</body>
-</html>
+</div>
+
 <?php include '../layout/footer.php'; ?>

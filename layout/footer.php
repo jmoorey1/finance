@@ -1,4 +1,9 @@
-</div> <!-- End .container -->
+<?php
+$page = basename($_SERVER['PHP_SELF']);
+if ($page !== 'budgets.php') {
+    echo '</div>';
+}
+?>
 
 <footer>
     <p>&copy; <?= date('Y') ?> Household Finances — Built by John</p>

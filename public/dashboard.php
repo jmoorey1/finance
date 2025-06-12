@@ -33,11 +33,10 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $categories[$row['id']] = $row;
 }
 
-// Load IDs of all current/credit/savings accounts for linking
+// Load account IDs
 $acct_stmt = $pdo->query("SELECT id FROM accounts WHERE type IN ('current','credit','savings') and active=1");
 $account_ids = array_column($acct_stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
 $account_query = implode('&', array_map(fn($id) => "accounts[]=$id", $account_ids));
-
 
 // Load budgets
 $budgets = [];
@@ -47,7 +46,7 @@ foreach ($stmt as $row) {
     $budgets[$row['category_id']] = floatval($row['amount']);
 }
 
-// Load actuals (rolled up)
+// Load actuals
 $actuals = [];
 $stmt = $pdo->prepare("
 	SELECT top_id, sum(total) as total from 
@@ -74,7 +73,6 @@ $stmt = $pdo->prepare("
 		  AND c.type IN ('income', 'expense')
 		GROUP BY top_id) actuals
 		group by top_id
-
 ");
 $stmt->execute([
     $start_month->format('Y-m-d'),
@@ -86,7 +84,7 @@ foreach ($stmt as $row) {
     $actuals[$row['top_id']] = floatval($row['total']);
 }
 
-// Load forecast (also rolled up to parent category)
+// Load forecast
 $forecast = [];
 $stmt = $pdo->prepare("
     SELECT IFNULL(top.id, c.id) AS top_id, c.type, SUM(pi.amount) AS total
@@ -98,9 +96,7 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$start_month->format('Y-m-d'), $end_month->format('Y-m-d')]);
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $amount = floatval($row['total']);
-//    if ($row['type'] === 'expense') $amount *= -1;
-    $forecast[$row['top_id']] = $amount;
+    $forecast[$row['top_id']] = floatval($row['total']);
 }
 
 // Totals
@@ -121,9 +117,10 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
         <thead class="table-light">
             <tr>
                 <th>Category</th>
-                <th class="text-end">Budget</th>
                 <th class="text-end">Actual</th>
-                <th class="text-end">Forecast</th>
+                <th class="text-end">Committed</th>
+                <th class="text-end">Total</th>
+                <th class="text-end">Budget</th>
                 <th class="text-end">Variance</th>
             </tr>
         </thead>
@@ -145,11 +142,14 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                     $future *= -1;
                 }
 
+                $total_committed = $actual + $future;
+
+                // Skip rows where everything is zero
                 if ($budget == 0 && $actual == 0 && $future == 0) continue;
 
                 $variance = ($cat['type'] === 'income')
-                    ? ($actual + $future - $budget)
-                    : ($budget - $actual - $future);
+                    ? ($total_committed - $budget)
+                    : ($budget - $total_committed);
 
                 $class = $variance >= 0 ? 'text-success' : 'text-danger';
                 $sign = $variance > 0 ? "+" : "";
@@ -157,53 +157,55 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                 $totals[$cat['type']]['budget'] += $budget;
                 $totals[$cat['type']]['actual'] += $actual;
                 $totals[$cat['type']]['forecast'] += $future;
-				
-				$link_base = "ledger.php?$account_query&start={$start_month->format('Y-m-d')}&end={$end_month->format('Y-m-d')}&parent_id={$id}";
 
-				$actual_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" .
-							   "£" . number_format($actual, 2) . "</a>";
-
-				$forecast_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" .
-								 "£" . number_format($future, 2) . "</a>";
-
+                $link_base = "ledger.php?$account_query&start={$start_month->format('Y-m-d')}&end={$end_month->format('Y-m-d')}&parent_id={$id}";
+                $actual_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($actual, 2) . "</a>";
+                $forecast_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($future, 2) . "</a>";
+                $total_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($total_committed, 2) . "</a>";
 
                 $section_rows .= "<tr>
-
-					<td><a href='category_report.php?category_id=" . htmlspecialchars($cat['id']) . "'>" . htmlspecialchars($cat['name']) . "</a></td>
+                    <td><a href='category_report.php?category_id=" . htmlspecialchars($cat['id']) . "'>" . htmlspecialchars($cat['name']) . "</a></td>
+                    <td class='text-end'>{$actual_link}</td>
+                    <td class='text-end'>{$forecast_link}</td>
+                    <td class='text-end'>{$total_link}</td>
                     <td class='text-end'>£" . number_format($budget, 2) . "</td>
-                    <td class='text-end'>". $actual_link ."</td>
-                    <td class='text-end'>". $forecast_link ."</td>
-                    <td class='text-end $class'>". $sign . "£" . number_format($variance, 2) . "</td>
+                    <td class='text-end $class'>{$sign}£" . number_format($variance, 2) . "</td>
                 </tr>";
             endforeach;
 
             if ($section_rows !== ''):
-                echo "<tr class='table-light fw-bold'><td colspan='5'>" . htmlspecialchars($label) . "</td></tr>";
+                echo "<tr class='table-light fw-bold'><td colspan='6'>" . htmlspecialchars($label) . "</td></tr>";
                 echo $section_rows;
 
                 // Add Total Income after last income block
                 if ($filter['type'] === 'income' && $label === 'Variable Income'):
-                    $inc_var = $totals['income']['actual'] + $totals['income']['forecast'] - $totals['income']['budget'];
+                    $total_committed = $totals['income']['actual'] + $totals['income']['forecast'];
+                    $inc_var = $total_committed - $totals['income']['budget'];
                     $inc_class = $inc_var >= 0 ? 'text-success' : 'text-danger';
                     $sign = $inc_var > 0 ? "+" : "";
                     echo "<tr class='fw-bold table-light'>
                         <td>Total Income</td>
-                        <td class='text-end'>£" . number_format($totals['income']['budget'], 2) . "</td>
                         <td class='text-end'>£" . number_format($totals['income']['actual'], 2) . "</td>
                         <td class='text-end'>£" . number_format($totals['income']['forecast'], 2) . "</td>
-                        <td class='text-end $inc_class'>". $sign . "£" . number_format($inc_var, 2) . "</td>
+                        <td class='text-end'>£" . number_format($total_committed, 2) . "</td>
+                        <td class='text-end'>£" . number_format($totals['income']['budget'], 2) . "</td>
+                        <td class='text-end $inc_class'>{$sign}£" . number_format($inc_var, 2) . "</td>
                     </tr>";
                 endif;
             endif;
         endforeach;
+
+        // Expenses total
+        $totals['expense']['total_committed'] = $totals['expense']['actual'] + $totals['expense']['forecast'];
         ?>
         <tr class="fw-bold table-light">
             <td>Total Expenses</td>
-            <td class="text-end">£<?= number_format($totals['expense']['budget'], 2) ?></td>
             <td class="text-end">£<?= number_format($totals['expense']['actual'], 2) ?></td>
             <td class="text-end">£<?= number_format($totals['expense']['forecast'], 2) ?></td>
+            <td class="text-end">£<?= number_format($totals['expense']['total_committed'], 2) ?></td>
+            <td class="text-end">£<?= number_format($totals['expense']['budget'], 2) ?></td>
             <?php
-            $exp_var = $totals['expense']['budget'] - $totals['expense']['actual'] - $totals['expense']['forecast'];
+            $exp_var = $totals['expense']['budget'] - $totals['expense']['total_committed'];
             $exp_class = $exp_var >= 0 ? 'text-success' : 'text-danger';
             $sign = $exp_var > 0 ? "+" : "";
             ?>
@@ -211,15 +213,16 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
         </tr>
         <tr class="fw-bold table-dark">
             <td>Net Total</td>
-            <td class="text-end">£<?= number_format($totals['income']['budget'] - $totals['expense']['budget'], 2) ?></td>
             <td class="text-end">£<?= number_format($totals['income']['actual'] - $totals['expense']['actual'], 2) ?></td>
             <td class="text-end">£<?= number_format($totals['income']['forecast'] - $totals['expense']['forecast'], 2) ?></td>
+            <td class="text-end">£<?= number_format(($totals['income']['actual'] + $totals['income']['forecast']) - ($totals['expense']['actual'] + $totals['expense']['forecast']), 2) ?></td>
+            <td class="text-end">£<?= number_format($totals['income']['budget'] - $totals['expense']['budget'], 2) ?></td>
             <?php
-            $net_var = ($totals['income']['actual'] + $totals['income']['forecast']) -
-                       ($totals['expense']['actual'] + $totals['expense']['forecast']) -
+            $net_var = (($totals['income']['actual'] + $totals['income']['forecast']) -
+                        ($totals['expense']['actual'] + $totals['expense']['forecast'])) -
                        ($totals['income']['budget'] - $totals['expense']['budget']);
             $net_class = $net_var >= 0 ? 'text-success' : 'text-danger';
-                    $sign = $net_var > 0 ? "+" : "";
+            $sign = $net_var > 0 ? "+" : "";
             ?>
             <td class="text-end <?= $net_class ?>"><?= $sign ?>£<?= number_format($net_var, 2) ?></td>
         </tr>

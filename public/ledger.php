@@ -90,6 +90,10 @@ $query = "
       $projectFilter
       $earmarkFilter
       AND COALESCE(p.name, t.description) LIKE ?
+";
+
+if (!isset($_GET['project_id'])) {
+$query .= "
     UNION ALL
     SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, p.amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
     FROM predicted_instances p
@@ -138,10 +142,12 @@ $query .= "
 if (!empty($selected_categories)) {
     $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
 }
-
+}
 $query .= " ORDER BY date ASC";
 
 // Build parameters
+
+if (!isset($_GET['project_id'])) {
 $params = array_merge(
     $selected_accounts, [$start_date, $end_date],
     $selected_categories, $selected_categories, [$search_like], // actuals
@@ -149,6 +155,13 @@ $params = array_merge(
     $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories, // predicted transfer (from)
     $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories  // predicted transfer (to)
 );
+} else {
+$params = array_merge(
+    $selected_accounts, [$start_date, $end_date],
+    $selected_categories, $selected_categories, [$search_like] // actuals
+);
+}
+
 
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
