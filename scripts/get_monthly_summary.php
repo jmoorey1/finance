@@ -115,7 +115,10 @@ for ($i = 0; $i < 12; $i++) {
 
     // Budgeted amount
     $budget_stmt = $pdo->prepare("
-        SELECT SUM(amount) FROM budgets WHERE month_start = ?
+        select sum(b.amount) from budgets b
+		join categories c on b.category_id = c.id
+		where c.type = 'expense'
+		and b.month_start = ?
     ");
     $budget_stmt->execute([$month_start->format('Y-m-d')]);
     $budget = (float) $budget_stmt->fetchColumn();
@@ -129,6 +132,7 @@ for ($i = 0; $i < 12; $i++) {
         'net' => $inflow - $outflow,
         'discretionary_pct' => $disc_pct,
         'fixed_pct' => $fixed_pct,
+        'exp_budget' => $budget,
         'budget_utilization_pct' => $budget_util,
     ];
 }

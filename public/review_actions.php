@@ -290,14 +290,15 @@ switch ($action) {
 				$placeholder_cat = resolve_transfer_category($conn, $linked_account_id, $placeholder_amt, $staging['account_id']);
 
 				$conn->prepare("
-					INSERT INTO transactions (account_id, date, description, amount, type, category_id)
+					INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
 					VALUES (?, ?, ?, ?, 'transfer', ?, ?)
 				")->execute([
 					$linked_account_id,
 					$staging['date'],
 					'PLACEHOLDER',
 					$placeholder_amt,
-					$placeholder_cat
+					$placeholder_cat,
+					$transfer_group_id
 				]);
 
 				// Delete staging

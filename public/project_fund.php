@@ -186,19 +186,65 @@ foreach ($months as $m) {
 		$savings_balance = $savings_balances[$key] ?? 0;
 
 	} elseif ($today >= $m['start'] && $today <= $m['end']) {
-		// Current month – use live balance as of last night
+		// Get end-of-last-month savings balance
+		$last_month_end = (clone $m['start'])->modify('-1 day')->format('Y-m-d');
+		$stmt = $pdo->prepare("
+			SELECT (
+				(SELECT SUM(amount) FROM transactions WHERE account_id = ? AND date <= ?) +
+				(SELECT starting_balance FROM accounts WHERE id = ?)
+			) AS balance
+		");
+		$stmt->execute([$savings_account_id, $last_month_end, $savings_account_id]);
+		$savings_balance = floatval($stmt->fetchColumn());
+
+		// Add Net Total (Actual + Forecast) from dashboard.php logic
+		$stmt = $pdo->prepare("
+			SELECT SUM(amount) AS net
+			FROM (
+				SELECT s.amount
+				FROM transaction_splits s
+				JOIN transactions t ON s.transaction_id = t.id
+				JOIN accounts a ON t.account_id = a.id
+				JOIN categories c ON s.category_id = c.id
+				WHERE t.date BETWEEN ? AND ? AND a.type IN ('current','credit','savings') AND c.type IN ('income','expense')
+
+				UNION ALL
+
+				SELECT t.amount
+				FROM transactions t
+				JOIN accounts a ON t.account_id = a.id
+				JOIN categories c ON t.category_id = c.id
+				LEFT JOIN transaction_splits s ON s.transaction_id = t.id
+				WHERE t.date BETWEEN ? AND ? AND s.id IS NULL AND a.type IN ('current','credit','savings') AND c.type IN ('income','expense')
+
+				UNION ALL
+
+				SELECT pi.amount
+				FROM predicted_instances pi
+				JOIN categories c ON pi.category_id = c.id
+				WHERE pi.scheduled_date BETWEEN ? AND ? AND c.type IN ('income','expense')
+			) AS combined
+		");
+		$stmt->execute([
+			$m['start']->format('Y-m-d'), $m['end']->format('Y-m-d'), // actuals
+			$m['start']->format('Y-m-d'), $m['end']->format('Y-m-d'), // unsplit actuals
+			$m['start']->format('Y-m-d'), $m['end']->format('Y-m-d'), // forecast
+		]);
+		$net_total = floatval($stmt->fetchColumn());
+
+		$savings_balance += $net_total;
+
 		$actual = 0;
 		$variance = 0;
 		$deficit = $budget;
 		$running_deficit += $budget;
 		$topup = $topups_by_month[$key] ?? 0;
-		$savings_balance = $current_balance;
 
 		if ($topup > 0) {
 			$savings_balance -= $topup;
-		} else {
-			$savings_balance += $deficit;
 		}
+	
+
 
 	} else {
 		// Future month – project forward from previous balance
@@ -286,7 +332,9 @@ for ($i = count($rows) - 1; $i >= 0; $i--) {
                 <th class="text-end">Budget Net</th>
                 <th class="text-end">Actual</th>
                 <th class="text-end">Variance</th>
+                <th class="text-end">Topups</th>
                 <th class="text-end">Running Deficit</th>
+                <th class="text-end">Project Fund</th>
                 <th class="text-end">Savings Balance</th>
             </tr>
         </thead>
@@ -297,7 +345,9 @@ for ($i = count($rows) - 1; $i >= 0; $i--) {
                     <td class="text-end">£<?= number_format($r['budget'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['actual'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['variance'], 2) ?></td>
+                    <td class="text-end">£<?= number_format($r['topup'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['running_deficit'], 2) ?></td>
+                    <td class="text-end">£<?= number_format($r['project'], 2) ?></td>
                     <td class="text-end">£<?= number_format($r['savings_balance'], 2) ?></td>
                 </tr>
             <?php endforeach; ?>

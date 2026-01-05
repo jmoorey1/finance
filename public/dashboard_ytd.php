@@ -121,11 +121,11 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
 
 <h4><?= $start_date->format('j M Y') ?> – <?= $end_date->format('j M Y') ?></h4>
 
-<div class="table-responsive mt-3">
-<table class="table table-sm table-striped table-bordered align-middle">
-    <thead class="table-light">
+
+<table class="table table-sm table-striped table-bordered align-middle dash-table">
+    <thead class="table-dark">
         <tr>
-            <th>Category</th>
+            <th "sticky-col">Category</th>
             <th class="text-end">Actual</th>
             <th class="text-end">Committed</th>
             <th class="text-end">Total</th>
@@ -183,7 +183,7 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
         endforeach;
 
         if ($section_rows !== ''):
-            echo "<tr class='table-light fw-bold'><td colspan='6'>" . htmlspecialchars($label) . "</td></tr>";
+            echo "<tr class='table-dark fw-bold'><td colspan='6'>" . htmlspecialchars($label) . "</td></tr>";
             echo $section_rows;
 
             // Add Total Income row
@@ -192,7 +192,7 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
                 $inc_var = $total_committed - $totals['income']['budget'];
                 $inc_class = $inc_var >= 0 ? 'text-success' : 'text-danger';
                 $sign = $inc_var > 0 ? "+" : "";
-                echo "<tr class='fw-bold table-light'>
+                echo "<tr class='fw-bold table-dark'>
                     <td>Total Income</td>
                     <td class='text-end'>£" . number_format($totals['income']['actual'], 2) . "</td>
                     <td class='text-end'>£" . number_format($totals['income']['forecast'], 2) . "</td>
@@ -207,7 +207,7 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
     // Expenses total
     $totals['expense']['total_committed'] = $totals['expense']['actual'] + $totals['expense']['forecast'];
     ?>
-    <tr class="fw-bold table-light">
+    <tr class="fw-bold table-dark">
         <td>Total Expenses</td>
         <td class="text-end">£<?= number_format($totals['expense']['actual'], 2) ?></td>
         <td class="text-end">£<?= number_format($totals['expense']['forecast'], 2) ?></td>
@@ -237,6 +237,6 @@ $totals = ['income' => ['budget' => 0, 'actual' => 0, 'forecast' => 0], 'expense
     </tr>
     </tbody>
 </table>
-</div>
+
 
 <?php include '../layout/footer.php'; ?>

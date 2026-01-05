@@ -22,16 +22,29 @@ $selected_categories = $_GET['category_id'] ?? [];
 $parent_filter = $_GET['parent_id'] ?? '';
 $search_term = trim($_GET['description'] ?? '');
 $search_like = '%' . $search_term . '%';
+$ledger_title = '';
 // Add to your existing filter logic:
 $projectFilter = '';
 if (isset($_GET['project_id']) && is_numeric($_GET['project_id'])) {
     $project_id = (int) $_GET['project_id'];
     $projectFilter = "AND (t.project_id = $project_id)";
+	
+	$project_name_query = "SELECT name FROM projects WHERE id = ?";
+	$project_name_stmt = $pdo->prepare($project_name_query);
+	$project_name_stmt->execute([$_GET['project_id']]);
+	$project = $project_name_stmt->fetch(PDO::FETCH_ASSOC);
+	$ledger_title = $project ? $project['name'] : '';
 }
 $earmarkFilter = '';
 if (isset($_GET['earmark_id']) && is_numeric($_GET['earmark_id'])) {
-$earmark_id = (int) $_GET['earmark_id'];
-$earmarkFilter = "AND (t.earmark_id = $earmark_id)";
+	$earmark_id = (int) $_GET['earmark_id'];
+	$earmarkFilter = "AND (t.earmark_id = $earmark_id)";
+	
+	$earmark_name_query = "SELECT name FROM earmarks WHERE id = ?";
+	$earmark_name_stmt = $pdo->prepare($earmark_name_query);
+	$earmark_name_stmt->execute([$_GET['earmark_id']]);
+	$earmark = $earmark_name_stmt->fetch(PDO::FETCH_ASSOC);
+	$ledger_title = $earmark ? $earmark['name'] : '';
 }
 
 
@@ -48,6 +61,14 @@ if ($parent_filter !== '') {
         'id'
     );
     $selected_categories = array_merge($selected_categories, $child_ids);
+
+	if ($ledger_title == '') {
+		$parent_name_query = "SELECT name FROM categories WHERE id = ?";
+		$parent_name_stmt = $pdo->prepare($parent_name_query);
+		$parent_name_stmt->execute([$parent_filter]);
+		$parent = $parent_name_stmt->fetch(PDO::FETCH_ASSOC);
+		$ledger_title = $parent ? $parent['name'] : '';
+	}
 }
 
 // Remove duplicates
@@ -167,8 +188,8 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
+<h1 class="mb-4">📒 Ledger Viewer<?= isset($ledger_title) && $ledger_title !== '' ? " : " . $ledger_title : '' ?></h1>
 
-<h1 class="mb-4">📒 Ledger Viewer</h1>
 
 <form method="GET" class="mb-4">
     <div class="row g-3">
@@ -225,6 +246,7 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 			</tr>
 		</thead>
 		<tbody>
+			<?php $total = 0; ?>
 			<?php foreach ($ledger as $entry): ?>
 				<?php
 					$acct_name = '';
@@ -256,6 +278,7 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 					</td>
 					<td class="text-end <?= $entry['amount'] < 0 ? 'text-danger' : '' ?>">
 						£<?= number_format($entry['amount'], 2) ?>
+						<?php $total += $entry['amount']; ?>
 					</td>
 					<td><?= $entry['source'] ?></td>
 					<td>
@@ -264,6 +287,11 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 				</tr>
 			<?php endforeach; ?>
 		</tbody>
+		<?php //if (!empty($_GET['earmark_id']) || !empty($_GET['project_id'])): ?>
+			<tfoot>
+				<tr><td colspan='4'><strong>TOTAL</strong></td><td class="text-end <?= $total < 0 ? 'text-danger' : '' ?>"><strong>£<?= number_format($total, 2) ?></strong></td><td colspan="2"></td></tr>
+			</tfoot>
+		<?php //endif; ?>
 	</table>
 
 <?php else: ?>

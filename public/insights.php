@@ -106,6 +106,7 @@ foreach ($stmt as $row) {
 // Analyse Spending vs Budget
 // ----------------------------
 
+$unbudgeted = [];
 $overspent = [];
 $underspent = [];
 $highspent = [];
@@ -121,8 +122,15 @@ foreach ($actuals as $cat_id => $actual) {
     $fixed = $meta['fixedness'] === 'fixed';
 
     // Focus only on variable categories with defined budget
-    if ($budget > 0 && !$fixed) {
-        if ($actual > $budget) {
+    if (!$fixed) {
+        if ($actual > 0 && $budget == 0) {
+            // Unbudgeted: budget = 0 and actual > 0
+            $unbudgeted[] = [
+                'name' => $meta['name'],
+                'actual' => $actual,
+                'id' => $cat_id
+            ];
+        } elseif ($actual > $budget) {
             // Overspent: actual > budget
             $overspent[] = [
                 'name' => $meta['name'],
@@ -248,22 +256,37 @@ $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <h5><?= $start_date->format('j M Y') ?> – <?= $end_date->format('j M Y') ?></h5>
 
 <!-- Overspent -->
-<?php if (count($overspent)): ?>
+<?php if (!empty($overspent) || !empty($unbudgeted)): ?>
     <div class="mb-4">
         <h4>🚨 Overspent Categories</h4>
         <ul class="list-group">
-            <?php foreach ($overspent as $c): ?>
-				<?php
-					$link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$c['id']}";
-					$variance_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . "£" . number_format($c['variance'], 2) . "</a>";
-				?>
-                <li class="list-group-item">
-                    <a href="category_report.php?category_id=<?= htmlspecialchars($c['id']) ?>"><?= htmlspecialchars($c['name']) ?></a> – Overspent by <?= $variance_link ?> (Budget: £<?= number_format($c['budget'], 2) ?>)
-                </li>
-            <?php endforeach; ?>
+            <?php if (!empty($unbudgeted)): ?>
+                <?php foreach ($unbudgeted as $c): ?>
+                    <?php
+                        $link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$c['id']}";
+                        $unbudgeted_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($c['actual'], 2) . "</a>";
+                    ?>
+                    <li class="list-group-item">
+                        <a href="category_report.php?category_id=<?= htmlspecialchars($c['id']) ?>"><?= htmlspecialchars($c['name']) ?></a> – Overspent by <?= $unbudgeted_link ?> (Budget: £0.00)
+                    </li>
+                <?php endforeach; ?>
+            <?php endif; ?>
+
+            <?php if (!empty($overspent)): ?>
+                <?php foreach ($overspent as $c): ?>
+                    <?php
+                        $link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&parent_id={$c['id']}";
+                        $variance_link = "<a href=\"$link_base\" class=\"text-decoration-none\">£" . number_format($c['variance'], 2) . "</a>";
+                    ?>
+                    <li class="list-group-item">
+                        <a href="category_report.php?category_id=<?= htmlspecialchars($c['id']) ?>"><?= htmlspecialchars($c['name']) ?></a> – Overspent by <?= $variance_link ?> (Budget: £<?= number_format($c['budget'], 2) ?>)
+                    </li>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </ul>
     </div>
 <?php endif; ?>
+
 
 <!-- Underspent -->
 <?php if (count($underspent)): ?>

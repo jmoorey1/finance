@@ -26,6 +26,7 @@ if ($data === null || !is_array($data)) {
             <th class="text-end">Net (£)</th>
             <th class="text-end">Discretionary (%)</th>
             <th class="text-end">Fixed (%)</th>
+            <th class="text-end">Exp. Budget (£)</th>
             <th class="text-end">Budget Utilisation (%)</th>
         </tr>
     </thead>
@@ -40,6 +41,7 @@ if ($data === null || !is_array($data)) {
                 </td>
                 <td class="text-end"><?= number_format($row['discretionary_pct'], 1) ?>%</td>
                 <td class="text-end"><?= number_format($row['fixed_pct'], 1) ?>%</td>
+                <td class="text-end">£<?= number_format($row['exp_budget'], 2) ?></td>
                 <td class="text-end"><?= $row['budget_utilization_pct'] !== null ? number_format($row['budget_utilization_pct'], 1) . '%' : '—' ?></td>
             </tr>
         <?php endforeach; ?>

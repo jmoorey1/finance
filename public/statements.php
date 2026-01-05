@@ -2,7 +2,7 @@
 require_once '../config/db.php';
 
 // Get list of active accounts
-$stmt = $pdo->query("SELECT id, name FROM accounts WHERE active = 1 ORDER BY name");
+$stmt = $pdo->query("SELECT id, name FROM accounts ORDER BY name");
 $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Handle form submission to create a new statement

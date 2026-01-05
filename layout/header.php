@@ -48,6 +48,13 @@
 				margin-bottom: 10px;
 			}
 		}
+		/* Use the navbar height consistently */
+		:root { --nav-offset: 56px; }
+
+		/* Let sticky see the page/body as the scroller */
+		.table-responsive {
+		  overflow-y: visible !important;   /* override Bootstrap */
+		}
 
 		/* Budget Table Styling */
 		.budget-table {
@@ -84,9 +91,30 @@
 			font-weight: bold;
 			background: #f0f0f0;
 		}
-
-
+				
+		/* Sticky header + first column for DASH table */
+		table.dash-table {
+		  border-collapse: separate;        /* avoid Blink sticky bugs with 'collapse' */
+		  border-spacing: 0;
 		}
+
+		table.dash-table thead th {
+		  position: sticky;
+		  top: var(--nav-offset);
+		  z-index: 3;                        /* above sticky first column */
+		}
+
+		table.dash-table th.sticky-col,
+		table.dash-table td.sticky-col {
+		  position: sticky;
+		  left: 0;
+		  z-index: 2;                        /* under header */
+		}
+
+		table.dash-table thead th.sticky-col {
+		  z-index: 4;                        /* header first col sits on top */
+		}
+		
 		/* Review Page Styles */
 		.review-tabs { margin-bottom: 20px; }
 		.review-tabs .tab-btn {

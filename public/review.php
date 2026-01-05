@@ -17,6 +17,7 @@ $sql = "
     SELECT s.*, 
            p.scheduled_date, 
            p.description AS predicted_description,
+           p.amount AS predicted_amount,
            t.id AS matched_transaction_id,
            t.date AS matched_transaction_date,
            t.description AS matched_transaction_desc,
@@ -124,7 +125,7 @@ foreach ($rows as $row) {
                                     <input type="hidden" name="action" value="fulfill_prediction">
                                     <input type="hidden" name="staging_transaction_id" value="<?= $row['id'] ?>">
                                     <input type="hidden" name="predicted_instance_id" value="<?= $row['predicted_instance_id'] ?>">
-                                    <p class="note">⚡ Predicted: <?= htmlspecialchars($row['predicted_description']) ?> (<?= $row['scheduled_date'] ?>)</p>
+                                    <p class="note">⚡ Predicted: <?= htmlspecialchars($row['predicted_description']) ?> (<?= $row['scheduled_date'] ?>, £<?= number_format($row['predicted_amount'], 2) ?>)</p>
                                     <div class="actions">
                                         <button type="submit">Confirm Match</button>
                                         <button type="submit" name="action" value="reject_prediction">Not a Match</button>
@@ -222,7 +223,7 @@ foreach ($rows as $row) {
 													echo "<option value=\"existing_{$match['id']}\">[PLACEHOLDER] Account {$match['account_id']} ({$match['date']}, {$match['amount']})</option>";
 												}
 												if (empty($candidates_count) && empty($placeholders_count)) {
-													echo "<option> value=''>--Choose Transfer Type--</option>";
+													echo "<option value=''>--Choose Transfer Type--</option>";
 												}
 												echo "<option value=\"one_sided\">Counterparty Not Yet Uploaded</option>";
 												?>
@@ -235,7 +236,7 @@ foreach ($rows as $row) {
 											Placeholder Account:
 											<select name="linked_account_id" disabled>
 												<?php
-												$acctStmt = $conn->prepare("SELECT id, name FROM accounts WHERE id != ?");
+												$acctStmt = $conn->prepare("SELECT id, name FROM accounts WHERE id != ? and active=1");
 												$acctStmt->execute([$row['account_id']]);
 												foreach ($acctStmt->fetchAll(PDO::FETCH_ASSOC) as $acct) {
 													echo "<option value=\"{$acct['id']}\">{$acct['name']}</option>";
