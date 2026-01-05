@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 import mysql.connector
 import holidays
 import calendar
@@ -48,7 +49,8 @@ def schedule_instance(cursor, p, day):
          category_id, amount, description)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE 
-            amount = IF(confirmed = 1, amount, VALUES(amount))
+            amount = IF(confirmed = 1, amount, VALUES(amount)),
+            description = VALUES(description)
     """, (
         p['id'], day, p['from_account_id'], p['to_account_id'],
         p['category_id'], amount, p['description']
@@ -59,12 +61,11 @@ def predict_fixed_transactions(cursor, today, end_date):
     predictions = cursor.fetchall()
 
     for p in predictions:
-        pid = p['id']
-        interval = p.get('repeat_interval')
+        interval = p.get('repeat_interval') or 1
         anchor_type = p['anchor_type']
         frequency = p.get('frequency')
 
-        # Weekly predictions
+        # Weekly predictions (explicit weekday every week)
         if anchor_type == 'weekly':
             for i in range((end_date - today).days + 1):
                 day = today + timedelta(days=i)
@@ -72,247 +73,316 @@ def predict_fixed_transactions(cursor, today, end_date):
                     schedule_instance(cursor, p, day)
             continue
 
-        # Custom frequency (e.g. every N weeks)
+        # Custom frequency (e.g. every N weeks) anchored from last actual transaction
         if frequency == 'custom' and interval:
             cursor.execute("""
-                SELECT MAX(date) as last_date FROM transactions
+                SELECT MAX(date) as last_date
+                FROM transactions
                 WHERE predicted_transaction_id = %s
-            """, (pid,))
-            result = cursor.fetchone()
-            start_from = result['last_date'] or today.isoformat()
-            if isinstance(start_from, str):
-                start_from = datetime.strptime(start_from, "%Y-%m-%d")
-            if isinstance(start_from, datetime):
-                start_from = start_from.date()
-            current = start_from + timedelta(weeks=interval)
-            while current <= end_date:
-                schedule_instance(cursor, p, current)
-                current += timedelta(weeks=interval)
+            """, (p['id'],))
+            last_row = cursor.fetchone()
+            last_date = last_row['last_date'] if last_row else None
+
+            if last_date is None:
+                next_date = today
+            else:
+                next_date = (last_date + timedelta(days=7 * interval))
+
+            while next_date <= end_date:
+                schedule_instance(cursor, p, next_date)
+                next_date += timedelta(days=7 * interval)
             continue
 
-        # Default to 1 month if repeat_interval is missing
-        months_interval = int(p.get('repeat_interval') or 1)
+        # Monthly / fortnightly / weekly via anchor types
+        month_cursor = today.replace(day=1)
+        while month_cursor <= end_date:
+            year = month_cursor.year
+            month = month_cursor.month
 
-        # Start from last actual transaction or today
-        cursor.execute("""
-            SELECT MAX(date) as last_date FROM transactions
-            WHERE predicted_transaction_id = %s
-        """, (pid,))
-        result = cursor.fetchone()
-        start_from = result['last_date'] or today.isoformat()
-        if isinstance(start_from, str):
-            start_from = datetime.strptime(start_from, "%Y-%m-%d")
-        if isinstance(start_from, datetime):
-            start_from = start_from.date()
+            day = None
 
-        current = start_from + relativedelta(months=months_interval)
-
-        while current <= end_date:
-            year, month = current.year, current.month
-            scheduled_date = None
-
-            if anchor_type == 'day_of_month' and p.get('day_of_month'):
-                try:
-                    scheduled_date = datetime(year, month, p['day_of_month'])
-                    scheduled_date = adjust_date(scheduled_date, p['adjust_for_weekend'])
-                except ValueError:
-                    current += relativedelta(months=months_interval)
-                    continue
+            if anchor_type == 'day_of_month':
+                dom = p.get('day_of_month')
+                if dom:
+                    last_day = calendar.monthrange(year, month)[1]
+                    dom = min(int(dom), last_day)
+                    day = datetime(year, month, dom)
 
             elif anchor_type == 'nth_weekday':
-                scheduled_date = get_nth_weekday(year, month, p['weekday'], p['nth_weekday'])
+                wd = p.get('weekday')
+                nth = p.get('nth_weekday')
+                if wd is not None and nth:
+                    day = get_nth_weekday(year, month, int(wd), int(nth))
 
             elif anchor_type == 'last_business_day':
                 last_day = calendar.monthrange(year, month)[1]
-                scheduled_date = datetime(year, month, last_day)
-                scheduled_date = adjust_date(scheduled_date, 'previous_business_day')
+                day = datetime(year, month, last_day)
+                if p.get('is_business_day'):
+                    day = adjust_date(day, 'previous_business_day')
 
-            if scheduled_date and today <= scheduled_date.date() <= end_date:
-                schedule_instance(cursor, p, scheduled_date.date())
+            if day:
+                day = adjust_date(day, p.get('adjust_for_weekend') or 'none')
+                d = day.date()
+                if d >= today and d <= end_date:
+                    schedule_instance(cursor, p, d)
 
-            current += relativedelta(months=months_interval)
+                # Fortnightly
+                if frequency == 'fortnightly':
+                    d2 = d + timedelta(days=14)
+                    if d2 <= end_date:
+                        schedule_instance(cursor, p, d2)
 
+                # Weekly (from the monthly anchor)
+                if frequency == 'weekly':
+                    dW = d + timedelta(days=7)
+                    while dW <= end_date:
+                        schedule_instance(cursor, p, dW)
+                        dW += timedelta(days=7)
+
+            month_cursor = (month_cursor + relativedelta(months=1)).replace(day=1)
+
+def calc_min_payment(balance, floor_amt, percent):
+    bal = max(0.0, float(balance or 0.0))
+    floor_val = max(0.0, float(floor_amt or 0.0))
+    pct_val = max(0.0, float(percent or 0.0))
+    pct_amount = (pct_val / 100.0) * bal
+    amt = max(floor_val, pct_amount)
+    return round(min(amt, bal), 2)
+
+def estimate_balance_from_last_statement(cursor, card_id, last_stmt_date, last_stmt_end_balance, as_of_date):
+    """
+    Estimate debt balance at as_of_date based on last known statement end balance plus net transactions since then.
+    Balance change ~= -SUM(amount) because:
+      - purchases are usually negative amounts -> increase debt
+      - repayments/credits are positive amounts -> reduce debt
+    """
+    base = abs(float(last_stmt_end_balance or 0.0))
+    cursor.execute("""
+        SELECT SUM(amount) AS sum_amount
+        FROM transactions
+        WHERE account_id = %s
+          AND date > %s
+          AND date <= %s
+    """, (card_id, last_stmt_date, as_of_date))
+    row = cursor.fetchone()
+    sum_amount = float(row['sum_amount'] or 0.0)
+    est = max(0.0, base - sum_amount)  # base + (-SUM(amount))
+    return round(est, 2)
 
 def predict_credit_card_repayments(cursor, today, end_date):
     print("🔄 Starting credit card repayment predictions")
 
     cursor.execute("""
-        SELECT * FROM accounts 
-        WHERE type='credit' AND active=1 
-          AND statement_day IS NOT NULL 
+        SELECT
+            id, name, statement_day, payment_day, paid_from,
+            repayment_method, fixed_payment_amount,
+            min_payment_floor, min_payment_percent, min_payment_calc
+        FROM accounts
+        WHERE type='credit' AND active=1
+          AND statement_day IS NOT NULL
           AND payment_day IS NOT NULL
           AND paid_from IS NOT NULL
     """)
     cards = cursor.fetchall()
 
     for card in cards:
-        print(f"\n🧾 Processing card: {card['name']}")
+        print(f"\n🧾 Processing card: {card['name']} (method={card.get('repayment_method','full')})")
 
-        avg_daily = None
-        previous_statement_date = None
+        # Transfer category for repayments: "Transfer To : <Card>"
+        cursor.execute("""
+            SELECT id FROM categories
+            WHERE type='transfer'
+              AND parent_id = 275
+              AND linked_account_id = %s
+              AND name LIKE 'Transfer To : %%'
+            LIMIT 1
+        """, (card['id'],))
+        category_row = cursor.fetchone()
+        if not category_row:
+            print("⚠️ No 'Transfer To' category found for this card — skipping")
+            continue
+        category_id = category_row['id']
 
+        repayment_method = card.get('repayment_method') or 'full'
+
+        # Anchor for estimation
+        cursor.execute("""
+            SELECT id, statement_date, end_balance, payment_due_date, minimum_payment_due
+            FROM statements
+            WHERE account_id = %s
+              AND statement_date <= %s
+            ORDER BY statement_date DESC
+            LIMIT 1
+        """, (card['id'], today))
+        last_stmt = cursor.fetchone()
+
+        last_stmt_date = last_stmt['statement_date'] if last_stmt else None
+        last_stmt_end_balance = abs(float(last_stmt['end_balance'])) if last_stmt and last_stmt['end_balance'] is not None else 0.0
+
+        # Generate repayments for ~3 cycles (keeps current behaviour)
         for i in range(3):
             ref = today.replace(day=1) + relativedelta(months=i)
             year, month = ref.year, ref.month
 
+            # Statement date
             try:
-                statement_date = datetime(year, month, card['statement_day'])
-                statement_date = adjust_date(statement_date, 'next_business_day')
+                statement_date_dt = datetime(year, month, int(card['statement_day']))
+                statement_date_dt = adjust_date(statement_date_dt, 'next_business_day')
             except ValueError:
                 print(f"⚠️ Invalid statement date for {card['name']} in {month}/{year}")
                 continue
 
-            if card['payment_day'] < card['statement_day']:
-                pay_month = month + 1 if month < 12 else 1
-                pay_year = year if month < 12 else year + 1
+            # Payment date month logic
+            if int(card['payment_day']) < int(card['statement_day']):
+                pay_ref = (datetime(year, month, 1) + relativedelta(months=1))
+                pay_year, pay_month = pay_ref.year, pay_ref.month
             else:
-                pay_month = month
-                pay_year = year
+                pay_year, pay_month = year, month
 
             try:
-                payment_date = datetime(pay_year, pay_month, card['payment_day'])
-                payment_date = adjust_date(payment_date, 'next_business_day')
+                payment_date_dt = datetime(pay_year, pay_month, int(card['payment_day']))
+                payment_date_dt = adjust_date(payment_date_dt, 'next_business_day')
             except ValueError:
                 print(f"⚠️ Invalid payment date for {card['name']} in {pay_month}/{pay_year}")
                 continue
 
-            print(f"📆 Statement date: {statement_date.date()} | Payment date: {payment_date.date()}")
+            statement_date = statement_date_dt.date()
+            payment_date = payment_date_dt.date()
 
-            if not (today <= payment_date.date() <= end_date):
+            print(f"📆 Statement date: {statement_date} | Payment date: {payment_date}")
+
+            if not (today <= payment_date <= end_date):
                 print("⏩ Payment date outside forecast window")
                 continue
 
-            # Skip if real transaction already happened
+            # Skip if real repayment already happened
             cursor.execute("""
                 SELECT 1 FROM transactions
                 WHERE (account_id = %s OR account_id = %s)
                   AND ABS(DATEDIFF(date, %s)) <= 3
                   AND ABS(amount) >= 1
                 LIMIT 1
-            """, (card['paid_from'], card['id'], payment_date.date()))
+            """, (card['paid_from'], card['id'], payment_date))
             if cursor.fetchone():
                 print("⏩ Skipping – actual repayment already found")
                 continue
 
-            if i == 0:
-                # First iteration — determine last actual statement date
-                stmt_day = card['statement_day']
-                if today.day >= stmt_day:
-                    last_stmt_month = today.month
-                    last_stmt_year = today.year
-                else:
-                    last_stmt_month = today.month - 1 if today.month > 1 else 12
-                    last_stmt_year = today.year if today.month > 1 else today.year - 1
-
-                try:
-                    previous_statement_date = datetime(last_stmt_year, last_stmt_month, stmt_day)
-                    previous_statement_date = adjust_date(previous_statement_date, 'next_business_day')
-                except ValueError:
-                    print("⚠️ Could not calculate initial last statement date – skipping")
-                    continue
-
-                start_of_cycle = previous_statement_date.date()
-                end_of_cycle = statement_date.date()
-                days_so_far = (today - start_of_cycle).days or 1
-                days_total = (end_of_cycle - start_of_cycle).days or 1
-
-                # Get real spending in this cycle so far
-                cursor.execute("""
-                    SELECT SUM(t.amount) AS current_balance
-                    FROM transactions t
-                    JOIN categories c ON t.category_id = c.id
-                    WHERE t.account_id = %s
-                      AND t.date BETWEEN %s AND %s
-                      AND c.type != 'transfer'
-                """, (card['id'], start_of_cycle, today))
-                spend_now_row = cursor.fetchone()
-                current_balance = spend_now_row['current_balance'] or 0
-
-                avg_daily = current_balance / days_so_far
-                estimated_future_spend = avg_daily * (days_total - days_so_far)
-                balance = current_balance + estimated_future_spend
-
-            else:
-                if avg_daily is None or previous_statement_date is None:
-                    print("⚠️ Cannot project future repayment — missing previous data")
-                    continue
-
-                start_of_cycle = previous_statement_date.date()
-                end_of_cycle = statement_date.date()
-                days_total = (end_of_cycle - start_of_cycle).days or 1
-                balance = avg_daily * days_total
-                current_balance = 0  # simulated
-                days_so_far = days_total
-                estimated_future_spend = balance
-
-            print(f"📌 Last statement date: {start_of_cycle}")
-            print(f"💸 Current balance{' (simulated)' if i > 0 else ' (excluding transfers)'}: £{current_balance:.2f}")
-            print(f"📈 Days so far: {days_so_far}, total days in cycle: {days_total}")
-            print(f"📊 Avg daily: £{avg_daily:.2f} | Est future spend: £{estimated_future_spend:.2f}")
-            print(f"🧮 Predicted statement balance: £{balance:.2f}")
-
-            if round(abs(balance), 2) < 1.00:
-                print("⏩ Skipping – predicted amount < £1.00")
-                previous_statement_date = statement_date
-                continue
-
-            # Get category for repayment
+            # Find statement row (±3 days)
             cursor.execute("""
-                SELECT id FROM categories
-                WHERE linked_account_id = %s AND name LIKE 'Transfer To : %%'
+                SELECT id, statement_date, end_balance, payment_due_date, minimum_payment_due
+                FROM statements
+                WHERE account_id = %s
+                  AND ABS(DATEDIFF(statement_date, %s)) <= 3
+                ORDER BY ABS(DATEDIFF(statement_date, %s)) ASC
                 LIMIT 1
-            """, (card['id'],))
-            category_result = cursor.fetchone()
-            if not category_result:
-                print("⚠️ No category found for this repayment")
-                previous_statement_date = statement_date
+            """, (card['id'], statement_date, statement_date))
+            stmt = cursor.fetchone()
+
+            statement_id = None
+            statement_balance = None
+
+            if stmt:
+                statement_id = stmt['id']
+                statement_balance = abs(float(stmt['end_balance'] or 0.0))
+
+                # Backfill payment_due_date
+                if stmt.get('payment_due_date') is None:
+                    cursor.execute("""
+                        UPDATE statements
+                        SET payment_due_date = %s
+                        WHERE id = %s
+                    """, (payment_date, statement_id))
+
+                # Backfill minimum_payment_due
+                if repayment_method == 'minimum' and stmt.get('minimum_payment_due') is None:
+                    min_due = calc_min_payment(statement_balance, card.get('min_payment_floor'), card.get('min_payment_percent'))
+                    cursor.execute("""
+                        UPDATE statements
+                        SET minimum_payment_due = %s
+                        WHERE id = %s
+                    """, (min_due, statement_id))
+            else:
+                # Estimate when statement not created yet
+                if last_stmt_date is not None:
+                    statement_balance = estimate_balance_from_last_statement(
+                        cursor,
+                        card_id=card['id'],
+                        last_stmt_date=last_stmt_date,
+                        last_stmt_end_balance=last_stmt_end_balance,
+                        as_of_date=today
+                    )
+                else:
+                    statement_balance = 0.0
+
+            if statement_balance is None or round(statement_balance, 2) < 1.00:
+                print("⏩ Skipping – predicted balance < £1.00")
                 continue
 
-            category_id = category_result['id']
-            amount_to_insert = round(-balance, 2)
+            # Compute repayment amount
+            if repayment_method == 'full':
+                amount_to_insert = round(statement_balance, 2)
+            elif repayment_method == 'fixed':
+                fixed_amt = float(card.get('fixed_payment_amount') or 0.0)
+                amount_to_insert = round(min(max(0.0, fixed_amt), statement_balance), 2)
+            elif repayment_method == 'minimum':
+                amount_to_insert = calc_min_payment(statement_balance, card.get('min_payment_floor'), card.get('min_payment_percent'))
+            else:
+                amount_to_insert = round(statement_balance, 2)
 
-            # Check if this repayment was already confirmed — skip INSERT but preserve state
+            if amount_to_insert < 1.00:
+                print("⏩ Skipping – predicted payment < £1.00")
+                continue
+
+            # Don’t stomp confirmed predictions
             cursor.execute("""
                 SELECT id FROM predicted_instances
                 WHERE from_account_id = %s AND to_account_id = %s
                   AND scheduled_date = %s AND confirmed = 1
-            """, (card['paid_from'], card['id'], payment_date.date()))
+                LIMIT 1
+            """, (card['paid_from'], card['id'], payment_date))
             if cursor.fetchone():
                 print("⏩ Skipping INSERT – already confirmed predicted instance")
-                previous_statement_date = statement_date
                 continue
 
             cursor.execute("""
                 INSERT INTO predicted_instances
-                (scheduled_date, from_account_id, to_account_id, category_id, amount, description)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (scheduled_date, from_account_id, to_account_id, category_id, amount, description, statement_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE 
-                    amount = IF(confirmed = 1, amount, VALUES(amount))
+                    amount = IF(confirmed = 1, amount, VALUES(amount)),
+                    statement_id = COALESCE(statement_id, VALUES(statement_id)),
+                    description = VALUES(description)
             """, (
-                payment_date.date(),
+                payment_date,
                 card['paid_from'],
                 card['id'],
                 category_id,
                 amount_to_insert,
-                card['name']
+                f"Credit card repayment: {card['name']}",
+                statement_id
             ))
-            print(f"✅ Inserted prediction: {payment_date.date()} | £{amount_to_insert:.2f}")
 
-            # Update previous statement anchor for next cycle
-            previous_statement_date = statement_date
-
-    print("\n✅ Credit card repayment predictions complete.")
-
-
-
+            print(f"✅ Inserted/updated prediction: {payment_date} | £{amount_to_insert:.2f} | statement_id={statement_id}")
 
 def main():
-    db = mysql.connector.connect(
-        host="localhost",
-        user="john",
-        password="Thebluemole01",
-        database="accounts"
-    )
+    host = os.getenv("FINANCE_DB_HOST", "localhost")
+    user = os.getenv("FINANCE_DB_USER", "john")
+    database = os.getenv("FINANCE_DB_NAME", "accounts")
+    password = os.getenv("FINANCE_DB_PASSWORD", "Thebluemole01")  # recommended for cron
+
+    try:
+        if password:
+            db = mysql.connector.connect(host=host, user=user, password=password, database=database)
+        else:
+            # Works for local socket auth. If you use password auth, set FINANCE_DB_PASSWORD.
+            db = mysql.connector.connect(host=host, user=user, database=database)
+    except mysql.connector.Error as e:
+        raise SystemExit(
+            "DB connection failed. If you use password auth, set FINANCE_DB_PASSWORD in your shell/cron environment.\n"
+            f"Host={host} User={user} DB={database}\n"
+            f"MySQL error: {e}"
+        )
+
     cursor = db.cursor(dictionary=True)
 
     today = datetime.now().date()
