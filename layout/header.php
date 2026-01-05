@@ -209,6 +209,7 @@
                     <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Review</a>
                     <ul class="dropdown-menu" aria-labelledby="reviewDropdown">
                         <li><a class="dropdown-item" href="/finance/public/ledger.php">Ledger</a></li>
+			<li><a class="dropdown-item" href="/finance/public/budget_performance.php">Budget Performance</a></li>
                         <li><a class="dropdown-item" href="/finance/public/category_report.php">Category</a></li>
                         <li><a class="dropdown-item" href="/finance/public/subcategory_report.php">Subcategory</a></li>
                         <li><a class="dropdown-item" href="/finance/public/projects.php">Projects and Trips Review</a></li>
