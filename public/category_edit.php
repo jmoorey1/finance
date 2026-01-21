@@ -37,11 +37,33 @@ $accounts = $pdo->query("SELECT id, name FROM accounts WHERE active = 1 ORDER BY
 $replacements = $pdo->prepare("SELECT id, name, parent_id FROM categories WHERE type = ? AND id != ? ORDER BY name");
 $replacements->execute([$cat['type'], $id]);
 $replacementOptions = $replacements->fetchAll();
+
+/**
+ * BKL-004: Robust default selection for Transfer Direction
+ * - Works for both "Transfer To : X" and "TRANSFER TO : X"
+ * - Avoids false positives from "TO"/"FROM" inside account names
+ */
+$catName = (string)($cat['name'] ?? '');
+$catNameUpper = strtoupper(trim($catName));
+
+// Prefer strict prefix patterns (direction should always be at the start)
+$isTo   = (strpos($catNameUpper, 'TRANSFER TO') === 0)   || (preg_match('/^TRANSFER\s+TO\s*:/', $catNameUpper) === 1);
+$isFrom = (strpos($catNameUpper, 'TRANSFER FROM') === 0) || (preg_match('/^TRANSFER\s+FROM\s*:/', $catNameUpper) === 1);
+
+// Final fallback (only if prefix didn’t match anything)
+// Keep it conservative: look for " TRANSFER TO :" style tokens rather than raw "TO"
+if (!$isTo && !$isFrom) {
+    $isTo   = (preg_match('/\bTRANSFER\s+TO\s*:/i', $catName) === 1);
+    $isFrom = (preg_match('/\bTRANSFER\s+FROM\s*:/i', $catName) === 1);
+}
+
+// If still ambiguous, default to TO (least surprising for most people)
+$defaultDirection = $isFrom ? 'FROM' : 'TO';
 ?>
 
 <div class="container mt-4">
     <h2>Edit Category: <?= $cat['name'] ?></h2>
-	<?= $cat['parent_name'] != '' ? '<a href="category_edit.php?id=' . $cat['parent_id'] . '">Edit ' . $cat['parent_name'] . ' →</a>' : '' ?>
+    <?= $cat['parent_name'] != '' ? '<a href="category_edit.php?id=' . $cat['parent_id'] . '">Edit ' . $cat['parent_name'] . ' →</a>' : '' ?>
 
     <form action="category_edit_submit.php" method="POST" class="mt-3" id="category-form">
         <input type="hidden" name="id" value="<?= $cat['id'] ?>">
@@ -56,8 +78,8 @@ $replacementOptions = $replacements->fetchAll();
             <div class="mb-3">
                 <label class="form-label">Transfer Direction</label>
                 <select name="direction" class="form-select" required>
-                    <option value="TO" <?= str_contains($cat['name'], 'TO') ? 'selected' : '' ?>>To</option>
-                    <option value="FROM" <?= str_contains($cat['name'], 'FROM') ? 'selected' : '' ?>>From</option>
+                    <option value="TO" <?= $defaultDirection === 'TO' ? 'selected' : '' ?>>To</option>
+                    <option value="FROM" <?= $defaultDirection === 'FROM' ? 'selected' : '' ?>>From</option>
                 </select>
             </div>
             <div class="mb-3">
@@ -148,19 +170,19 @@ $replacementOptions = $replacements->fetchAll();
 
     <?php if (!$hasChildren): ?>
     <hr class="my-4">
-		<form action="category_edit_submit.php" method="POST" onsubmit="return confirm('Are you sure you want to delete this category?')">
-			<input type="hidden" name="id" value="<?= $cat['id'] ?>">
-			<input type="hidden" name="action" value="delete">
-			<div class="mb-3">
-				<label class="form-label text-danger">Reassign to Category (before deleting)</label>
-				<select name="replacement_id" class="form-select" required>
-					<?php foreach ($replacementOptions as $r): ?>
-						<option value="<?= $r['id'] ?>"><?= $r['parent_id'] != '' ? '&nbsp&nbsp&nbsp&nbsp' : '' ?><?= htmlspecialchars($r['name']) ?></option>
-					<?php endforeach; ?>
-				</select>
-			</div>
-			<button type="submit" class="btn btn-danger">Delete Category</button>
-		</form>
+        <form action="category_edit_submit.php" method="POST" onsubmit="return confirm('Are you sure you want to delete this category?')">
+            <input type="hidden" name="id" value="<?= $cat['id'] ?>">
+            <input type="hidden" name="action" value="delete">
+            <div class="mb-3">
+                <label class="form-label text-danger">Reassign to Category (before deleting)</label>
+                <select name="replacement_id" class="form-select" required>
+                    <?php foreach ($replacementOptions as $r): ?>
+                        <option value="<?= $r['id'] ?>"><?= $r['parent_id'] != '' ? '&nbsp&nbsp&nbsp&nbsp' : '' ?><?= htmlspecialchars($r['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-danger">Delete Category</button>
+        </form>
     <?php endif; ?>
 </div>
 
