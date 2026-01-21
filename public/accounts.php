@@ -20,7 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_account'])) {
     $institution = trim($_POST['institution']);
     $statement_day = !empty($_POST['statement_day']) ? (int)$_POST['statement_day'] : null;
     $payment_day = !empty($_POST['payment_day']) ? (int)$_POST['payment_day'] : null;
-    $starting_balance = !empty($_POST['starting_balance']) ? (int)$_POST['starting_balance'] : 0;
+
+    // ✅ BKL-003: preserve pennies (DECIMAL(10,2) in schema)
+    $starting_balance = (isset($_POST['starting_balance']) && $_POST['starting_balance'] !== '')
+        ? round((float)$_POST['starting_balance'], 2)
+        : 0.00;
+
     $active = isset($_POST['active']) ? 1 : 0;
 
     try {
@@ -50,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_account'])) {
 
         $pdo->commit();
 
-        echo "<div class='alert alert-success'>Account '$name' and linked transfer categories have been added successfully.</div>";
+        echo "<div class='alert alert-success'>Account '" . htmlspecialchars($name) . "' and linked transfer categories have been added successfully.</div>";
     } catch (Exception $e) {
         $pdo->rollBack();
         echo "<div class='alert alert-danger'>Error adding account: " . htmlspecialchars($e->getMessage()) . "</div>";
@@ -108,7 +113,8 @@ foreach ($accounts as $acc) {
         </div>
         <div class="mb-2">
             <label for="starting_balance" class="form-label">Starting Balance</label>
-            <input type="number" class="form-control" name="starting_balance" id="starting_balance">
+            <!-- ✅ BKL-003: allow decimals -->
+            <input type="number" step="0.01" class="form-control" name="starting_balance" id="starting_balance">
         </div>
         <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" name="active" id="active" checked>
