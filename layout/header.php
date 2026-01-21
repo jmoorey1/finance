@@ -178,7 +178,7 @@
 
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
     <div class="container-fluid">
-        <a class="navbar-brand" href="/finance/public/index.php">💰 Finance</a>
+        <a class="navbar-brand" href="/finance/public/index.php">💰 Home Finances</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#financeNavbar" aria-controls="financeNavbar" aria-expanded="false" aria-label="Toggle navigation">
             <span class="navbar-toggler-icon"></span>
         </button>
@@ -198,7 +198,7 @@
                     </ul>
                 </li>
 		<li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Planning</a>
+                    <a class="nav-link dropdown-toggle" href="#" id="planningDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Planning</a>
                     <ul class="dropdown-menu" aria-labelledby="planningDropdown">
                         <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
                         <li><a class="dropdown-item" href="/finance/public/predicted.php">Predicted Transactions</a></li>
@@ -206,7 +206,7 @@
                     </ul>
                 </li>
 		<li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Review</a>
+                    <a class="nav-link dropdown-toggle" href="#" id="reviewDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Review</a>
                     <ul class="dropdown-menu" aria-labelledby="reviewDropdown">
                         <li><a class="dropdown-item" href="/finance/public/ledger.php">Ledger</a></li>
 			<li><a class="dropdown-item" href="/finance/public/budget_performance.php">Budget Performance</a></li>
@@ -219,10 +219,11 @@
                     </ul>
                 </li>
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Settings</a>
+                    <a class="nav-link dropdown-toggle" href="#" id="settingsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Settings</a>
                     <ul class="dropdown-menu" aria-labelledby="settingsDropdown">
                         <li><a class="dropdown-item" href="/finance/public/accounts.php">Accounts Management</a></li>
                         <li><a class="dropdown-item" href="/finance/public/categories.php">Categories Management</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/healthcheck.php">System Healthcheck</a></li>
                     </ul>
                 </li>
             </ul>
