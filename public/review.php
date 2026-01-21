@@ -209,7 +209,7 @@ foreach ($rows as $row) {
 													echo "<option value=\"staging_{$match['id']}\">[STAGING] {$match['description']} ({$match['date']}, {$match['amount']})</option>";
 												}
 
-												// Placeholder transactions
+												// Placeholder transactions (FIXED: fetch once, reuse)
 												$placeholders = $conn->prepare("
 													SELECT id, account_id, date, amount 
 													FROM transactions 
@@ -218,11 +218,14 @@ foreach ($rows as $row) {
 													  AND date BETWEEN ? AND ?
 												");
 												$placeholders->execute([$opposite_amount, $start_date, $end_date]);
-												$placeholders_count = $placeholders->fetchAll(PDO::FETCH_ASSOC);
-												foreach ($placeholders->fetchAll(PDO::FETCH_ASSOC) as $match) {
+												$placeholders_list = $placeholders->fetchAll(PDO::FETCH_ASSOC);
+												$placeholders_count = count($placeholders_list);
+
+												foreach ($placeholders_list as $match) {
 													echo "<option value=\"existing_{$match['id']}\">[PLACEHOLDER] Account {$match['account_id']} ({$match['date']}, {$match['amount']})</option>";
 												}
-												if (empty($candidates_count) && empty($placeholders_count)) {
+
+												if ($candidates_count === 0 && $placeholders_count === 0) {
 													echo "<option value=''>--Choose Transfer Type--</option>";
 												}
 												echo "<option value=\"one_sided\">Counterparty Not Yet Uploaded</option>";
@@ -411,9 +414,5 @@ $(function () {
     });
 });
 </script>
-
-
-
-
 
 <?php include '../layout/footer.php'; ?>
