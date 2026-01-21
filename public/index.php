@@ -2,6 +2,25 @@
 session_start();
 
 require_once '../config/db.php';
+require_once '../scripts/run_predict_instances.php';
+
+// Handle manual reforecast BEFORE we include other scripts / output anything
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['reforecast']) || isset($_POST['force_reforecast']))) {
+
+    $force = isset($_POST['force_reforecast']) && $_POST['force_reforecast'] === '1';
+    $result = run_predict_instances_job($force, 'manual');
+
+    // Flash message for next page load (PRG pattern)
+    $_SESSION['flash'] = [
+        'status' => $result['status'] ?? 'failed',
+        'message' => $result['message'] ?? 'Unknown result.',
+        'output_tail' => $result['output_tail'] ?? '',
+    ];
+
+    header("Location: index.php");
+    exit;
+}
+
 require_once '../scripts/forecast_utils.php';
 require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
@@ -9,18 +28,29 @@ require_once '../scripts/get_missed_predictions.php';
 require_once '../scripts/get_missed_statements.php';
 $headlines = require_once '../scripts/get_insights.php';
 
-
 include '../layout/header.php';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reforecast'])) {
-    $output = [];
-    $return_code = 0;
-    exec('python3 ../scripts/predict_instances.py 2>&1', $output, $return_code);
-    if ($return_code === 0) {
-        echo "<div class='alert alert-success'>✅ Reforecasting complete.</div>";
+// Flash messages
+if (isset($_SESSION['flash'])) {
+    $flash = $_SESSION['flash'];
+    unset($_SESSION['flash']);
+
+    $st = $flash['status'] ?? 'failed';
+    $msg = htmlspecialchars($flash['message'] ?? '');
+
+    if ($st === 'success') {
+        echo "<div class='alert alert-success'>{$msg}</div>";
+    } elseif ($st === 'skipped') {
+        echo "<div class='alert alert-warning'>{$msg}</div>";
+    } elseif ($st === 'running') {
+        echo "<div class='alert alert-info'>{$msg}</div>";
     } else {
-        echo "<div class='alert alert-danger'><strong>Error running reforecast:</strong><br><pre>" .
-             htmlspecialchars(implode("\n", $output)) . "</pre></div>";
+        $tail = htmlspecialchars($flash['output_tail'] ?? '');
+        echo "<div class='alert alert-danger'><strong>{$msg}</strong>";
+        if ($tail !== '') {
+            echo "<br><pre>{$tail}</pre>";
+        }
+        echo "</div>";
     }
 }
 
@@ -29,14 +59,88 @@ if (isset($_SESSION['prediction_deleted'])) {
     unset($_SESSION['prediction_deleted']);
 }
 
+// Auto-run forecast (throttled + locked)
+$autoResult = null;
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && feature_enabled('prediction_job_on_ui', true)) {
+    $autoResult = run_predict_instances_job(false, 'auto');
+
+    // Only shout if THIS auto-run actually ran and failed
+    if (($autoResult['ran'] ?? false) && ($autoResult['status'] ?? '') === 'failed') {
+        echo "<div class='alert alert-danger'><strong>Forecast engine failed (auto-run):</strong>";
+        $tail = htmlspecialchars($autoResult['output_tail'] ?? '');
+        if ($tail !== '') {
+            echo "<br><pre>{$tail}</pre>";
+        }
+        echo "</div>";
+    }
+}
+
 $balance_issues = get_forecast_shortfalls($pdo);
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
 $missed = get_missed_predictions($pdo);
 $missed_state = get_missed_statements($pdo);
+
+// Job state for display
+$jobState = get_predict_instances_state();
+
+$lastRunLabel = 'Never';
+if (($jobState['last_status'] ?? null) === 'running' && !empty($jobState['last_start'])) {
+    try {
+        $dt = new DateTime($jobState['last_start']);
+        $lastRunLabel = $dt->format('d M Y H:i') . " (started)";
+    } catch (Throwable $e) {
+        $lastRunLabel = (string)$jobState['last_start'] . " (started)";
+    }
+} elseif (!empty($jobState['last_end'])) {
+    try {
+        $dt = new DateTime($jobState['last_end']);
+        $lastRunLabel = $dt->format('d M Y H:i');
+    } catch (Throwable $e) {
+        $lastRunLabel = (string)$jobState['last_end'];
+    }
+}
+
+// If the last run failed, show tail of last log for visibility even when throttled
+$lastLogTail = '';
+if (($jobState['last_status'] ?? null) === 'failed') {
+    $lastLogTail = get_predict_instances_output_tail(120);
+}
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
+
+<!-- 🔧 Forecast Engine Status -->
+<div class="mb-3">
+    <div class="alert alert-light border mb-0">
+        <strong>Forecast engine:</strong>
+        Last run: <span class="badge bg-secondary"><?= htmlspecialchars($lastRunLabel) ?></span>
+        Status:
+        <?php
+            $st = $jobState['last_status'] ?? null;
+            $badge = 'bg-secondary';
+            if ($st === 'success') $badge = 'bg-success';
+            if ($st === 'failed') $badge = 'bg-danger';
+            if ($st === 'running') $badge = 'bg-warning text-dark';
+        ?>
+        <span class="badge <?= $badge ?>"><?= htmlspecialchars($st ?? 'unknown') ?></span>
+        <?php if (!empty($jobState['last_runtime_seconds'])): ?>
+            <span class="text-muted ms-2">runtime: <?= (int)$jobState['last_runtime_seconds'] ?>s</span>
+        <?php endif; ?>
+        <?php if (!empty($jobState['last_trigger'])): ?>
+            <span class="text-muted ms-2">trigger: <?= htmlspecialchars($jobState['last_trigger']) ?></span>
+        <?php endif; ?>
+    </div>
+
+    <?php if (($jobState['last_status'] ?? null) === 'failed' && $lastLogTail !== ''): ?>
+        <div class="mt-2">
+            <details>
+                <summary class="text-danger">Show last forecast log (tail)</summary>
+                <pre class="mt-2"><?= htmlspecialchars($lastLogTail) ?></pre>
+            </details>
+        </div>
+    <?php endif; ?>
+</div>
 
 <!-- 📊 Monthly Financial Insights -->
 <div class="mb-4">
@@ -51,7 +155,6 @@ $missed_state = get_missed_statements($pdo);
         <p class="text-muted">No headlines yet — keep spending and we'll have something to report!</p>
     <?php endif; ?>
 </div>
-
 
 <!-- 💼 Account Balances -->
 <div class="mb-4">
@@ -70,8 +173,8 @@ $missed_state = get_missed_statements($pdo);
                 <?php
                     $bal = (float) $b['balance_as_of_last_night'];
                     $is_negative = $b['account_type'] === 'current' && $bal < 0;
-					$last_tx = new DateTime($b['last_transaction']);
-					$start_query = (clone $last_tx)->modify('-1 month');
+                    $last_tx = new DateTime($b['last_transaction']);
+                    $start_query = (clone $last_tx)->modify('-1 month');
                     $today = new DateTime();
                     $days_ago = $today->diff($last_tx)->days;
                 ?>
@@ -108,7 +211,7 @@ $missed_state = get_missed_statements($pdo);
                             <?php if ($is_late): ?>
                                 (<?= $days_late ?> day<?= $days_late !== 1 ? 's' : '' ?> late)
                             <?php endif; ?>
-                            – <?= htmlspecialchars($m['description'] ?? $m['category']) ?> 
+                            – <?= htmlspecialchars($m['description'] ?? $m['category']) ?>
                             (<?= htmlspecialchars($m['acc_name']) ?>)
                         </span>
                         <span class="d-flex align-items-center">
@@ -124,8 +227,6 @@ $missed_state = get_missed_statements($pdo);
     <?php endif; ?>
 </div>
 
-
-
 <!-- ⏳ Missed Statements -->
 <div class="mb-4">
     <h4>🧾 Missed Statements</h4>
@@ -133,9 +234,7 @@ $missed_state = get_missed_statements($pdo);
         <ul class="list-group">
             <?php foreach ($missed_state as $m): ?>
                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <span>
-                        <?= htmlspecialchars($m['statement_date']) ?>
-                    </span>
+                    <span><?= htmlspecialchars($m['statement_date']) ?></span>
                     <span><?= $m['account_name'] ?> - <?= $m['transaction_count'] ?> unreconciled transaction(s)</span>
                 </li>
             <?php endforeach; ?>
@@ -163,20 +262,18 @@ $missed_state = get_missed_statements($pdo);
 </div>
 
 <!-- 🔴 Forecasted Balance Issues -->
-
 <?php if (count($balance_issues) > 0): ?>
     <div class="mb-4">
         <h4>💰 Upcoming Required Transfers</h4>
         <?php foreach ($balance_issues as $f): ?>
             <?php
                 $days_until = (new DateTime($f['start_day']))->diff(new DateTime())->days;
-                $highlight_class = 'forecast-panel'; // default red
+                $highlight_class = 'forecast-panel';
 
                 if ((new DateTime($f['start_day'])) < new DateTime()) {
-                    // already started – keep red
                     $highlight_class = 'forecast-panel';
                 } elseif ($days_until <= 3) {
-                    $highlight_class = 'forecast-panel'; // red (default)
+                    $highlight_class = 'forecast-panel';
                 } elseif ($days_until <= 7) {
                     $highlight_class = 'forecast-panel amber';
                 } else {
@@ -187,36 +284,36 @@ $missed_state = get_missed_statements($pdo);
                 <h5>💸 <?= htmlspecialchars($f['account_name']) ?></h5>
                 <p>Today's Balance: <strong>£<?= number_format($f['today_balance'], 2) ?></strong></p>
                 <p>Projected to hit <strong>£<?= number_format($f['min_balance'], 2) ?></strong> on <?= $f['min_day'] ?></p>
-				<?php
-					$start_date = new DateTime($f['start_day']);
-					$today = new DateTime();
-					$diff_days = (int)$today->diff($start_date)->format('%r%a');
-					$weekday = $start_date->format('l');
-					$short_date = $start_date->format('D d M');
+                <?php
+                    $start_date = new DateTime($f['start_day']);
+                    $today = new DateTime();
+                    $diff_days = (int)$today->diff($start_date)->format('%r%a');
+                    $weekday = $start_date->format('l');
+                    $short_date = $start_date->format('D d M');
 
-					if ($diff_days === 0) {
-						$label = "today";
-					} elseif ($diff_days === 1) {
-						$label = "tomorrow";
-					} elseif ($diff_days < 7) {
-						$label = "this $weekday";
-					} elseif ($diff_days == 7) {
-						$label = "1 week tomorrow";
-					} elseif ($diff_days < 14) {
-						$label = "$weekday week";
-					} elseif (($diff_days + 1) % 7 === 0) {
-						$weeks = ($diff_days + 1 ) / 7;
-						$label = "$weeks week" . ($weeks > 1 ? "s" : "") . " today";
-					} elseif (($diff_days + 1) % 7 === 1) {
-						$weeks = ($diff_days ) / 7;
-						$label = "$weeks week" . ($weeks > 1 ? "s" : "") . " tomorrow";
-					} else {
-						$weeks = floor($diff_days / 7);
-						$label = "$weeks week" . ($weeks > 1 ? "s" : "") . " on $weekday";
-					}
-				?>
+                    if ($diff_days === 0) {
+                        $label = "today";
+                    } elseif ($diff_days === 1) {
+                        $label = "tomorrow";
+                    } elseif ($diff_days < 7) {
+                        $label = "this $weekday";
+                    } elseif ($diff_days == 7) {
+                        $label = "1 week tomorrow";
+                    } elseif ($diff_days < 14) {
+                        $label = "$weekday week";
+                    } elseif (($diff_days + 1) % 7 === 0) {
+                        $weeks = ($diff_days + 1 ) / 7;
+                        $label = "$weeks week" . ($weeks > 1 ? "s" : "") . " today";
+                    } elseif (($diff_days + 1) % 7 === 1) {
+                        $weeks = ($diff_days ) / 7;
+                        $label = "$weeks week" . ($weeks > 1 ? "s" : "") . " tomorrow";
+                    } else {
+                        $weeks = floor($diff_days / 7);
+                        $label = "$weeks week" . ($weeks > 1 ? "s" : "") . " on $weekday";
+                    }
+                ?>
 
-				<p>👉 Recommended Top-Up: <strong>£<?= number_format($f['top_up'], 2) ?></strong> by <?= $label ?> (<?= $short_date ?>)</p>
+                <p>👉 Recommended Top-Up: <strong>£<?= number_format($f['top_up'], 2) ?></strong> by <?= $label ?> (<?= $short_date ?>)</p>
                 <p>🔍 Window: <?= $f['start_day'] ?> ➞ <?= $f['min_day'] ?></p>
                 <ul class="mb-0">
                     <?php foreach ($f['events'] as $e): ?>
@@ -238,14 +335,18 @@ $missed_state = get_missed_statements($pdo);
     </div>
 <?php endif; ?>
 
-
-
-
-<!-- 🔄 Reforecast Button -->
+<!-- 🔄 Reforecast Buttons -->
 <div class="mb-4">
-    <form method="POST">
-        <button type="submit" name="reforecast" class="btn btn-warning">🔄 Reforecast</button>
+    <form method="POST" class="d-flex gap-2">
+        <button type="submit" name="reforecast" value="1" class="btn btn-warning">🔄 Reforecast</button>
+        <button type="submit" name="force_reforecast" value="1" class="btn btn-outline-danger"
+                onclick="return confirm('Force reforecast will run immediately even if a recent run exists. Continue?');">
+            ⚠️ Force Reforecast
+        </button>
     </form>
+    <div class="text-muted small mt-2">
+        Tip: normal Reforecast respects the min-interval throttle; Force bypasses throttle but still prevents concurrent runs.
+    </div>
 </div>
 
 <?php include '../layout/footer.php'; ?>

@@ -1,0 +1,10 @@
+{
+    "job_name": "predict_instances",
+    "last_start": "2026-01-21T16:48:52+00:00",
+    "last_end": "2026-01-21T16:48:54+00:00",
+    "last_status": "success",
+    "last_exit_code": 0,
+    "last_trigger": "auto",
+    "last_message": "Completed successfully.",
+    "last_runtime_seconds": 2
+}
