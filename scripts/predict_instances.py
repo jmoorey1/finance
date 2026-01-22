@@ -30,11 +30,46 @@ def get_nth_weekday(year, month, weekday, n):
         day += 1
     return None
 
+def actual_txn_exists_for_predicted_transaction(cursor, predicted_transaction_id, scheduled_date):
+    """
+    If a real transaction already exists tied to predicted_transaction_id near the scheduled date,
+    do not recreate the predicted_instance (prevents regenerated "stale" predictions after deletion).
+    """
+    cursor.execute("""
+        SELECT 1
+        FROM transactions
+        WHERE predicted_transaction_id = %s
+          AND ABS(DATEDIFF(date, %s)) <= 3
+        LIMIT 1
+    """, (predicted_transaction_id, scheduled_date))
+    return cursor.fetchone() is not None
+
+def actual_transfer_exists_by_category(cursor, from_account_id, category_id, scheduled_date):
+    """
+    Used for repayments (no predicted_transaction_id): if a transfer already happened on the paying account
+    using the specific Transfer To category near the scheduled date, don't recreate the prediction.
+    """
+    cursor.execute("""
+        SELECT 1
+        FROM transactions
+        WHERE account_id = %s
+          AND category_id = %s
+          AND type = 'transfer'
+          AND ABS(DATEDIFF(date, %s)) <= 3
+        LIMIT 1
+    """, (from_account_id, category_id, scheduled_date))
+    return cursor.fetchone() is not None
+
 def schedule_instance(cursor, p, day):
+    # Prevent regeneration of deleted instances after fulfilment:
+    # if a real txn already exists for this predicted_transaction_id near this date, skip.
+    if actual_txn_exists_for_predicted_transaction(cursor, p['id'], day):
+        return
+
     amount = p['amount']
     if p.get('variable') and p.get('average_over_last'):
         cursor.execute("""
-            SELECT AVG(pr.amount) AS avg_amount FROM 
+            SELECT AVG(pr.amount) AS avg_amount FROM
             (SELECT amount FROM transactions
              WHERE predicted_transaction_id = %s
              ORDER BY date DESC LIMIT %s) pr
@@ -48,9 +83,12 @@ def schedule_instance(cursor, p, day):
         (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
          category_id, amount, description)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE 
-            amount = IF(confirmed = 1, amount, VALUES(amount)),
-            description = VALUES(description)
+        ON DUPLICATE KEY UPDATE
+            -- Don't overwrite anything if the instance has been actioned:
+            -- fulfilled=1 (complete) or fulfilled=2 (partial transfer)
+            amount = IF(confirmed = 1 OR COALESCE(fulfilled, 0) <> 0, amount, VALUES(amount)),
+            description = IF(COALESCE(fulfilled, 0) <> 0, description, VALUES(description)),
+            updated_at = IF(COALESCE(fulfilled, 0) <> 0, updated_at, CURRENT_TIMESTAMP)
     """, (
         p['id'], day, p['from_account_id'], p['to_account_id'],
         p['category_id'], amount, p['description']
@@ -255,16 +293,9 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 print("⏩ Payment date outside forecast window")
                 continue
 
-            # Skip if real repayment already happened
-            cursor.execute("""
-                SELECT 1 FROM transactions
-                WHERE (account_id = %s OR account_id = %s)
-                  AND ABS(DATEDIFF(date, %s)) <= 3
-                  AND ABS(amount) >= 1
-                LIMIT 1
-            """, (card['paid_from'], card['id'], payment_date))
-            if cursor.fetchone():
-                print("⏩ Skipping – actual repayment already found")
+            # Skip if real repayment already happened (precise check using Transfer To category on paid_from)
+            if actual_transfer_exists_by_category(cursor, int(card['paid_from']), int(category_id), payment_date):
+                print("⏩ Skipping – actual repayment already found (Transfer To category)")
                 continue
 
             # Find statement row (±3 days)
@@ -333,25 +364,28 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 print("⏩ Skipping – predicted payment < £1.00")
                 continue
 
-            # Don’t stomp confirmed predictions
+            # Don't stomp actioned predictions for this repayment key (confirmed OR fulfilled!=0)
             cursor.execute("""
-                SELECT id FROM predicted_instances
+                SELECT id
+                FROM predicted_instances
                 WHERE from_account_id = %s AND to_account_id = %s
-                  AND scheduled_date = %s AND confirmed = 1
+                  AND scheduled_date = %s
+                  AND (confirmed = 1 OR COALESCE(fulfilled,0) <> 0)
                 LIMIT 1
             """, (card['paid_from'], card['id'], payment_date))
             if cursor.fetchone():
-                print("⏩ Skipping INSERT – already confirmed predicted instance")
+                print("⏩ Skipping INSERT – already confirmed/fulfilled predicted instance (repayment key)")
                 continue
 
             cursor.execute("""
                 INSERT INTO predicted_instances
                     (scheduled_date, from_account_id, to_account_id, category_id, amount, description, statement_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE 
-                    amount = IF(confirmed = 1, amount, VALUES(amount)),
-                    statement_id = COALESCE(statement_id, VALUES(statement_id)),
-                    description = VALUES(description)
+                ON DUPLICATE KEY UPDATE
+                    amount = IF(confirmed = 1 OR COALESCE(fulfilled, 0) <> 0, amount, VALUES(amount)),
+                    statement_id = IF(COALESCE(fulfilled, 0) <> 0, statement_id, COALESCE(statement_id, VALUES(statement_id))),
+                    description = IF(COALESCE(fulfilled, 0) <> 0, description, VALUES(description)),
+                    updated_at = IF(COALESCE(fulfilled, 0) <> 0, updated_at, CURRENT_TIMESTAMP)
             """, (
                 payment_date,
                 card['paid_from'],

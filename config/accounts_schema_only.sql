@@ -204,6 +204,9 @@ CREATE TABLE `predicted_instances` (
   `to_account_id` int DEFAULT NULL,
   `category_id` int NOT NULL,
   `fulfilled` tinyint(1) DEFAULT '0',
+  `fulfilled_at` datetime DEFAULT NULL,
+  `fulfilled_by_transaction_id` int DEFAULT NULL,
+  `fulfilled_by_transfer_group_id` int DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `description` text,
@@ -213,9 +216,12 @@ CREATE TABLE `predicted_instances` (
   UNIQUE KEY `predicted_transaction_id` (`predicted_transaction_id`,`scheduled_date`),
   UNIQUE KEY `unique_repayments` (`scheduled_date`,`from_account_id`,`to_account_id`,`category_id`),
   KEY `idx_predicted_instances_statement_id` (`statement_id`),
+  KEY `idx_predicted_instances_fulfilled_at` (`fulfilled_at`),
+  KEY `idx_predicted_instances_fulfilled_by_tx` (`fulfilled_by_transaction_id`),
+  KEY `idx_predicted_instances_fulfilled_by_tg` (`fulfilled_by_transfer_group_id`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=53240 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=54146 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -454,4 +460,4 @@ CREATE TABLE `transfer_groups` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-01-20 15:28:10
+-- Dump completed on 2026-01-22 15:54:21

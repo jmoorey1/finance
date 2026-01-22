@@ -13,126 +13,296 @@ switch ($action) {
     // ----------------------------------------
     // ✅ CONFIRM: This transaction fulfills a predicted instance
     // ----------------------------------------
-	case 'fulfill_prediction':
-		$predicted_id = (int) ($_POST['predicted_instance_id'] ?? 0);
+		case 'fulfill_prediction':
+			$predicted_id_post = (int) ($_POST['predicted_instance_id'] ?? 0);
 
-		$stmt = $conn->prepare("
-			SELECT s.*, p.predicted_transaction_id, p.category_id AS instance_category_id, 
-				   p.from_account_id, p.to_account_id
-			FROM staging_transactions s
-			JOIN predicted_instances p ON s.predicted_instance_id = p.id
-			WHERE s.id = ?
-		");
-		$stmt->execute([$staging_id]);
-		$row = $stmt->fetch(PDO::FETCH_ASSOC);
+			// Pull the staging row + its linked predicted instance
+			$stmt = $conn->prepare("
+				SELECT
+					s.*,
+					p.id AS predicted_instance_id,
+					p.predicted_transaction_id,
+					p.category_id AS instance_category_id,
+					p.from_account_id,
+					p.to_account_id,
+					p.fulfilled AS predicted_fulfilled,
+					p.fulfilled_by_transfer_group_id AS saved_transfer_group_id
+				FROM staging_transactions s
+				JOIN predicted_instances p ON s.predicted_instance_id = p.id
+				WHERE s.id = ?
+				LIMIT 1
+			");
+			$stmt->execute([$staging_id]);
+			$row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-		if ($row) {
+			if (!$row) {
+				die('❌ Unable to load staging + predicted instance for fulfillment.');
+			}
+
+			$predicted_id = (int) $row['predicted_instance_id'];
+
+			// Optional: guard against spoofed post
+			if ($predicted_id_post && $predicted_id_post !== $predicted_id) {
+				die('❌ Predicted instance mismatch.');
+			}
+
 			// Lookup category type
-			$cat_stmt = $conn->prepare("SELECT type FROM categories WHERE id = ?");
-			$cat_stmt->execute([$row['instance_category_id']]);
+			$cat_stmt = $conn->prepare("SELECT type FROM categories WHERE id = ? LIMIT 1");
+			$cat_stmt->execute([(int)$row['instance_category_id']]);
 			$cat_row = $cat_stmt->fetch(PDO::FETCH_ASSOC);
 			$category_type = $cat_row['type'] ?? '';
 
-			if ($category_type === 'transfer') {
-				// --- TRANSFER handling ---
-				$conn->beginTransaction();
+			// Helper: resolve correct transfer category by linked_account_id + direction prefix
+			$resolve_transfer_category = function (int $linked_account_id, string $directionPrefix) use ($conn): ?int {
+				$stmt = $conn->prepare("
+					SELECT id
+					FROM categories
+					WHERE type = 'transfer'
+					  AND linked_account_id = ?
+					  AND name LIKE ?
+					LIMIT 1
+				");
+				$stmt->execute([$linked_account_id, $directionPrefix . '%']);
+				$r = $stmt->fetch(PDO::FETCH_ASSOC);
+				return $r['id'] ?? null;
+			};
 
-				// Insert into transfer_groups
-				$conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Predicted transfer match')")->execute();
-				$transfer_group_id = $conn->lastInsertId();
+			// Helper: get transfer category for a given account role in the prediction
+			$transfer_category_for_account = function (int $txn_account_id, int $from_account, int $to_account) use ($resolve_transfer_category): ?int {
+				if ($txn_account_id === $from_account) {
+					// Outgoing side
+					return $resolve_transfer_category($to_account, 'Transfer To :');
+				}
+				if ($txn_account_id === $to_account) {
+					// Incoming side
+					return $resolve_transfer_category($from_account, 'Transfer From :');
+				}
+				return null;
+			};
 
-				// Helper to resolve category
-				function resolve_transfer_category(PDO $conn, int $base_account_id, int $linked_account_id, string $direction): ?int {
-					$stmt = $conn->prepare("
-						SELECT id FROM categories
-						WHERE type = 'transfer'
-						  AND linked_account_id = ?
-						  AND name LIKE ?
+			try {
+				if ($category_type === 'transfer') {
+					$conn->beginTransaction();
+
+					$from_account = (int) $row['from_account_id'];
+					$to_account   = (int) $row['to_account_id'];
+
+					$uploaded_account = (int) $row['account_id'];
+					if ($uploaded_account !== $from_account && $uploaded_account !== $to_account) {
+						throw new RuntimeException("Uploaded account does not match predicted transfer.");
+					}
+
+					$predicted_fulfilled = (int)($row['predicted_fulfilled'] ?? 0);
+
+					// ----------------------------
+					// ✅ Scenario C: Completing a previously-partial transfer (fulfilled = 2)
+					// ----------------------------
+					if ($predicted_fulfilled === 2) {
+						$transfer_group_id = (int)($row['saved_transfer_group_id'] ?? 0);
+						if (!$transfer_group_id) {
+							throw new RuntimeException("Missing saved transfer_group_id for partial predicted transfer.");
+						}
+
+						// Insert the missing real transaction into the existing transfer group
+						$cat = $transfer_category_for_account($uploaded_account, $from_account, $to_account);
+
+						$ins = $conn->prepare("
+							INSERT INTO transactions
+								(account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
+							VALUES
+								(?, ?, ?, ?, 'transfer', ?, ?, ?)
+						");
+						$ins->execute([
+							$uploaded_account,
+							$row['date'],
+							$row['description'],
+							$row['amount'],
+							$cat,
+							$transfer_group_id,
+							$row['predicted_transaction_id']
+						]);
+
+						// Remove placeholder from that group (the placeholder created when the first side was processed)
+						$conn->prepare("
+							DELETE FROM transactions
+							WHERE transfer_group_id = ?
+							  AND description = 'PLACEHOLDER'
+							LIMIT 1
+						")->execute([$transfer_group_id]);
+
+						// Delete staging row
+						$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+
+						// ✅ Delete prediction now that transfer is complete
+						$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
+
+						$conn->commit();
+						break;
+					}
+
+					// Look for the other side already in staging (same predicted_instance_id)
+					$other_stmt = $conn->prepare("
+						SELECT *
+						FROM staging_transactions
+						WHERE predicted_instance_id = ?
+						  AND id != ?
+						ORDER BY id ASC
 						LIMIT 1
 					");
-					$stmt->execute([$linked_account_id, "$direction%"]);
-					$result = $stmt->fetch(PDO::FETCH_ASSOC);
-					return $result['id'] ?? null;
-				}
+					$other_stmt->execute([$predicted_id, $staging_id]);
+					$other = $other_stmt->fetch(PDO::FETCH_ASSOC);
 
-				$uploaded_account = (int) $row['account_id'];
-				$from_account = (int) $row['from_account_id'];
-				$to_account = (int) $row['to_account_id'];
+					// ----------------------------
+					// ✅ Scenario A: BOTH SIDES PRESENT in staging right now
+					// ----------------------------
+					if ($other) {
+						// Create transfer group
+						$conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Predicted transfer match')")->execute();
+						$transfer_group_id = (int) $conn->lastInsertId();
 
-				if ($uploaded_account === $from_account) {
-					$direction = 'Transfer To :';
-					$counterparty_account = $to_account;
-				} elseif ($uploaded_account === $to_account) {
-					$direction = 'Transfer From :';
-					$counterparty_account = $from_account;
+						$other_account = (int) $other['account_id'];
+						if ($other_account !== $from_account && $other_account !== $to_account) {
+							throw new RuntimeException("Other staging row account does not match predicted transfer.");
+						}
+
+						// Insert first real transaction (current staging row)
+						$cat1 = $transfer_category_for_account($uploaded_account, $from_account, $to_account);
+						$conn->prepare("
+							INSERT INTO transactions
+								(account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
+							VALUES
+								(?, ?, ?, ?, 'transfer', ?, ?, ?)
+						")->execute([
+							$uploaded_account,
+							$row['date'],
+							$row['description'],
+							$row['amount'],
+							$cat1,
+							$transfer_group_id,
+							$row['predicted_transaction_id']
+						]);
+
+						// Insert second real transaction (other staging row)
+						$cat2 = $transfer_category_for_account($other_account, $from_account, $to_account);
+						$conn->prepare("
+							INSERT INTO transactions
+								(account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
+							VALUES
+								(?, ?, ?, ?, 'transfer', ?, ?, ?)
+						")->execute([
+							$other_account,
+							$other['date'],
+							$other['description'],
+							$other['amount'],
+							$cat2,
+							$transfer_group_id,
+							$row['predicted_transaction_id']
+						]);
+
+						// Delete BOTH staging rows first
+						$conn->prepare("DELETE FROM staging_transactions WHERE id IN (?, ?)")->execute([$staging_id, (int)$other['id']]);
+
+						// ✅ Delete prediction now that transfer is complete
+						$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
+
+						$conn->commit();
+						break;
+					}
+
+					// ----------------------------
+					// ✅ Scenario B: ONLY ONE SIDE PRESENT (first half) → create placeholder + mark partial
+					// ----------------------------
+					$conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Predicted transfer (partial)')")->execute();
+					$transfer_group_id = (int) $conn->lastInsertId();
+
+					$counterparty_account = ($uploaded_account === $from_account) ? $to_account : $from_account;
+
+					// Insert real transaction
+					$real_cat = $transfer_category_for_account($uploaded_account, $from_account, $to_account);
+					$conn->prepare("
+						INSERT INTO transactions
+							(account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
+						VALUES
+							(?, ?, ?, ?, 'transfer', ?, ?, ?)
+					")->execute([
+						$uploaded_account,
+						$row['date'],
+						$row['description'],
+						$row['amount'],
+						$real_cat,
+						$transfer_group_id,
+						$row['predicted_transaction_id']
+					]);
+
+					// Insert placeholder on the counterparty account
+					$placeholder_amt = -1 * (float)$row['amount'];
+					$placeholder_cat = $transfer_category_for_account($counterparty_account, $from_account, $to_account);
+
+					$conn->prepare("
+						INSERT INTO transactions
+							(account_id, date, description, amount, type, category_id, transfer_group_id)
+						VALUES
+							(?, ?, 'PLACEHOLDER', ?, 'transfer', ?, ?)
+					")->execute([
+						$counterparty_account,
+						$row['date'],
+						$placeholder_amt,
+						$placeholder_cat,
+						$transfer_group_id
+					]);
+
+					// Mark prediction as PARTIAL (fulfilled = 2), so it can still be completed later
+					$conn->prepare("
+						UPDATE predicted_instances
+						SET fulfilled = 2,
+							confirmed = 1,
+							fulfilled_at = NOW(),
+							fulfilled_by_transaction_id = NULL,
+							fulfilled_by_transfer_group_id = ?
+						WHERE id = ?
+					")->execute([$transfer_group_id, $predicted_id]);
+
+					// Delete staging row
+					$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+
+					$conn->commit();
+
 				} else {
-					$conn->rollBack();
-					die("❌ Uploaded account does not match predicted transfer.");
+					// ✅ Regular income/expense — insert txn + delete staging + delete prediction
+					$conn->beginTransaction();
+
+					$insert = $conn->prepare("
+						INSERT INTO transactions
+							(account_id, date, description, amount, original_ref, category_id, predicted_transaction_id)
+						VALUES
+							(?, ?, ?, ?, ?, ?, ?)
+					");
+					$insert->execute([
+						$row['account_id'],
+						$row['date'],
+						$row['description'],
+						$row['amount'],
+						substr((string)($row['original_memo'] ?? ''), 0, 100),
+						$row['instance_category_id'] ?? null,
+						$row['predicted_transaction_id']
+					]);
+
+					// Delete staging row first
+					$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+
+					// Delete prediction (original behaviour)
+					$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
+
+					$conn->commit();
 				}
 
-				// Insert real transaction
-				$real_category = resolve_transfer_category($conn, $uploaded_account, $counterparty_account, $direction);
-				$real_txn = $conn->prepare("
-					INSERT INTO transactions 
-					(account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
-					VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)
-				");
-				$real_txn->execute([
-					$uploaded_account,
-					$row['date'],
-					$row['description'],
-					$row['amount'],
-					$real_category,
-					$transfer_group_id,
-					$row['predicted_transaction_id']
-				]);
-
-				// Insert placeholder transaction
-				$placeholder_amt = -1 * $row['amount'];
-				$placeholder_direction = ($direction === 'Transfer To :') ? 'Transfer From :' : 'Transfer To :';
-				$placeholder_category = resolve_transfer_category($conn, $counterparty_account, $uploaded_account, $placeholder_direction);
-
-				$conn->prepare("
-					INSERT INTO transactions 
-					(account_id, date, description, amount, type, category_id, transfer_group_id)
-					VALUES (?, ?, ?, ?, 'transfer', ?, ?)
-				")->execute([
-					$counterparty_account,
-					$row['date'],
-					'PLACEHOLDER',
-					$placeholder_amt,
-					$placeholder_category,
-					$transfer_group_id
-				]);
-
-				// Cleanup
-				$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
-				$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
-
-				$conn->commit();
-			} else {
-				// --- Regular Income/Expense ---
-				$insert = $conn->prepare("
-					INSERT INTO transactions 
-					(account_id, date, description, amount, original_ref, category_id, predicted_transaction_id)
-					VALUES (?, ?, ?, ?, ?, ?, ?)
-				");
-				$insert->execute([
-					$row['account_id'],
-					$row['date'],
-					$row['description'],
-					$row['amount'],
-					substr($row['original_memo'], 0, 100),
-					$row['instance_category_id'] ?? null,
-					$row['predicted_transaction_id']
-				]);
-
-				$conn->prepare("DELETE FROM predicted_instances WHERE id = ?")->execute([$predicted_id]);
-				$conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+			} catch (Throwable $e) {
+				if ($conn->inTransaction()) $conn->rollBack();
+				die("❌ Fulfill failed: " . $e->getMessage());
 			}
-		}
 
-		break;
+			break;
+
 
 
 

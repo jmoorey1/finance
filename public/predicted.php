@@ -9,9 +9,12 @@ $categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetc
 // Fetch predicted_transactions
 $rules = $pdo->query("SELECT * FROM predicted_transactions ORDER BY active DESC, id ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch predicted_instances
-$today = (new DateTime())->format('Y-m-d');
-$future = (new DateTime('+90 days'))->format('Y-m-d');
+// Fetch predicted_instances (Last 30 days + Next 90 days)
+$todayObj = new DateTimeImmutable('today');
+$today = $todayObj->format('Y-m-d');
+$past = $todayObj->sub(new DateInterval('P30D'))->format('Y-m-d');
+$future = $todayObj->add(new DateInterval('P90D'))->format('Y-m-d');
+
 $stmt = $pdo->prepare("
     SELECT pi.*, c.name AS category, fa.name AS from_account, ta.name AS to_account
     FROM predicted_instances pi
@@ -21,7 +24,7 @@ $stmt = $pdo->prepare("
     WHERE pi.scheduled_date BETWEEN ? AND ?
     ORDER BY pi.scheduled_date ASC
 ");
-$stmt->execute([$today, $future]);
+$stmt->execute([$past, $future]);
 $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Helper functions
@@ -75,21 +78,21 @@ function format_schedule_summary($r) {
     <tbody>
         <?php foreach ($rules as $r): ?>
         <tr>
-            <td><?= $r['id'] ?></td>
-            <td><?= htmlspecialchars($r['description']) ?></td>
-            <td><?= $accounts[$r['from_account_id']] ?? '?' ?> → <?= $r['to_account_id'] ? $accounts[$r['to_account_id']] : '—' ?></td>
-            <td><?= $categories[$r['category_id']] ?? '?' ?></td>
-            <td class="text-end">£<?= number_format($r['amount'], 2) ?></td>
-            <td><?= format_schedule_summary($r) ?></td>
-            <td><?= $r['variable'] ? "Yes (Avg {$r['average_over_last']})" : "No" ?></td>
-            <td><?= $r['active'] ? '✅' : '—' ?></td>
+            <td><?= (int)$r['id'] ?></td>
+            <td><?= htmlspecialchars($r['description'] ?? '') ?></td>
+            <td><?= htmlspecialchars($accounts[$r['from_account_id']] ?? '?') ?> → <?= $r['to_account_id'] ? htmlspecialchars($accounts[$r['to_account_id']] ?? '?') : '—' ?></td>
+            <td><?= htmlspecialchars($categories[$r['category_id']] ?? '?') ?></td>
+            <td class="text-end">£<?= number_format((float)($r['amount'] ?? 0), 2) ?></td>
+            <td><?= htmlspecialchars(format_schedule_summary($r)) ?></td>
+            <td><?= !empty($r['variable']) ? "Yes (Avg " . (int)$r['average_over_last'] . ")" : "No" ?></td>
+            <td><?= !empty($r['active']) ? '✅' : '—' ?></td>
         </tr>
         <?php endforeach; ?>
     </tbody>
 </table>
 
-<!-- 📅 Upcoming Predicted Instances -->
-<h4 class="mt-5">Upcoming Instances (Next 90 Days)</h4>
+<!-- 📅 Predicted Instances -->
+<h4 class="mt-5">Instances (Last 30 Days + Next 90 Days)</h4>
 <table class="table table-sm table-bordered align-middle">
     <thead class="table-light">
         <tr>
@@ -103,14 +106,35 @@ function format_schedule_summary($r) {
     </thead>
     <tbody>
         <?php foreach ($instances as $i): ?>
-        <tr class="<?= $i['fulfilled'] ? 'table-success' : ($i['scheduled_date'] < $today ? 'table-danger' : '') ?>">
-            <td><?= $i['scheduled_date'] ?></td>
-            <td><?= htmlspecialchars($i['description']) ?></td>
-            <td><?= $i['from_account'] ?> → <?= $i['to_account'] ?? '—' ?></td>
-            <td><?= htmlspecialchars($i['category']) ?></td>
-            <td class="text-end">£<?= number_format($i['amount'], 2) ?></td>
-            <td><?= $i['fulfilled'] ? '✅ Fulfilled' : ($i['scheduled_date'] < $today ? '⚠️ Missed' : 'Planned') ?></td>
-        </tr>
+            <?php
+                $fulfilled = (int)($i['fulfilled'] ?? 0);
+                $date = $i['scheduled_date'] ?? '';
+                $amount = (float)($i['amount'] ?? 0);
+
+                $rowClass = '';
+                $statusLabel = 'Planned';
+
+                if ($fulfilled === 1) {
+                    $rowClass = 'table-success';
+                    $statusLabel = '✅ Fulfilled';
+                } elseif ($fulfilled === 2) {
+                    $rowClass = 'table-warning';
+                    $statusLabel = '🌓 Partial';
+                } else {
+                    if ($date !== '' && $date < $today) {
+                        $rowClass = 'table-danger';
+                        $statusLabel = '⚠️ Missed';
+                    }
+                }
+            ?>
+            <tr class="<?= $rowClass ?>">
+                <td><?= htmlspecialchars($date) ?></td>
+                <td><?= htmlspecialchars($i['description'] ?? '') ?></td>
+                <td><?= htmlspecialchars($i['from_account'] ?? '—') ?> → <?= htmlspecialchars($i['to_account'] ?? '—') ?></td>
+                <td><?= htmlspecialchars($i['category'] ?? '') ?></td>
+                <td class="text-end">£<?= number_format($amount, 2) ?></td>
+                <td><?= $statusLabel ?></td>
+            </tr>
         <?php endforeach; ?>
     </tbody>
 </table>

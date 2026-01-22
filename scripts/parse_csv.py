@@ -4,7 +4,7 @@ import csv
 import sys
 import os
 import mysql.connector
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 DB_CONFIG = {
@@ -39,31 +39,37 @@ used_predictions = set()
 with open(csv_path, newline='') as csvfile:
     reader = csv.DictReader(csvfile)
     for row in reader:
-        if row['Status'].strip().upper() != 'BILLED':
+        if row.get('Status', '').strip().upper() != 'BILLED':
             continue
 
         try:
             txn_date = datetime.strptime(row['Transaction Date'], '%Y-%m-%d').date()
-        except ValueError:
-            print(f"⚠️ Invalid date: {row['Transaction Date']}")
+        except (ValueError, KeyError):
+            print(f"⚠️ Invalid date: {row.get('Transaction Date')}")
             continue
 
-        raw_amount = Decimal(row['Billing Amount'])
-        txn_type = row['Debit or Credit'].strip().upper()
+        try:
+            raw_amount = Decimal(row['Billing Amount'])
+        except Exception:
+            print(f"⚠️ Invalid amount: {row.get('Billing Amount')}")
+            continue
+
+        txn_type = row.get('Debit or Credit', '').strip().upper()
         amount = raw_amount if txn_type == 'CRDT' else -raw_amount
-        description = row['Merchant'].strip()
+
+        description = (row.get('Merchant') or '').strip()
         original_memo = ', '.join([
-            row.get('Merchant City', ''),
-            row.get('Merchant State', ''),
-            row.get('Merchant Postcode', ''),
-            row.get('Card Used', '')
+            row.get('Merchant City', '') or '',
+            row.get('Merchant State', '') or '',
+            row.get('Merchant Postcode', '') or '',
+            row.get('Card Used', '') or ''
         ]).strip(', ')
 
         status = 'new'
         matched_id = None
         predicted_instance_id = None
 
-        # 1️⃣ Check for real transaction match
+        # 1️⃣ Check for real transaction match (exact)
         select_cursor.execute("""
             SELECT id FROM transactions
             WHERE account_id = %s AND date = %s AND ABS(amount - %s) < 0.01
@@ -75,10 +81,12 @@ with open(csv_path, newline='') as csvfile:
             matched_id = match['id']
             duplicates += 1
         else:
+            # 1b️⃣ Potential duplicate: same amount within ±3 days
             select_cursor.execute("""
                 SELECT id FROM transactions
-                WHERE account_id = %s AND ABS(amount - %s) < 0.01
-                      AND ABS(DATEDIFF(date, %s)) <= 3
+                WHERE account_id = %s
+                  AND ABS(amount - %s) < 0.01
+                  AND ABS(DATEDIFF(date, %s)) <= 3
                 LIMIT 1
             """, (account_id, amount, txn_date))
             potential_match = select_cursor.fetchone()
@@ -87,7 +95,7 @@ with open(csv_path, newline='') as csvfile:
                 matched_id = potential_match['id']
                 potential += 1
 
-        # 2️⃣ Check for predicted match
+        # 2️⃣ Check for predicted match (exclude fulfilled=1; allow 0 + 2)
         if status == 'new':
             select_cursor.execute("""
                 SELECT pi.id, pi.from_account_id, pi.to_account_id, pi.amount, c.type AS cat_type
@@ -95,6 +103,7 @@ with open(csv_path, newline='') as csvfile:
                 JOIN categories c ON pi.category_id = c.id
                 WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
                   AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
+                  AND COALESCE(pi.fulfilled, 0) IN (0, 2)
             """, (account_id, account_id, txn_date))
             candidates = select_cursor.fetchall()
 
@@ -103,31 +112,41 @@ with open(csv_path, newline='') as csvfile:
                 if pred_id in used_predictions:
                     continue
 
+                # Some predictions can have NULL amount (variable); skip these here and let fallback handle it
+                if pred.get('amount') is None:
+                    continue
+
                 pred_amt = Decimal(str(pred['amount']))
                 from_id = pred['from_account_id']
                 to_id = pred['to_account_id']
                 cat_type = pred['cat_type']
 
                 if cat_type == 'transfer':
+                    # Outgoing side: predicted amount stored positive, actual is negative on from_account
                     if account_id == from_id and abs(amount + pred_amt) < Decimal('0.01'):
                         predicted_instance_id = pred_id
                         status = 'fulfills_prediction'
                         used_predictions.add(pred_id)
+                        predictions += 1
                         break
+                    # Incoming side: actual is positive on to_account
                     if account_id == to_id and abs(amount - pred_amt) < Decimal('0.01'):
                         predicted_instance_id = pred_id
                         status = 'fulfills_prediction'
                         used_predictions.add(pred_id)
+                        predictions += 1
                         break
                 else:
+                    # Regular income/expense: match amount on from_account
                     if account_id == from_id and abs(amount - pred_amt) < Decimal('0.01'):
                         predicted_instance_id = pred_id
                         status = 'fulfills_prediction'
                         used_predictions.add(pred_id)
+                        predictions += 1
                         break
 
-            # 3️⃣ Fallback: fuzzy match on variable predictions
-            if status == 'new':
+            # 3️⃣ Fallback: fuzzy match on variable predictions (exclude fulfilled=1; allow 0 + 2)
+            if status == 'new' and description:
                 select_cursor.execute("""
                     SELECT pi.id
                     FROM predicted_instances pi
@@ -135,6 +154,7 @@ with open(csv_path, newline='') as csvfile:
                     WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
                       AND pi.description LIKE %s
                       AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
+                      AND COALESCE(pi.fulfilled, 0) IN (0, 2)
                     LIMIT 1
                 """, (account_id, account_id, f"%{description[:5]}%", txn_date))
                 prediction = select_cursor.fetchone()
@@ -143,7 +163,9 @@ with open(csv_path, newline='') as csvfile:
                     predicted_instance_id = prediction['id']
                     status = 'fulfills_prediction'
                     used_predictions.add(predicted_instance_id)
+                    predictions += 1
 
+        # Insert into staging (even potential duplicates & fulfills_prediction so you can review/confirm)
         if status in ('new', 'potential_duplicate', 'fulfills_prediction'):
             insert_cursor.execute("""
                 INSERT INTO staging_transactions (
@@ -163,7 +185,6 @@ with open(csv_path, newline='') as csvfile:
                 predicted_instance_id
             ))
             inserted += 1
-
 
 conn.commit()
 select_cursor.close()

@@ -96,6 +96,7 @@ for account in ofx.accounts:
                 JOIN categories c ON pi.category_id = c.id
                 WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
                   AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
+                  AND COALESCE(pi.fulfilled, 0) IN (0, 2)
             """, (account_id, account_id, date_str))
             candidates = cursor.fetchall()
 
@@ -136,6 +137,7 @@ for account in ofx.accounts:
                     WHERE pi.from_account_id = %s
                       AND pi.description LIKE %s
                       AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
+                      AND COALESCE(pi.fulfilled, 0) IN (0, 2)
                     LIMIT 1
                 """, (account_id, f"%{description[:5]}%", date_str))
                 prediction = cursor.fetchone()
