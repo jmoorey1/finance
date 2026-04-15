@@ -1,0 +1,13 @@
+-- Baseline marker for introducing tracked migrations (BKL-021)
+--
+-- This file is intentionally comment-only.
+-- It represents the current live schema state at the point migrations were introduced.
+--
+-- Existing live database:
+--   php scripts/admin/migrate.php baseline 20260415_000000_baseline_current_schema.sql
+--
+-- Fresh database bootstrap:
+--   1. Load config/schema.sql
+--   2. Mark this baseline as applied
+--   3. Apply later migrations with:
+--        php scripts/admin/migrate.php migrate
