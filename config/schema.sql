@@ -166,7 +166,7 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_fulfilled_by_tg` (`fulfilled_by_transfer_group_id`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=81176 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=81327 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -312,7 +312,7 @@ CREATE TABLE `transactions` (
   CONSTRAINT `fk_transactions_category` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `transactions_ibfk_2` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=17415 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=17419 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `transfer_groups`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -322,7 +322,7 @@ CREATE TABLE `transfer_groups` (
   `description` varchar(255) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1164 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1166 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50001 DROP VIEW IF EXISTS `account_balances_as_of_last_night`*/;
 /*!50001 SET @saved_cs_client          = @@character_set_client */;
