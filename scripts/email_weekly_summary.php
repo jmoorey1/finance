@@ -99,6 +99,7 @@ function load_forecast($pdo, $start, $end) {
         JOIN categories c ON pi.category_id = c.id
         LEFT JOIN categories top ON c.parent_id = top.id
         WHERE pi.scheduled_date BETWEEN ? AND ?
+          AND COALESCE(pi.fulfilled, 0) = 0
         GROUP BY top_id
     ");
     $stmt->execute([$start->format('Y-m-d'), $end->format('Y-m-d')]);

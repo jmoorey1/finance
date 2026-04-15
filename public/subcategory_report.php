@@ -65,7 +65,9 @@ $sub_stmt = $pdo->prepare("
     FROM (
         SELECT date, amount, category_id FROM transactions
         UNION ALL
-        SELECT scheduled_date AS date, amount, category_id FROM predicted_instances
+        SELECT scheduled_date AS date, amount, category_id
+        FROM predicted_instances
+        WHERE COALESCE(fulfilled, 0) = 0
         UNION ALL
         SELECT t.date, ts.amount, ts.category_id FROM transaction_splits ts JOIN transactions t ON t.id = ts.transaction_id
     ) t
@@ -102,6 +104,7 @@ $tx_stmt = $pdo->prepare("
 	left join payee_patterns pp on pi.description like pp.match_pattern
 	left join payees p on pp.payee_id = p.id
     WHERE category_id = ? AND scheduled_date BETWEEN ? AND ?
+      AND COALESCE(pi.fulfilled, 0) = 0
     ORDER BY date DESC
 ");
 $tx_stmt->execute([

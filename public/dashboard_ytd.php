@@ -101,6 +101,7 @@ $stmt = $pdo->prepare("
     LEFT JOIN categories top ON c.parent_id = top.id
     WHERE pi.scheduled_date BETWEEN ? AND ?
       AND c.type IN ('income','expense')
+      AND COALESCE(pi.fulfilled, 0) = 0
     GROUP BY top_id, c.type
 ");
 $stmt->execute([$today, $end_date->format('Y-m-d')]);

@@ -61,6 +61,7 @@ $stmt = $pdo->prepare("
         WHERE pi.scheduled_date BETWEEN ? AND ?
           AND a.type IN ('current','credit','savings')
           AND c.type = 'expense'
+          AND COALESCE(pi.fulfilled, 0) = 0
         GROUP BY top_id
     ) actuals
     JOIN categories top ON top.id = actuals.top_id
@@ -333,6 +334,7 @@ $discretionaryStmt = $pdo->prepare("
           AND a.type IN ('current','credit','savings')
           AND COALESCE(top.type, c.type) = 'expense'
           AND COALESCE(top.priority, c.priority) = 'discretionary'
+          AND COALESCE(pi.fulfilled, 0) = 0
     ) AS discretionary
 ");
 $discretionaryStmt->execute([
@@ -407,6 +409,7 @@ $totalStmt = $pdo->prepare("
         WHERE pi.scheduled_date BETWEEN ? AND ?
           AND a.type IN ('current','credit','savings')
           AND COALESCE(top.type, c.type) = 'expense'
+          AND COALESCE(pi.fulfilled, 0) = 0
     ) AS total_expenses
 ");
 $totalStmt->execute([

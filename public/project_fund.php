@@ -18,7 +18,8 @@ function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
 			 JOIN accounts a ON pi.from_account_id = a.id
 			 WHERE pi.to_account_id IS NULL
 			   AND a.type IN ('current', 'credit', 'savings')
-			   AND pi.scheduled_date BETWEEN :forecast_start AND :forecast_end) fd
+			   AND pi.scheduled_date BETWEEN :forecast_start AND :forecast_end
+			   AND COALESCE(pi.fulfilled, 0) = 0) fd
 	";
 
     $stmt = $pdo->prepare($sql);
@@ -222,7 +223,9 @@ foreach ($months as $m) {
 				SELECT pi.amount
 				FROM predicted_instances pi
 				JOIN categories c ON pi.category_id = c.id
-				WHERE pi.scheduled_date BETWEEN ? AND ? AND c.type IN ('income','expense')
+				WHERE pi.scheduled_date BETWEEN ? AND ?
+				  AND c.type IN ('income','expense')
+				  AND COALESCE(pi.fulfilled, 0) = 0
 			) AS combined
 		");
 		$stmt->execute([

@@ -125,6 +125,7 @@ $query .= "
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
       AND COALESCE(pay.name, p.description) LIKE ?
+      AND COALESCE(p.fulfilled, 0) = 0
 ";
 
 if (!empty($selected_categories)) {
@@ -142,6 +143,7 @@ $query .= "
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
       AND COALESCE(pay.name, p.description) LIKE ?
+      AND COALESCE(p.fulfilled, 0) = 0
 ";
 
 if (!empty($selected_categories)) {
@@ -158,6 +160,7 @@ $query .= "
     WHERE p.to_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
       AND COALESCE(pay.name, p.description) LIKE ?
+      AND COALESCE(p.fulfilled, 0) = 0
 ";
 
 if (!empty($selected_categories)) {

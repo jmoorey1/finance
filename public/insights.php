@@ -89,6 +89,7 @@ $stmt = $pdo->prepare("
         LEFT JOIN categories par_cat ON par_cat.id = IFNULL(c.parent_id, c.id)
         WHERE c.type = 'expense'
           AND pi.scheduled_date BETWEEN ? AND ?
+          AND COALESCE(pi.fulfilled, 0) = 0
     ) raw_data
     GROUP BY category_id
 ");
@@ -235,6 +236,7 @@ $stmt = $pdo->prepare("
         WHERE c.type = 'expense'
           AND par_cat.priority = 'discretionary'
           AND pi.scheduled_date BETWEEN ? AND ?
+          AND COALESCE(pi.fulfilled, 0) = 0
     ) raw_data
     GROUP BY description
     ORDER BY total DESC
