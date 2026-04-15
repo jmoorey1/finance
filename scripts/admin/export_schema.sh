@@ -2,18 +2,28 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG_PHP="${PROJECT_ROOT}/config/config.php"
+ENV_FILE="${PROJECT_ROOT}/.env"
 OUT_SQL="${PROJECT_ROOT}/config/schema.sql"
 
-if [[ ! -f "${CONFIG_PHP}" ]]; then
-  echo "Missing ${CONFIG_PHP}. Create it from config.sample.php first."
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "Missing ${ENV_FILE}. Create it from .env.example first."
   exit 1
 fi
 
-DB_HOST=$(php -r '$c = require "'"${CONFIG_PHP}"'"; echo $c["db"]["host"];')
-DB_NAME=$(php -r '$c = require "'"${CONFIG_PHP}"'"; echo $c["db"]["name"];')
-DB_USER=$(php -r '$c = require "'"${CONFIG_PHP}"'"; echo $c["db"]["user"];')
-DB_PASS=$(php -r '$c = require "'"${CONFIG_PHP}"'"; echo $c["db"]["pass"];')
+set -a
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+set +a
+
+DB_HOST="${FINANCE_DB_HOST:-localhost}"
+DB_NAME="${FINANCE_DB_NAME:-accounts}"
+DB_USER="${FINANCE_DB_USER:-john}"
+DB_PASS="${FINANCE_DB_PASSWORD:-}"
+
+if [[ -z "${DB_PASS}" ]]; then
+  echo "Missing FINANCE_DB_PASSWORD in ${ENV_FILE}."
+  exit 1
+fi
 
 MYSQL_PWD="${DB_PASS}" mysqldump \
   --host="${DB_HOST}" \

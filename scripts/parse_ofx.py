@@ -7,14 +7,10 @@ from decimal import Decimal
 
 from ofxparse import OfxParser
 from datetime import timedelta
+from finance_env import get_db_config
 
 # ---------- CONFIG ----------
-DB_CONFIG = {
-    'host': 'localhost',
-    'user': 'john',
-    'password': 'Thebluemole01',
-    'database': 'accounts'
-}
+DB_CONFIG = get_db_config()
 
 if len(sys.argv) < 2:
     print("Usage: parse_ofx.py <path_to_ofx_file> [manual_account_id]")

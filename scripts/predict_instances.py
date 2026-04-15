@@ -4,6 +4,7 @@ import mysql.connector
 import holidays
 import calendar
 from dateutil.relativedelta import relativedelta
+from finance_env import get_db_config
 
 UK_HOLIDAYS = holidays.UnitedKingdom()
 
@@ -413,23 +414,10 @@ def predict_credit_card_repayments(cursor, today, end_date):
             print(f"✅ Inserted/updated prediction: {payment_date} | £{amount_to_insert:.2f} | statement_id={statement_id}")
 
 def main():
-    host = os.getenv("FINANCE_DB_HOST", "localhost")
-    user = os.getenv("FINANCE_DB_USER", "john")
-    database = os.getenv("FINANCE_DB_NAME", "accounts")
-
-    password = os.getenv("FINANCE_DB_PASSWORD", "Thebluemole01")
-
     try:
-        if password:
-            db = mysql.connector.connect(host=host, user=user, password=password, database=database)
-        else:
-            db = mysql.connector.connect(host=host, user=user, database=database)
-    except mysql.connector.Error as e:
-        raise SystemExit(
-            "DB connection failed. If you use password auth, set FINANCE_DB_PASSWORD in your shell/cron environment.\n"
-            f"Host={host} User={user} DB={database}\n"
-            f"MySQL error: {e}"
-        )
+        db = mysql.connector.connect(**get_db_config())
+    except Exception as e:
+        raise SystemExit(f"DB connection failed: {e}")
 
     cursor = db.cursor(dictionary=True)
 

@@ -2,13 +2,9 @@ import mysql.connector
 from datetime import datetime, timedelta
 from decimal import Decimal
 from collections import defaultdict
+from finance_env import get_db_config
 
-db = mysql.connector.connect(
-    host="localhost",
-    user="john",
-    password="Thebluemole01",
-    database="accounts"
-)
+db = mysql.connector.connect(**get_db_config())
 cursor = db.cursor(dictionary=True)
 
 today = datetime.now().date()

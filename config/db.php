@@ -1,12 +1,14 @@
 <?php
 /**
- * Home Finances System — DB Bootstrap (BKL-001)
+ * Home Finances System — DB Bootstrap (BKL-001, BKL-017)
  *
  * - Loads app config (feature flags, maintenance mode, logging, timezone)
+ * - Loads local environment from /.env via config/env.php
  * - Sets up safe error handling toggles
  * - Provides get_db_connection() and global $pdo for backward compatibility
  */
 
+require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/app.php';
 
 if (!function_exists('is_cli_request')) {
@@ -32,7 +34,6 @@ $logErrors     = app_config('debug.log_errors', true) ? '1' : '0';
 @ini_set('log_errors', $logErrors);
 
 if (app_config('debug.log_errors', true)) {
-    // Direct PHP errors to a file under /finance/logs if possible
     $phpErrorLogDir = app_config('logging.dir', __DIR__ . '/../logs');
     if (!is_dir($phpErrorLogDir)) {
         @mkdir($phpErrorLogDir, 0775, true);
@@ -91,12 +92,17 @@ function get_db_connection() {
     static $pdo = null;
 
     if ($pdo === null) {
-        // Current static config (BKL-017 will move secrets out of repo)
-        $host = 'localhost';
-        $db   = 'accounts';
-        $user = 'john';
-        $pass = 'Thebluemole01'; // TODO (BKL-017): move to env var
-        $charset = 'utf8mb4';
+        $host    = env_value('FINANCE_DB_HOST', 'localhost');
+        $db      = env_value('FINANCE_DB_NAME', 'accounts');
+        $user    = env_value('FINANCE_DB_USER', 'john');
+        $pass    = env_value('FINANCE_DB_PASSWORD', null);
+        $charset = env_value('FINANCE_DB_CHARSET', 'utf8mb4');
+
+        if ($pass === null || $pass === '') {
+            $msg = 'Missing FINANCE_DB_PASSWORD. Set it in /.env or the process environment.';
+            app_log($msg, 'ERROR');
+            throw new RuntimeException($msg);
+        }
 
         $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
         $options = [
@@ -108,7 +114,6 @@ function get_db_connection() {
         try {
             $pdo = new PDO($dsn, $user, $pass, $options);
         } catch (\PDOException $e) {
-            // Log a safe message (no secrets)
             app_log("DB connection failed: " . $e->getMessage(), "ERROR");
             throw new \PDOException($e->getMessage(), (int)$e->getCode());
         }
@@ -117,5 +122,4 @@ function get_db_connection() {
     return $pdo;
 }
 
-// Backward compatibility: most pages expect $pdo from require_once '../config/db.php'
 $pdo = get_db_connection();

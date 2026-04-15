@@ -7,3 +7,4 @@ config/db.php
 .env
 
 !/uploads/.gitkeep
+config/config.php

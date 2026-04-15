@@ -6,13 +6,9 @@ import os
 import mysql.connector
 from datetime import datetime
 from decimal import Decimal
+from finance_env import get_db_config
 
-DB_CONFIG = {
-    'user': 'john',
-    'password': 'Thebluemole01',
-    'host': 'localhost',
-    'database': 'accounts'
-}
+DB_CONFIG = get_db_config()
 
 if len(sys.argv) < 3:
     print("Usage: parse_csv.py <path_to_csv> <account_id>")
