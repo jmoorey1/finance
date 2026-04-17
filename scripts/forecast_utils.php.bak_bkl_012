@@ -36,7 +36,6 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
         INNER JOIN categories c ON p.category_id = c.id
         WHERE p.scheduled_date >= ?
           AND COALESCE(p.fulfilled, 0) = 0
-          AND COALESCE(p.resolution_status, 'open') = 'open'
     ");
     $stmt->execute([$today->format('Y-m-d')]);
     $predictions = $stmt->fetchAll(PDO::FETCH_ASSOC);

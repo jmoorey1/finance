@@ -126,9 +126,9 @@ def schedule_instance(cursor, p, day):
          category_id, amount, description)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-            amount = IF(confirmed = 1 OR COALESCE(fulfilled, 0) <> 0 OR COALESCE(resolution_status, 'open') <> 'open', amount, VALUES(amount)),
-            description = IF(COALESCE(fulfilled, 0) <> 0 OR COALESCE(resolution_status, 'open') <> 'open', description, VALUES(description)),
-            updated_at = IF(COALESCE(fulfilled, 0) <> 0 OR COALESCE(resolution_status, 'open') <> 'open', updated_at, CURRENT_TIMESTAMP)
+            amount = IF(confirmed = 1 OR COALESCE(fulfilled, 0) <> 0, amount, VALUES(amount)),
+            description = IF(COALESCE(fulfilled, 0) <> 0, description, VALUES(description)),
+            updated_at = IF(COALESCE(fulfilled, 0) <> 0, updated_at, CURRENT_TIMESTAMP)
     """, (
         p['id'], day, p['from_account_id'], p['to_account_id'],
         p['category_id'], amount, p['description']
@@ -385,7 +385,7 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 FROM predicted_instances
                 WHERE from_account_id = %s AND to_account_id = %s
                   AND scheduled_date = %s
-                  AND (confirmed = 1 OR COALESCE(fulfilled,0) <> 0 OR COALESCE(resolution_status, 'open') <> 'open')
+                  AND (confirmed = 1 OR COALESCE(fulfilled,0) <> 0)
                 LIMIT 1
             """, (card['paid_from'], card['id'], payment_date))
             if cursor.fetchone():

@@ -2,13 +2,6 @@
 require_once '../config/db.php';
 include '../layout/header.php';
 
-// Flash message
-if (isset($_SESSION['prediction_action_flash'])) {
-    $flashMsg = htmlspecialchars($_SESSION['prediction_action_flash']);
-    echo "<div class='alert alert-success'>{$flashMsg}</div>";
-    unset($_SESSION['prediction_action_flash']);
-}
-
 // Fetch lookups
 $accounts = $pdo->query("SELECT id, name FROM accounts ORDER BY name")->fetchAll(PDO::FETCH_KEY_PAIR);
 $categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetchAll(PDO::FETCH_KEY_PAIR);
@@ -109,14 +102,12 @@ function format_schedule_summary($r) {
             <th>Category</th>
             <th class="text-end">Amount</th>
             <th>Status</th>
-            <th>Action</th>
         </tr>
     </thead>
     <tbody>
         <?php foreach ($instances as $i): ?>
             <?php
                 $fulfilled = (int)($i['fulfilled'] ?? 0);
-                $resolution = $i['resolution_status'] ?? 'open';
                 $date = $i['scheduled_date'] ?? '';
                 $amount = (float)($i['amount'] ?? 0);
 
@@ -129,9 +120,6 @@ function format_schedule_summary($r) {
                 } elseif ($fulfilled === 2) {
                     $rowClass = 'table-warning';
                     $statusLabel = '🌓 Partial';
-                } elseif ($resolution === 'skipped') {
-                    $rowClass = 'table-secondary';
-                    $statusLabel = '⏭️ Skipped';
                 } else {
                     if ($date !== '' && $date < $today) {
                         $rowClass = 'table-danger';
@@ -146,25 +134,6 @@ function format_schedule_summary($r) {
                 <td><?= htmlspecialchars($i['category'] ?? '') ?></td>
                 <td class="text-end">£<?= number_format($amount, 2) ?></td>
                 <td><?= $statusLabel ?></td>
-                <td>
-                    <?php if ($fulfilled === 0): ?>
-                        <?php if ($resolution === 'skipped'): ?>
-                            <form method="post" action="prediction_action.php" class="d-inline">
-                                <input type="hidden" name="id" value="<?= (int)$i['id'] ?>">
-                                <input type="hidden" name="action" value="reopen">
-                                <input type="hidden" name="redirect" value="predicted.php">
-                                <button type="submit" class="btn btn-sm btn-outline-secondary">↩️ Reopen</button>
-                            </form>
-                        <?php else: ?>
-                            <form method="post" action="prediction_action.php" class="d-inline">
-                                <input type="hidden" name="id" value="<?= (int)$i['id'] ?>">
-                                <input type="hidden" name="action" value="skip">
-                                <input type="hidden" name="redirect" value="predicted.php">
-                                <button type="submit" class="btn btn-sm btn-outline-warning">⏭️ Skip</button>
-                            </form>
-                        <?php endif; ?>
-                    <?php endif; ?>
-                </td>
             </tr>
         <?php endforeach; ?>
     </tbody>

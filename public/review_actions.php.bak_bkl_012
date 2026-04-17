@@ -78,9 +78,6 @@ switch ($action) {
                 UPDATE predicted_instances
                 SET fulfilled = 2,
                     confirmed = 1,
-                    resolution_status = 'open',
-                    resolved_at = NULL,
-                    resolution_note = NULL,
                     fulfilled_at = NOW(),
                     fulfilled_by_transaction_id = NULL,
                     fulfilled_by_transfer_group_id = ?,
@@ -94,9 +91,6 @@ switch ($action) {
                 UPDATE predicted_instances
                 SET fulfilled = 1,
                     confirmed = 1,
-                    resolution_status = 'open',
-                    resolved_at = NULL,
-                    resolution_note = NULL,
                     fulfilled_at = NOW(),
                     fulfilled_by_transaction_id = NULL,
                     fulfilled_by_transfer_group_id = ?,
@@ -110,9 +104,6 @@ switch ($action) {
                 UPDATE predicted_instances
                 SET fulfilled = 1,
                     confirmed = 1,
-                    resolution_status = 'open',
-                    resolved_at = NULL,
-                    resolution_note = NULL,
                     fulfilled_at = NOW(),
                     fulfilled_by_transaction_id = ?,
                     fulfilled_by_transfer_group_id = NULL,

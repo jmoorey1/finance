@@ -287,7 +287,6 @@ for row in parsed_rows:
             WHERE (pi.from_account_id = %s OR pi.to_account_id = %s)
               AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
               AND COALESCE(pi.fulfilled, 0) IN (0, 2)
-              AND COALESCE(pi.resolution_status, 'open') = 'open'
             """,
             (row["account_id"], row["account_id"], row["txn_date"]),
         )
@@ -334,7 +333,6 @@ for row in parsed_rows:
                   AND pi.description LIKE %s
                   AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
                   AND COALESCE(pi.fulfilled, 0) IN (0, 2)
-              AND COALESCE(pi.resolution_status, 'open') = 'open'
                 LIMIT 1
                 """,
                 (

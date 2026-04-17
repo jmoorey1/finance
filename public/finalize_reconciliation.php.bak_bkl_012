@@ -192,8 +192,7 @@ try {
                     // Update and confirm
                     $pdo->prepare("
                         UPDATE predicted_instances
-                        SET amount = ?, confirmed = 1, statement_id = ?, scheduled_date = ?,
-                            resolution_status = 'open', resolved_at = NULL, resolution_note = NULL
+                        SET amount = ?, confirmed = 1, statement_id = ?, scheduled_date = ?
                         WHERE id = ?
                     ")->execute([
                         $repayment_amount,

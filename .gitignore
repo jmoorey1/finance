@@ -5,6 +5,8 @@ config/db.php
 *.csv
 *.log
 .env
+*/__pycache__/*
+
 
 !/uploads/.gitkeep
 config/config.php

@@ -20,9 +20,7 @@ function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
 			   AND a.type IN ('current', 'credit', 'savings')
 			   AND pi.scheduled_date BETWEEN :forecast_start AND :forecast_end
 			   AND pi.scheduled_date >= CURDATE()
-			   AND COALESCE(pi.fulfilled, 0) = 0
-				  AND COALESCE(pi.resolution_status, 'open') = 'open'
-			   AND COALESCE(pi.resolution_status, 'open') = 'open') fd
+			   AND COALESCE(pi.fulfilled, 0) = 0) fd
 	";
 
     $stmt = $pdo->prepare($sql);
@@ -230,7 +228,6 @@ foreach ($months as $m) {
 				  AND pi.scheduled_date >= CURDATE()
 				  AND c.type IN ('income','expense')
 				  AND COALESCE(pi.fulfilled, 0) = 0
-				  AND COALESCE(pi.resolution_status, 'open') = 'open'
 			) AS combined
 		");
 		$stmt->execute([

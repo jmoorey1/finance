@@ -102,7 +102,6 @@ $stmt = $pdo->prepare("
     WHERE pi.scheduled_date BETWEEN ? AND ?
       AND c.type IN ('income','expense')
       AND COALESCE(pi.fulfilled, 0) = 0
-      AND COALESCE(pi.resolution_status, 'open') = 'open'
     GROUP BY top_id, c.type
 ");
 $stmt->execute([$today, $end_date->format('Y-m-d')]);

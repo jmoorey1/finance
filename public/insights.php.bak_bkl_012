@@ -91,7 +91,6 @@ $stmt = $pdo->prepare("
           AND pi.scheduled_date BETWEEN ? AND ?
           AND pi.scheduled_date >= CURDATE()
           AND COALESCE(pi.fulfilled, 0) = 0
-          AND COALESCE(pi.resolution_status, 'open') = 'open'
     ) raw_data
     GROUP BY category_id
 ");
@@ -240,7 +239,6 @@ $stmt = $pdo->prepare("
           AND pi.scheduled_date BETWEEN ? AND ?
           AND pi.scheduled_date >= CURDATE()
           AND COALESCE(pi.fulfilled, 0) = 0
-          AND COALESCE(pi.resolution_status, 'open') = 'open'
     ) raw_data
     GROUP BY description
     ORDER BY total DESC

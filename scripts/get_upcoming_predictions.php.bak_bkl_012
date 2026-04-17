@@ -22,7 +22,6 @@ function get_upcoming_predictions(PDO $db, $limit_days = 10) {
         INNER JOIN categories c ON p.category_id = c.id
         WHERE p.scheduled_date BETWEEN ? AND DATE_ADD(?, INTERVAL ? DAY)
           AND COALESCE(p.fulfilled, 0) = 0
-          AND COALESCE(p.resolution_status, 'open') = 'open'
         ORDER BY p.scheduled_date ASC, p.amount DESC
     ");
     $stmt->execute([$today, $today, $limit_days]);

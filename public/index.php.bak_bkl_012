@@ -54,12 +54,6 @@ if (isset($_SESSION['flash'])) {
     }
 }
 
-if (isset($_SESSION['prediction_action_flash'])) {
-    $flashMsg = htmlspecialchars($_SESSION['prediction_action_flash']);
-    echo "<div class='alert alert-success'>{$flashMsg}</div>";
-    unset($_SESSION['prediction_action_flash']);
-}
-
 if (isset($_SESSION['prediction_deleted'])) {
     echo "<div class='alert alert-success'>✅ Prediction successfully deleted.</div>";
     unset($_SESSION['prediction_deleted']);
@@ -210,10 +204,8 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                     $is_late = $today > $scheduled;
                 ?>
                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <form method="post" action="prediction_action.php" class="d-flex justify-content-between w-100">
+                    <form method="post" action="delete_prediction.php" class="d-flex justify-content-between w-100">
                         <input type="hidden" name="id" value="<?= $m['id'] ?>">
-                        <input type="hidden" name="action" value="skip">
-                        <input type="hidden" name="redirect" value="index.php">
                         <span>
                             <?= htmlspecialchars($m['scheduled_date']) ?>
                             <?php if ($is_late): ?>
@@ -224,7 +216,7 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                         </span>
                         <span class="d-flex align-items-center">
                             £<?= number_format($m['amount'], 2) ?>
-                            <button type="submit" class="btn btn-sm btn-outline-warning ms-2" title="Skip Prediction">⏭️</button>
+                            <button type="submit" class="btn btn-sm btn-outline-danger ms-2" title="Delete Prediction">🗑️</button>
                         </span>
                     </form>
                 </li>

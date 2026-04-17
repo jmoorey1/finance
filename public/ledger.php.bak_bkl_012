@@ -127,7 +127,6 @@ $query .= "
       AND p.scheduled_date >= CURDATE()
       AND COALESCE(pay.name, p.description) LIKE ?
       AND COALESCE(p.fulfilled, 0) = 0
-      AND COALESCE(p.resolution_status, 'open') = 'open'
 ";
 
 if (!empty($selected_categories)) {
@@ -147,7 +146,6 @@ $query .= "
       AND p.scheduled_date >= CURDATE()
       AND COALESCE(pay.name, p.description) LIKE ?
       AND COALESCE(p.fulfilled, 0) = 0
-      AND COALESCE(p.resolution_status, 'open') = 'open'
 ";
 
 if (!empty($selected_categories)) {
@@ -166,7 +164,6 @@ $query .= "
       AND p.scheduled_date >= CURDATE()
       AND COALESCE(pay.name, p.description) LIKE ?
       AND COALESCE(p.fulfilled, 0) = 0
-      AND COALESCE(p.resolution_status, 'open') = 'open'
 ";
 
 if (!empty($selected_categories)) {
