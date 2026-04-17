@@ -19,6 +19,7 @@ function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
 			 WHERE pi.to_account_id IS NULL
 			   AND a.type IN ('current', 'credit', 'savings')
 			   AND pi.scheduled_date BETWEEN :forecast_start AND :forecast_end
+			   AND pi.scheduled_date >= CURDATE()
 			   AND COALESCE(pi.fulfilled, 0) = 0) fd
 	";
 
@@ -224,6 +225,7 @@ foreach ($months as $m) {
 				FROM predicted_instances pi
 				JOIN categories c ON pi.category_id = c.id
 				WHERE pi.scheduled_date BETWEEN ? AND ?
+				  AND pi.scheduled_date >= CURDATE()
 				  AND c.type IN ('income','expense')
 				  AND COALESCE(pi.fulfilled, 0) = 0
 			) AS combined

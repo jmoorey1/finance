@@ -92,6 +92,7 @@ $stmt = $pdo->prepare("
     JOIN categories c ON pi.category_id = c.id
     LEFT JOIN categories top ON c.parent_id = top.id
     WHERE pi.scheduled_date BETWEEN ? AND ?
+      AND pi.scheduled_date >= CURDATE()
       AND COALESCE(pi.fulfilled, 0) = 0
     GROUP BY top_id, c.type
 ");

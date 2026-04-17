@@ -124,6 +124,7 @@ $query .= "
     WHERE c.type IN ('income', 'expense')
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
+      AND p.scheduled_date >= CURDATE()
       AND COALESCE(pay.name, p.description) LIKE ?
       AND COALESCE(p.fulfilled, 0) = 0
 ";
@@ -142,6 +143,7 @@ $query .= "
     WHERE c.type = 'transfer'
       AND p.from_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
+      AND p.scheduled_date >= CURDATE()
       AND COALESCE(pay.name, p.description) LIKE ?
       AND COALESCE(p.fulfilled, 0) = 0
 ";
@@ -159,6 +161,7 @@ $query .= "
 	left join payees pay on pp.payee_id = pay.id
     WHERE p.to_account_id IN ($account_placeholders)
       AND p.scheduled_date BETWEEN ? AND ?
+      AND p.scheduled_date >= CURDATE()
       AND COALESCE(pay.name, p.description) LIKE ?
       AND COALESCE(p.fulfilled, 0) = 0
 ";

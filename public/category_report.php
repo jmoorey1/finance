@@ -57,6 +57,7 @@ $sub_stmt = $pdo->prepare("
         SELECT scheduled_date AS date, amount, category_id
         FROM predicted_instances
         WHERE COALESCE(fulfilled, 0) = 0
+        AND scheduled_date >= CURDATE()
 		UNION all
 		SELECT t.date, ts.amount, ts.category_id from transaction_splits ts join transactions t on t.id=ts.transaction_id
     ) t
@@ -114,6 +115,7 @@ $stmt = $pdo->prepare("
 	left join payees p on pp.payee_id = p.id
     WHERE coalesce(top.id, c.id) = ?
     AND pi.scheduled_date between ? and ?
+    AND pi.scheduled_date >= CURDATE()
     AND COALESCE(pi.fulfilled, 0) = 0
     
     ORDER BY date DESC
