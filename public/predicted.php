@@ -6,6 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once '../config/db.php';
 require_once 'prediction_rule_helpers.php';
 require_once 'predicted_instance_helpers.php';
+require_once '../scripts/planned_income_engine.php';
 include '../layout/header.php';
 
 if (isset($_SESSION['prediction_rule_flash'])) {
@@ -18,6 +19,12 @@ if (isset($_SESSION['prediction_action_flash'])) {
     $flashMsg = htmlspecialchars($_SESSION['prediction_action_flash']);
     echo "<div class='alert alert-success'>{$flashMsg}</div>";
     unset($_SESSION['prediction_action_flash']);
+}
+
+if (isset($_SESSION['planned_income_event_flash'])) {
+    $flashMsg = htmlspecialchars($_SESSION['planned_income_event_flash']);
+    echo "<div class='alert alert-success'>{$flashMsg}</div>";
+    unset($_SESSION['planned_income_event_flash']);
 }
 
 $futureDays = isset($_GET['future_days']) ? (int)$_GET['future_days'] : 180;
@@ -38,6 +45,18 @@ $rulesStmt = $pdo->query("
     ORDER BY pt.active DESC, pt.id ASC
 ");
 $rules = $rulesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$plannedIncomeStmt = $pdo->query("
+    SELECT
+        pie.*,
+        a.name AS account_name,
+        c.name AS category_name
+    FROM planned_income_events pie
+    LEFT JOIN accounts a ON pie.account_id = a.id
+    LEFT JOIN categories c ON pie.category_id = c.id
+    ORDER BY pie.active DESC, pie.window_start ASC, pie.id ASC
+");
+$plannedIncomeEvents = $plannedIncomeStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $todayObj = new DateTimeImmutable('today');
 $today = $todayObj->format('Y-m-d');
@@ -62,6 +81,7 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="mb-3 d-flex gap-2 flex-wrap">
     <a href="predicted_rule_edit.php" class="btn btn-primary">➕ New Rule</a>
     <a href="predicted_instance_edit.php?future_days=<?= (int)$futureDays ?>" class="btn btn-outline-primary">➕ New One-off</a>
+    <a href="planned_income_edit.php?future_days=<?= (int)$futureDays ?>" class="btn btn-outline-success">➕ New Flexible Income</a>
 </div>
 
 <div class="mb-3 d-flex gap-2 flex-wrap">
@@ -76,6 +96,7 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="mb-3 text-muted">
     Editing or deactivating a rule refreshes its future open instances and triggers a reforecast automatically.
     Manual one-offs live directly in <code>predicted_instances</code> and can be created, edited, or deleted here.
+    Flexible planned income events live separately and feed account-level cash planning without replacing the monthly budget.
 </div>
 
 <h4>Recurring Rules</h4>
@@ -120,6 +141,66 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </td>
                 </tr>
             <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+
+<h4 class="mt-5">Flexible Planned Income Events</h4>
+<div class="alert alert-info">
+    Keep the monthly budget entry in place. These events are for <strong>account-level cash timing</strong> only.
+    They will be assumed at the selected date strategy inside the configured window.
+</div>
+<div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>ID</th>
+                <th>Description</th>
+                <th>Receiving Account</th>
+                <th>Category</th>
+                <th>Window</th>
+                <th>Assumed Date</th>
+                <th class="text-end">Amount</th>
+                <th>Timing</th>
+                <th>Active</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if (empty($plannedIncomeEvents)): ?>
+                <tr>
+                    <td colspan="10" class="text-muted">No flexible planned income events yet.</td>
+                </tr>
+            <?php else: ?>
+                <?php foreach ($plannedIncomeEvents as $e): ?>
+                    <?php $assumedDate = pie_resolve_assumed_date($e); ?>
+                    <tr class="<?= !empty($e['active']) ? '' : 'table-secondary' ?>">
+                        <td><?= (int)$e['id'] ?></td>
+                        <td>
+                            <?= htmlspecialchars($e['description'] ?? '') ?>
+                            <?php if (!empty($e['notes'])): ?>
+                                <div class="small text-muted"><?= htmlspecialchars($e['notes']) ?></div>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= htmlspecialchars($e['account_name'] ?? '?') ?></td>
+                        <td><?= htmlspecialchars($e['category_name'] ?? '?') ?></td>
+                        <td><?= htmlspecialchars($e['window_start']) ?> → <?= htmlspecialchars($e['window_end']) ?></td>
+                        <td><?= htmlspecialchars($assumedDate ?? '—') ?></td>
+                        <td class="text-end">£<?= number_format((float)($e['amount'] ?? 0), 2) ?></td>
+                        <td><?= htmlspecialchars(pie_timing_label((string)$e['timing_strategy'])) ?></td>
+                        <td><?= !empty($e['active']) ? '✅' : '—' ?></td>
+                        <td class="d-flex gap-1 flex-wrap">
+                            <a href="planned_income_edit.php?id=<?= (int)$e['id'] ?>&future_days=<?= (int)$futureDays ?>" class="btn btn-sm btn-outline-primary">✏️ Edit</a>
+
+                            <form method="post" action="planned_income_delete.php" class="d-inline" onsubmit="return confirm('Delete this flexible planned income event?');">
+                                <input type="hidden" name="id" value="<?= (int)$e['id'] ?>">
+                                <input type="hidden" name="future_days" value="<?= (int)$futureDays ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">🗑️ Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </tbody>
     </table>
 </div>

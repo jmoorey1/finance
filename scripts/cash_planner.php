@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/solvency_engine.php';
+require_once __DIR__ . '/planned_income_engine.php';
 
 function cp_placeholder_list(array $items): string
 {
@@ -214,6 +215,70 @@ function cp_fetch_predicted_account_events(PDO $pdo, string $startDate, string $
     return $events;
 }
 
+function cp_fetch_flexible_income_events(PDO $pdo, string $startDate, string $endDate, ?array $accountIds = null): array
+{
+    $params = [$startDate, $endDate];
+    $accountFilterSql = '';
+
+    if ($accountIds !== null && !empty($accountIds)) {
+        $placeholders = cp_placeholder_list($accountIds);
+        $accountFilterSql = " AND pie.account_id IN ($placeholders)";
+        $params = array_merge($params, array_values($accountIds));
+    }
+
+    $sql = "
+        SELECT
+            pie.*,
+            a.name AS account_name,
+            a.type AS account_type,
+            c.name AS category_name
+        FROM planned_income_events pie
+        JOIN accounts a ON a.id = pie.account_id
+        JOIN categories c ON c.id = pie.category_id
+        WHERE pie.active = 1
+          AND a.active = 1
+          AND a.type IN ('current', 'savings')
+          AND c.type = 'income'
+          AND pie.window_end >= ?
+          AND pie.window_start <= ?
+          $accountFilterSql
+        ORDER BY pie.window_start ASC, pie.id ASC
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    $events = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $assumedDate = pie_resolve_assumed_date($row);
+        if ($assumedDate === null) {
+            continue;
+        }
+        if ($assumedDate < $startDate || $assumedDate > $endDate) {
+            continue;
+        }
+
+        $events[] = [
+            'event_date' => $assumedDate,
+            'account_id' => (int)$row['account_id'],
+            'account_name' => $row['account_name'],
+            'account_type' => $row['account_type'],
+            'amount' => (float)$row['amount'],
+            'description' => $row['description'] ?? '',
+            'source' => 'planned_income_window',
+            'source_label' => 'Flexible income (' . pie_timing_label((string)$row['timing_strategy']) . ')',
+            'event_type' => 'planned_income_window',
+            'source_id' => (int)$row['id'],
+            'category_name' => $row['category_name'],
+            'window_start' => $row['window_start'],
+            'window_end' => $row['window_end'],
+            'timing_strategy' => $row['timing_strategy'],
+        ];
+    }
+
+    return $events;
+}
+
 function cp_sort_events(array &$events): void
 {
     usort($events, function ($a, $b) {
@@ -242,7 +307,8 @@ function cp_get_account_event_stream(PDO $pdo, int $accountId, string $startDate
 
     $events = array_merge(
         cp_fetch_actual_account_events($pdo, $startDate, $endDate, [$accountId]),
-        cp_fetch_predicted_account_events($pdo, $startDate, $endDate, [$accountId])
+        cp_fetch_predicted_account_events($pdo, $startDate, $endDate, [$accountId]),
+        cp_fetch_flexible_income_events($pdo, $startDate, $endDate, [$accountId])
     );
 
     cp_sort_events($events);

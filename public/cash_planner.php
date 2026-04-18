@@ -52,13 +52,13 @@ foreach ($stream['events'] as $event) {
 <h1 class="mb-4">💧 Cash Planner</h1>
 
 <div class="alert alert-info">
-    This is the BKL-028 canonical account-dated cash event view.
-    It shows <strong>actual account cash events and dated predicted account events</strong>.
+    This is the BKL-028/BKL-030 canonical account-dated cash event view.
+    It shows <strong>actual account cash events, dated predicted account events, and flexible planned income events</strong>.
 </div>
 
 <div class="alert alert-warning">
     Budget-only future items are <strong>not</strong> shown here unless they also exist as dated account-level planned events.
-    This means flexible future income, such as shares sold at a chosen time within a window, will only affect this view once represented as a dated one-off planned item.
+    Flexible planned income events are shown here at their <strong>assumed date</strong> inside the configured window.
 </div>
 
 <form method="get" class="mb-4">
