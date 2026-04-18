@@ -1,362 +1,300 @@
 <?php
 require_once '../config/db.php';
-require_once '../scripts/forecast_utils.php';
+require_once '../scripts/solvency_engine.php';
 include '../layout/header.php';
 
-function getProjectedForMonth(string $start, string $end, PDO $pdo): float {
-	$sql = "
-		SELECT (ad.actual + fd.forecast) as projected
-		FROM 
-			(SELECT SUM(t.amount) AS actual
-			 FROM transactions t
-			 JOIN accounts a ON t.account_id = a.id
-			 WHERE a.type IN ('current', 'credit', 'savings')
-			   AND t.type != 'transfer'
-			   AND t.date BETWEEN :actual_start AND :actual_end) ad,
-			(SELECT SUM(pi.amount) AS forecast
-			 FROM predicted_instances pi
-			 JOIN accounts a ON pi.from_account_id = a.id
-			 WHERE pi.to_account_id IS NULL
-			   AND a.type IN ('current', 'credit', 'savings')
-			   AND pi.scheduled_date BETWEEN :forecast_start AND :forecast_end
-			   AND pi.scheduled_date >= CURDATE()
-			   AND COALESCE(pi.fulfilled, 0) = 0
-				  AND COALESCE(pi.resolution_status, 'open') = 'open'
-			   AND COALESCE(pi.resolution_status, 'open') = 'open') fd
-	";
-
-    $stmt = $pdo->prepare($sql);
-	$stmt->execute([
-		':actual_start' => $start,
-		':actual_end' => $end,
-		':forecast_start' => $start,
-		':forecast_end' => $end,
-	]);
-
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    return (float)($row['projected'] ?? 0);
+function pf_money_fmt($value): string
+{
+    return '£' . number_format((float)$value, 2);
 }
 
-// Get earmarks
-$earmarks = [];
+function pf_money_class($value): string
+{
+    return ((float)$value < 0) ? 'text-danger' : 'text-success';
+}
 
-$stmt = $pdo->query("
-    SELECT em.remaining, e.name
-    FROM (
-        SELECT SUM(t.amount) AS remaining, t.earmark_id
-        FROM transactions t
-        WHERE t.earmark_id IS NOT NULL
-        GROUP BY t.earmark_id
-    ) em
-    JOIN earmarks e ON e.id = em.earmark_id
-    WHERE em.remaining > 0
+$savingsStmt = $pdo->query("
+    SELECT id, name
+    FROM accounts
+    WHERE active = 1
+      AND type = 'savings'
+    ORDER BY name
 ");
+$savingsAccounts = $savingsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $earmarks[$row['name']] = floatval($row['remaining']);
+if (empty($savingsAccounts)) {
+    echo "<div class='alert alert-warning'>No active savings accounts found. Project fund capacity requires at least one active savings account.</div>";
+    include '../layout/footer.php';
+    exit;
 }
 
-
-// Config
-$savings_account_id = 24;
-$solvency_fund = 8500;
-$year = 2025;
-$months = [];
-for ($i = 0; $i < 12; $i++) {
-    $start = new DateTime("$year-01-13");
-    $start->modify("+$i months");
-    $end = (clone $start)->modify("+1 month")->modify("-1 day");
-    $months[] = ['start' => $start, 'end' => $end];
+$selectedAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : (int)$savingsAccounts[0]['id'];
+$validIds = array_map(fn($a) => (int)$a['id'], $savingsAccounts);
+if (!in_array($selectedAccountId, $validIds, true)) {
+    $selectedAccountId = (int)$savingsAccounts[0]['id'];
 }
 
-// Current balance
-$stmt = $pdo->prepare("SELECT balance_as_of_last_night FROM accounts.account_balances_as_of_last_night WHERE account_id = ?");
-$stmt->execute([$savings_account_id]);
-$current_balance = floatval($stmt->fetchColumn());
-
-// Starting balance
-$savings_start_date = new DateTime("$year-01-12");
-$stmt = $pdo->prepare("
-	select (select sum(amount) from transactions where account_id=? and date <= ?) + 
-	       (select starting_balance from accounts where id=?) as balance
-");
-$stmt->execute([$savings_account_id, $savings_start_date->format('Y-m-d'), $savings_account_id]);
-$savings_start_balance = floatval($stmt->fetchColumn());
-
-// Budgets
-$budgets = [];
-$stmt = $pdo->prepare("
-    SELECT month_start,
-           SUM(CASE WHEN c.type = 'income' THEN b.amount ELSE 0 END) -
-           SUM(CASE WHEN c.type = 'expense' THEN b.amount ELSE 0 END) AS net
-    FROM budgets b
-    JOIN categories c ON b.category_id = c.id
-    WHERE b.month_start BETWEEN ? AND ?
-    GROUP BY b.month_start
-");
-$stmt->execute([
-    $months[0]['start']->format('Y-m-d'),
-    end($months)['end']->format('Y-m-d')
-]);
-foreach ($stmt as $row) {
-    $budgets[$row['month_start']] = floatval($row['net']);
-}
-
-// Forecast top ups
-
-$forecast_issues = get_forecast_shortfalls($pdo);
-$topups_by_month = [];
-foreach ($forecast_issues as $issue) {
-    $date = new DateTime($issue['start_day']);
-    $month_end = ($date->format('d') >= 12)
-        ? new DateTime($date->format('Y-m-12'))
-        : (new DateTime($date->format('Y-m-01')))->modify('-1 day')->setDate(null, null, 12);
-    $month_key = $month_end->modify("-1 month")->modify("+1 day")->format('Y-m-d');
-
-    if (!isset($topups_by_month[$month_key])) {
-        $topups_by_month[$month_key] = 0;
+$selectedAccountName = null;
+foreach ($savingsAccounts as $a) {
+    if ((int)$a['id'] === $selectedAccountId) {
+        $selectedAccountName = $a['name'];
+        break;
     }
-    $topups_by_month[$month_key] += $issue['top_up'];
 }
 
-// Actuals and savings balances
-$actuals = [];
-$savings_balances = [];
-foreach ($months as $m) {
-    $start = $m['start']->format('Y-m-d');
-    $end = $m['end']->format('Y-m-d');
-
-    // Actuals
-    $stmt = $pdo->prepare("
-	SELECT SUM(total) as total FROM (
-		SELECT IFNULL(top.id, c.id) AS top_id, SUM(s.amount) AS total
-		FROM transaction_splits s
-		JOIN transactions t ON t.id = s.transaction_id
-		JOIN accounts a ON t.account_id = a.id
-		JOIN categories c ON s.category_id = c.id
-		LEFT JOIN categories top ON c.parent_id = top.id
-		WHERE t.date BETWEEN ? AND ?
-		  AND a.type IN ('current','credit','savings')
-		  AND c.type IN ('income', 'expense')
-		GROUP BY top_id
-
-		UNION ALL
-
-		SELECT IFNULL(top.id, c.id) AS top_id, SUM(t.amount) AS total
-		FROM transactions t
-		JOIN accounts a ON t.account_id = a.id
-		JOIN categories c ON t.category_id = c.id
-		LEFT JOIN categories top ON c.parent_id = top.id
-		LEFT JOIN transaction_splits s ON s.transaction_id = t.id
-		WHERE t.date BETWEEN ? AND ?
-		  AND s.id IS NULL
-		  AND a.type IN ('current','credit','savings')
-		  AND c.type IN ('income', 'expense')
-		GROUP BY top_id
-	) actuals
-    ");
-    $stmt->execute([$start, $end, $start, $end]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    $actuals[$m['start']->format('Y-m-d')] = $row && isset($row['total']) ? floatval($row['total']) : 0;
-
-    // Savings
-    $stmt = $pdo->prepare("
-	select (select sum(amount) from transactions where account_id=? and date < ?) + 
-	       (select starting_balance from accounts where id=?) as balance
-    ");
-    $stmt->execute([$savings_account_id, $end, $savings_account_id]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    $savings_balances[$m['start']->format('Y-m-d')] = $row && isset($row['balance']) ? floatval($row['balance']) : 0;
-}
-
-// Build rows
-$initial_project_fund = $savings_start_balance - array_sum($earmarks);
-$solvency = 0;
-$topup = 0;
-$rows = [];
-$today = new DateTime();
-
-foreach ($months as $m) {
-    $key = $m['start']->format('Y-m-d');
-    $label = $m['start']->format('F') . ' – ' . $m['end']->format('F Y');
-    $budget = $budgets[$key] ?? 0;
-
-	if ($today > $m['end']) {
-		// Historical month – use actual recorded balance
-		$actual = $actuals[$key] ?? 0;
-		$variance = $actual - $budget;
-		$deficit = $actual;
-		$running_deficit += $actual;
-		$savings_balance = $savings_balances[$key] ?? 0;
-
-	} elseif ($today >= $m['start'] && $today <= $m['end']) {
-		// Get end-of-last-month savings balance
-		$last_month_end = (clone $m['start'])->modify('-1 day')->format('Y-m-d');
-		$stmt = $pdo->prepare("
-			SELECT (
-				(SELECT SUM(amount) FROM transactions WHERE account_id = ? AND date <= ?) +
-				(SELECT starting_balance FROM accounts WHERE id = ?)
-			) AS balance
-		");
-		$stmt->execute([$savings_account_id, $last_month_end, $savings_account_id]);
-		$savings_balance = floatval($stmt->fetchColumn());
-
-		// Add Net Total (Actual + Forecast) from dashboard.php logic
-		$stmt = $pdo->prepare("
-			SELECT SUM(amount) AS net
-			FROM (
-				SELECT s.amount
-				FROM transaction_splits s
-				JOIN transactions t ON s.transaction_id = t.id
-				JOIN accounts a ON t.account_id = a.id
-				JOIN categories c ON s.category_id = c.id
-				WHERE t.date BETWEEN ? AND ? AND a.type IN ('current','credit','savings') AND c.type IN ('income','expense')
-
-				UNION ALL
-
-				SELECT t.amount
-				FROM transactions t
-				JOIN accounts a ON t.account_id = a.id
-				JOIN categories c ON t.category_id = c.id
-				LEFT JOIN transaction_splits s ON s.transaction_id = t.id
-				WHERE t.date BETWEEN ? AND ? AND s.id IS NULL AND a.type IN ('current','credit','savings') AND c.type IN ('income','expense')
-
-				UNION ALL
-
-				SELECT pi.amount
-				FROM predicted_instances pi
-				JOIN categories c ON pi.category_id = c.id
-				WHERE pi.scheduled_date BETWEEN ? AND ?
-				  AND pi.scheduled_date >= CURDATE()
-				  AND c.type IN ('income','expense')
-				  AND COALESCE(pi.fulfilled, 0) = 0
-				  AND COALESCE(pi.resolution_status, 'open') = 'open'
-			) AS combined
-		");
-		$stmt->execute([
-			$m['start']->format('Y-m-d'), $m['end']->format('Y-m-d'), // actuals
-			$m['start']->format('Y-m-d'), $m['end']->format('Y-m-d'), // unsplit actuals
-			$m['start']->format('Y-m-d'), $m['end']->format('Y-m-d'), // forecast
-		]);
-		$net_total = floatval($stmt->fetchColumn());
-
-		$savings_balance += $net_total;
-
-		$actual = 0;
-		$variance = 0;
-		$deficit = $budget;
-		$running_deficit += $budget;
-		$topup = $topups_by_month[$key] ?? 0;
-
-		if ($topup > 0) {
-			$savings_balance -= $topup;
-		}
-	
-
-
-	} else {
-		// Future month – project forward from previous balance
-		$actual = 0;
-		$variance = 0;
-		$deficit = $budget;
-		$running_deficit += $budget;
-		$topup = $topups_by_month[$key] ?? 0;
-
-		if (!isset($savings_balance)) {
-			$savings_balance = $current_balance;
-		}
-
-		if ($topup > 0) {
-			$savings_balance -= $topup;
-		} else {
-			$savings_balance += $deficit;
-		}
-	}
-
-	$excess_solvency = 0;
-    $running_solvency_fund = $solvency_fund + $running_deficit;
-    if ($running_solvency_fund > $solvency_fund) {
-		$excess_solvency = $running_solvency_fund - $solvency_fund;
-        $running_solvency_fund = $solvency_fund;
+$targetSpendRaw = trim((string)($_GET['target_spend'] ?? ''));
+$targetSpend = null;
+if ($targetSpendRaw !== '') {
+    $clean = str_replace([',', '£', ' '], '', $targetSpendRaw);
+    if (is_numeric($clean)) {
+        $targetSpend = round((float)$clean, 2);
+        if ($targetSpend <= 0) {
+            $targetSpend = null;
+        }
     }
+}
 
-    $project = $savings_balance - array_sum($earmarks) - $running_solvency_fund;
-    if ($m['start']->format('F') == 'December' && $running_deficit < 0) {
-        $project += $running_deficit;
-        $running_deficit = 0;
-        $running_solvency_fund = $solvency_fund;
+$timeline = se_build_reserve_timeline($pdo, $selectedAccountId);
+$currentProjectFund = (float)$timeline['current_available_above_reserve'];
+
+$currentCanFund = null;
+$earliestSafeRow = null;
+
+if ($targetSpend !== null) {
+    $currentCanFund = $currentProjectFund >= $targetSpend;
+
+    foreach ($timeline['rows'] as $row) {
+        if (!in_array($row['phase'], ['current', 'future'], true)) {
+            continue;
+        }
+        if ($row['available_above_reserve'] !== null && (float)$row['available_above_reserve'] >= $targetSpend) {
+            $earliestSafeRow = $row;
+            break;
+        }
     }
-
-    $rows[] = [
-        'key' => $key,
-        'label' => $label,
-		'end' => $m['end']->format('F Y'),
-        'budget' => $budget,
-        'actual' => $actual,
-        'variance' => $variance,
-        'running_solvency_fund' => $running_solvency_fund,
-        'deficit' => $deficit,
-        'running_deficit' => $running_deficit,
-        'project' => $project,
-        'savings_balance' => $savings_balance,
-        'topup' => $topup
-    ];
 }
-
-
-$dec_project_fund = end($rows)['project'];
-//Work backwards from December to find first month where project fund >= December's
-$eligible_month = null;
-for ($i = count($rows) - 1; $i >= 0; $i--) {
-    if ($rows[$i]['project'] >= $dec_project_fund) {
-        $eligible_month = $rows[$i]['end'];
-    } else {
-		break;
-	}
-}
-
-
 ?>
 
-<h1 class="mb-4">🏗 Project Fund Forecast</h1>
+<h1 class="mb-4">🏗 Project Fund Timeline</h1>
 
-<div class="mb-4">
-    <h5>Current Savings Balance (Account #<?= $savings_account_id ?>): £<?= number_format($current_balance, 2) ?></h5>
-    <ul>
-        <?php foreach ($earmarks as $label => $amt): ?>
-            <li><?= htmlspecialchars($label) ?>: £<?= number_format($amt, 2) ?></li>
-        <?php endforeach; ?>
-        <li><strong>Total Earmarked: £<?= number_format(array_sum($earmarks), 2) ?></strong></li>
-        <li><strong>Slush Fund Required For Solvency: £<?= number_format($solvency_fund, 2) ?></strong></li>
-        <li><strong>Project Fund: £<?= number_format($project, 2) ?> available from <?= $eligible_month ?> onwards</strong></li>
-    </ul>
+<div class="alert alert-info">
+    This page is rebuilt in BKL-026 on top of the new solvency reserve engine.
+    <br>
+    <strong>Project Fund = Reserve Balance at Point – Earmarks – Required Reserve From Here</strong>
+</div>
+
+<div class="alert alert-warning">
+    Manual one-off predicted items are treated as <strong>additional adjustments on top of budget</strong>.
+    If the same item is also included in budget for that month, project capacity will be understated until one of the two is removed.
+</div>
+
+<form method="get" class="mb-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label">Reserve Account</label>
+            <select name="account_id" class="form-select">
+                <?php foreach ($savingsAccounts as $a): ?>
+                    <option value="<?= (int)$a['id'] ?>" <?= (int)$a['id'] === $selectedAccountId ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($a['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label">Target Spend Scenario (£)</label>
+            <input type="number" name="target_spend" step="0.01" min="0" class="form-control"
+                   value="<?= htmlspecialchars($targetSpendRaw) ?>"
+                   placeholder="e.g. 6500.00">
+            <div class="form-text">Optional. Use this to see the earliest safe month for a major spend.</div>
+        </div>
+
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-primary">Refresh View</button>
+        </div>
+    </div>
+</form>
+
+<?php if ($targetSpend !== null): ?>
+    <?php if ($currentCanFund): ?>
+        <div class="alert alert-success">
+            A target spend of <strong><?= pf_money_fmt($targetSpend) ?></strong> is supportable <strong>now</strong>.
+            Residual project fund after spending now would be
+            <strong><?= pf_money_fmt($currentProjectFund - $targetSpend) ?></strong>.
+        </div>
+    <?php elseif ($earliestSafeRow): ?>
+        <div class="alert alert-warning">
+            A target spend of <strong><?= pf_money_fmt($targetSpend) ?></strong> is <strong>not</strong> supportable now.
+            The earliest safe month in the current timeline is
+            <strong><?= htmlspecialchars($earliestSafeRow['label']) ?></strong>,
+            when projected project fund reaches
+            <strong><?= pf_money_fmt($earliestSafeRow['available_above_reserve']) ?></strong>.
+        </div>
+    <?php else: ?>
+        <div class="alert alert-danger">
+            A target spend of <strong><?= pf_money_fmt($targetSpend) ?></strong> is not supportable anywhere in the current financial-year timeline.
+        </div>
+    <?php endif; ?>
+<?php endif; ?>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted small">Reserve Account</div>
+                <div class="fw-bold"><?= htmlspecialchars($selectedAccountName ?? 'Unknown') ?></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted small">Current Reserve Balance</div>
+                <div class="fw-bold"><?= pf_money_fmt($timeline['current_reserve_balance']) ?></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted small">Total Earmarks</div>
+                <div class="fw-bold"><?= pf_money_fmt($timeline['earmarks_total']) ?></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card border-<?= $currentProjectFund < 0 ? 'danger' : 'success' ?>">
+            <div class="card-body">
+                <div class="text-muted small">Project Fund Now</div>
+                <div class="fw-bold <?= pf_money_class($currentProjectFund) ?>">
+                    <?= pf_money_fmt($currentProjectFund) ?>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted small">Required Reserve From Now</div>
+                <div class="fw-bold"><?= pf_money_fmt($timeline['current_required_reserve']) ?></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted small">Peak Required Reserve This Year</div>
+                <div class="fw-bold"><?= pf_money_fmt($timeline['peak_required_reserve']) ?></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-<?= ((float)$timeline['lowest_available_above_reserve'] < 0) ? 'danger' : 'secondary' ?>">
+            <div class="card-body">
+                <div class="text-muted small">Lowest Project Fund This Year</div>
+                <div class="fw-bold <?= pf_money_class($timeline['lowest_available_above_reserve']) ?>">
+                    <?= pf_money_fmt($timeline['lowest_available_above_reserve']) ?>
+                </div>
+                <div class="small text-muted">
+                    <?= htmlspecialchars($timeline['lowest_available_month'] ?? '—') ?>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="table-responsive">
-    <table class="table table-bordered table-sm align-middle">
+    <table class="table table-sm table-bordered align-middle">
         <thead class="table-light">
             <tr>
                 <th>Month</th>
+                <th>Phase</th>
                 <th class="text-end">Budget Net</th>
-                <th class="text-end">Actual</th>
-                <th class="text-end">Variance</th>
-                <th class="text-end">Topups</th>
-                <th class="text-end">Running Deficit</th>
+                <th class="text-end">Actual (Past / To Date)</th>
+                <th class="text-end">Manual One-offs</th>
+                <th class="text-end">Reserve Balance at Point</th>
+                <th class="text-end">Required Reserve From Here</th>
                 <th class="text-end">Project Fund</th>
-                <th class="text-end">Savings Balance</th>
+                <?php if ($targetSpend !== null): ?>
+                    <th class="text-end">After Target Spend</th>
+                    <th>Safe?</th>
+                <?php endif; ?>
             </tr>
         </thead>
         <tbody>
-            <?php foreach ($rows as $r): ?>
-                <tr>
-                    <td><?= $r['label'] ?></td>
-                    <td class="text-end">£<?= number_format($r['budget'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['actual'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['variance'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['topup'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['running_deficit'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['project'], 2) ?></td>
-                    <td class="text-end">£<?= number_format($r['savings_balance'], 2) ?></td>
+            <?php foreach ($timeline['rows'] as $row): ?>
+                <?php
+                    $phaseLabel = match ($row['phase']) {
+                        'past' => 'Actual',
+                        'current' => 'Current',
+                        'future' => 'Future',
+                        default => ucfirst($row['phase']),
+                    };
+
+                    $actualShown = $row['phase'] === 'past'
+                        ? $row['actual_full_month_net']
+                        : ($row['phase'] === 'current' ? $row['actual_to_date_net'] : null);
+
+                    $projectFund = $row['available_above_reserve'];
+                    $projectFundClass = $projectFund === null ? '' : pf_money_class($projectFund);
+
+                    $rowClass = '';
+                    if ($row['phase'] === 'current') {
+                        $rowClass = 'table-warning';
+                    }
+                    if ($projectFund !== null && (float)$projectFund < 0) {
+                        $rowClass = 'table-danger';
+                    }
+
+                    $afterSpend = null;
+                    $safeForSpend = null;
+                    if ($targetSpend !== null && $projectFund !== null) {
+                        $afterSpend = (float)$projectFund - $targetSpend;
+                        $safeForSpend = ((float)$projectFund >= $targetSpend);
+                    }
+                ?>
+                <tr class="<?= $rowClass ?>">
+                    <td><?= htmlspecialchars($row['label']) ?></td>
+                    <td><?= htmlspecialchars($phaseLabel) ?></td>
+                    <td class="text-end"><?= pf_money_fmt($row['budget_net']) ?></td>
+                    <td class="text-end">
+                        <?= $actualShown === null ? '—' : pf_money_fmt($actualShown) ?>
+                    </td>
+                    <td class="text-end">
+                        <?= pf_money_fmt($row['manual_adjustment_net']) ?>
+                        <?php if (!empty($row['manual_items'])): ?>
+                            <div class="small text-muted text-start mt-1">
+                                <?php foreach ($row['manual_items'] as $item): ?>
+                                    <div><?= htmlspecialchars($item['date']) ?> — <?= htmlspecialchars($item['description']) ?> (<?= pf_money_fmt($item['amount']) ?>)</div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </td>
+                    <td class="text-end">
+                        <?= $row['reference_balance'] === null ? '—' : pf_money_fmt($row['reference_balance']) ?>
+                    </td>
+                    <td class="text-end">
+                        <?= $row['required_reserve_from_here'] === null ? '—' : pf_money_fmt($row['required_reserve_from_here']) ?>
+                    </td>
+                    <td class="text-end <?= $projectFundClass ?>">
+                        <?= $projectFund === null ? '—' : pf_money_fmt($projectFund) ?>
+                    </td>
+                    <?php if ($targetSpend !== null): ?>
+                        <td class="text-end <?= $afterSpend !== null ? pf_money_class($afterSpend) : '' ?>">
+                            <?= $afterSpend === null ? '—' : pf_money_fmt($afterSpend) ?>
+                        </td>
+                        <td>
+                            <?= $safeForSpend === null ? '—' : ($safeForSpend ? '✅ Yes' : '❌ No') ?>
+                        </td>
+                    <?php endif; ?>
                 </tr>
             <?php endforeach; ?>
         </tbody>
