@@ -13,14 +13,7 @@ function money_fmt($value): string
     return '£' . number_format((float)$value, 2);
 }
 
-$savingsStmt = $pdo->query("
-    SELECT id, name
-    FROM accounts
-    WHERE active = 1
-      AND type = 'savings'
-    ORDER BY name
-");
-$savingsAccounts = $savingsStmt->fetchAll(PDO::FETCH_ASSOC);
+$savingsAccounts = se_get_savings_accounts($pdo);
 
 if (empty($savingsAccounts)) {
     echo "<div class='alert alert-warning'>No active savings accounts found. The solvency reserve engine needs at least one active savings account.</div>";
@@ -28,10 +21,11 @@ if (empty($savingsAccounts)) {
     exit;
 }
 
-$selectedAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : (int)$savingsAccounts[0]['id'];
+$defaultReserveAccountId = se_get_default_reserve_account_id($pdo) ?? (int)$savingsAccounts[0]['id'];
+$selectedAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : $defaultReserveAccountId;
 $validIds = array_map(fn($a) => (int)$a['id'], $savingsAccounts);
 if (!in_array($selectedAccountId, $validIds, true)) {
-    $selectedAccountId = (int)$savingsAccounts[0]['id'];
+    $selectedAccountId = $defaultReserveAccountId;
 }
 
 $selectedAccountName = null;

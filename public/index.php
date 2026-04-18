@@ -81,7 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && feature_enabled('prediction_job_on_u
     }
 }
 
-$balance_issues = get_forecast_shortfalls($pdo);
+$shortfall_window_days = 31;
+$balance_issues = get_forecast_shortfalls($pdo, 90, $shortfall_window_days);
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
 $missed = get_missed_predictions($pdo);
@@ -272,13 +273,15 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 <!-- 🔴 Forecasted Balance Issues -->
 <?php if (count($balance_issues) > 0): ?>
     <div class="mb-4">
-        <h4>💰 Upcoming Required Transfers</h4>
+        <h4>💰 Upcoming Required Transfers (Next <?= (int)$shortfall_window_days ?> Days)</h4>
         <?php foreach ($balance_issues as $f): ?>
             <?php
                 $days_until = (new DateTime($f['start_day']))->diff(new DateTime())->days;
                 $highlight_class = 'forecast-panel';
 
-                if ((new DateTime($f['start_day'])) < new DateTime()) {
+                if (($f['breach_amount'] ?? 0) > 0) {
+                    $highlight_class = 'forecast-panel';
+                } elseif ((new DateTime($f['start_day'])) < new DateTime()) {
                     $highlight_class = 'forecast-panel';
                 } elseif ($days_until <= 3) {
                     $highlight_class = 'forecast-panel';
@@ -321,8 +324,18 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                     }
                 ?>
 
-                <p>👉 Recommended Top-Up: <strong>£<?= number_format($f['top_up'], 2) ?></strong> by <?= $label ?> (<?= $short_date ?>)</p>
+                <p>👉 Required Transfer Into Account: <strong>£<?= number_format($f['top_up'], 2) ?></strong> by <?= $label ?> (<?= $short_date ?>)</p>
                 <p>🔍 Window: <?= $f['start_day'] ?> ➞ <?= $f['min_day'] ?></p>
+
+                <?php if (!empty($f['reserve_account_name'])): ?>
+                    <p>🛡️ Safe from <?= htmlspecialchars($f['reserve_account_name']) ?> without breaching reserve: <strong>£<?= number_format($f['safe_from_reserve'], 2) ?></strong></p>
+                    <?php if (($f['breach_amount'] ?? 0) > 0): ?>
+                        <p class="text-danger">⚠️ Reserve gap: <strong>£<?= number_format($f['breach_amount'], 2) ?></strong> would breach solvency reserve. Another funding source or spending action is needed.</p>
+                    <?php else: ?>
+                        <p class="text-success">✅ Remaining safe reserve headroom after this and earlier required transfers: <strong>£<?= number_format($f['remaining_safe_after_this'], 2) ?></strong></p>
+                    <?php endif; ?>
+                <?php endif; ?>
+
                 <ul class="mb-0">
                     <?php foreach ($f['events'] as $e): ?>
                         <?php $sign = ($e['amount'] > 0 ? "+" : ""); ?>
@@ -339,7 +352,7 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 <?php else: ?>
     <div class="forecast-panel good">
         <h5>✅ You're in good shape!</h5>
-        <p>No projected shortfalls in the next 31 days.</p>
+        <p>No projected current-account shortfalls starting in the next <?= (int)$shortfall_window_days ?> days.</p>
     </div>
 <?php endif; ?>
 

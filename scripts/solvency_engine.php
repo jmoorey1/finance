@@ -9,6 +9,37 @@ function se_current_financial_year(?DateTimeImmutable $today = null): int
     return (int)$today->format('Y');
 }
 
+function se_get_savings_accounts(PDO $pdo): array
+{
+    $stmt = $pdo->query("
+        SELECT id, name
+        FROM accounts
+        WHERE active = 1
+          AND type = 'savings'
+        ORDER BY
+            CASE WHEN UPPER(name) = 'SAVINGS' THEN 0 ELSE 1 END,
+            name ASC
+    ");
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function se_get_default_reserve_account_id(PDO $pdo): ?int
+{
+    $accounts = se_get_savings_accounts($pdo);
+    if (empty($accounts)) {
+        return null;
+    }
+    return (int)$accounts[0]['id'];
+}
+
+function se_get_account_name(PDO $pdo, int $accountId): ?string
+{
+    $stmt = $pdo->prepare("SELECT name FROM accounts WHERE id = ? LIMIT 1");
+    $stmt->execute([$accountId]);
+    $name = $stmt->fetchColumn();
+    return $name !== false ? (string)$name : null;
+}
+
 function se_financial_month_key($date): string
 {
     if (!$date instanceof DateTimeInterface) {
@@ -258,7 +289,6 @@ function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year =
         $rows[] = $row;
     }
 
-    // Project future balances forward from the current point.
     $runningBalance = null;
     foreach ($rows as $idx => $row) {
         if ($row['phase'] === 'current') {
@@ -277,7 +307,6 @@ function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year =
         }
     }
 
-    // Calculate reserve required from each current/future point.
     $currentOrFutureIndexes = [];
     foreach ($rows as $idx => $row) {
         if (in_array($row['phase'], ['current', 'future'], true)) {
