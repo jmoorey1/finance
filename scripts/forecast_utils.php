@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/solvency_engine.php';
+require_once __DIR__ . '/cash_planner.php';
 
 /**
  * Forecast utility functions
@@ -11,6 +12,10 @@ require_once __DIR__ . '/solvency_engine.php';
  * - Respect the shortfall window parameter for dashboard transfer prompts.
  * - Annotate each required transfer with reserve-aware affordability from the
  *   default reserve account (main SAVINGS account, then fallback first savings).
+ *
+ * BKL-028:
+ * - Rebuild current-account shortfall forecasting on top of the canonical
+ *   account-dated cash event pipeline in cash_planner.php.
  */
 
 function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 31, $reserve_account_id = null) {
@@ -18,30 +23,7 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
     $end_date = $today->modify("+{$forecast_days} days");
     $window_end = $today->modify("+{$shortfall_window} days");
 
-    $stmt = $db->prepare("SELECT id, name, starting_balance FROM accounts WHERE active = 1 AND type = 'current'");
-    $stmt->execute();
-    $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $stmt = $db->prepare("SELECT account_id, date, amount, description FROM transactions WHERE date < ?");
-    $stmt->execute([$today->format('Y-m-d')]);
-    $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $stmt = $db->prepare("
-        SELECT
-            p.scheduled_date AS date,
-            p.amount,
-            p.description,
-            c.type AS category_type,
-            p.from_account_id,
-            p.to_account_id
-        FROM predicted_instances p
-        INNER JOIN categories c ON p.category_id = c.id
-        WHERE p.scheduled_date >= ?
-          AND COALESCE(p.fulfilled, 0) = 0
-          AND COALESCE(p.resolution_status, 'open') = 'open'
-    ");
-    $stmt->execute([$today->format('Y-m-d')]);
-    $predictions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $accounts = cp_get_active_accounts($db, ['current']);
 
     $reserveAccountId = $reserve_account_id ?? se_get_default_reserve_account_id($db);
     $reserveAccountName = $reserveAccountId ? se_get_account_name($db, $reserveAccountId) : null;
@@ -63,84 +45,48 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
     foreach ($accounts as $acct) {
         $acct_id = (int)$acct['id'];
         $acct_name = $acct['name'];
-        $start_balance = (float) $acct['starting_balance'];
 
-        $entries = [];
+        $today_balance = se_get_account_balance_as_of($db, $acct_id, $today->format('Y-m-d'));
+        $stream = cp_get_account_event_stream(
+            $db,
+            $acct_id,
+            $today->modify('+1 day')->format('Y-m-d'),
+            $end_date->format('Y-m-d')
+        );
 
-        foreach ($transactions as $tx) {
-            if ((int)$tx['account_id'] === $acct_id) {
-                $entries[$tx['date']][] = [
-                    'amount' => (float)$tx['amount'],
-                    'desc' => $tx['description']
-                ];
-            }
-        }
-
-        foreach ($predictions as $p) {
-            $date = $p['date'];
-            $amt = (float)($p['amount'] ?? 0);
-            $desc = $p['description'];
-
-            if ($p['category_type'] === 'income' || $p['category_type'] === 'expense') {
-                if ((int)$p['from_account_id'] === $acct_id) {
-                    $entries[$date][] = ['amount' => $amt, 'desc' => $desc];
-                }
-            } elseif ($p['category_type'] === 'transfer') {
-                if ((int)$p['from_account_id'] === $acct_id) {
-                    $entries[$date][] = ['amount' => -$amt, 'desc' => $desc];
-                }
-                if ((int)$p['to_account_id'] === $acct_id) {
-                    $entries[$date][] = ['amount' => $amt, 'desc' => $desc];
-                }
-            }
-        }
-
-        ksort($entries);
-
-        $today_str = $today->format('Y-m-d');
-        $balance = $start_balance;
-        foreach ($entries as $date => $items) {
-            if ($date <= $today_str) {
-                foreach ($items as $item) {
-                    $balance += $item['amount'];
-                }
-            }
-        }
-
-        $running_balance = $balance;
-        $dip_events = [];
         $in_deficit = false;
         $dip_start = null;
         $lowest_point = ['date' => null, 'balance' => INF];
+        $dip_events = [];
 
-        foreach (new DatePeriod($today->modify('+1 day'), new DateInterval('P1D'), $end_date->modify('+1 day')) as $day) {
-            $date_str = $day->format('Y-m-d');
+        foreach ($stream['events'] as $event) {
+            $eventDate = new DateTimeImmutable($event['event_date']);
+            $balanceAfter = (float)$event['balance_after'];
 
-            if (isset($entries[$date_str])) {
-                foreach ($entries[$date_str] as $item) {
-                    $running_balance += $item['amount'];
+            if ($balanceAfter < 0 && !$in_deficit) {
+                $in_deficit = true;
+                $dip_start = $event['event_date'];
+            }
 
-                    if ($running_balance < 0 && !$in_deficit) {
-                        $in_deficit = true;
-                        $dip_start = $date_str;
-                    }
+            if ($in_deficit) {
+                $dip_events[] = [
+                    'date' => $event['event_date'],
+                    'amount' => (float)$event['amount'],
+                    'desc' => $event['description'],
+                    'balance' => $balanceAfter,
+                    'source_label' => $event['source_label'],
+                    'event_type' => $event['event_type'],
+                ];
 
-                    if ($in_deficit) {
-                        $dip_events[] = [
-                            'date' => $date_str,
-                            'amount' => $item['amount'],
-                            'desc' => $item['desc'],
-                            'balance' => $running_balance
-                        ];
-
-                        if ($running_balance < $lowest_point['balance']) {
-                            $lowest_point = ['date' => $date_str, 'balance' => $running_balance];
-                        }
-                    }
+                if ($balanceAfter < $lowest_point['balance']) {
+                    $lowest_point = [
+                        'date' => $event['event_date'],
+                        'balance' => $balanceAfter,
+                    ];
                 }
             }
 
-            if ($in_deficit && $running_balance >= 0) {
+            if ($in_deficit && $balanceAfter >= 0) {
                 break;
             }
         }
@@ -148,12 +94,12 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
         if ($lowest_point['balance'] < 0 && $dip_start !== null && $dip_start <= $window_end->format('Y-m-d')) {
             $output[] = [
                 'account_name' => $acct_name,
-                'today_balance' => $balance,
+                'today_balance' => $today_balance,
                 'min_day' => $lowest_point['date'],
                 'min_balance' => $lowest_point['balance'],
                 'top_up' => abs($lowest_point['balance']),
                 'start_day' => $dip_start,
-                'events' => $dip_events
+                'events' => $dip_events,
             ];
         }
     }
