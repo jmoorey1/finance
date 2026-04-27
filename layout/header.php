@@ -202,6 +202,8 @@
                     <ul class="dropdown-menu" aria-labelledby="planningDropdown">
                         <li><a class="dropdown-item" href="/finance/public/budgets.php">Budgets</a></li>
                         <li><a class="dropdown-item" href="/finance/public/predicted.php">Predicted Transactions</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/cash_planner.php">Cash Planner</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/solvency.php">Solvency Reserve</a></li>
                         <li><a class="dropdown-item" href="/finance/public/project_fund.php">Project Fund Review</a></li>
                     </ul>
                 </li>
