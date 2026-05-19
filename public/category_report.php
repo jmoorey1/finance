@@ -8,36 +8,44 @@ $pdo = get_db_connection();
 $selected_category = isset($_GET['category_id']) ? intval($_GET['category_id']) : 277;
 
 // 2. Load all categories
-$stmt = $pdo->query("SELECT id, name, type FROM categories where parent_id is null and type in ('expense','income') ORDER BY type, name ASC");
+$stmt = $pdo->query("
+    SELECT id, name, type
+    FROM categories
+    WHERE parent_id IS NULL
+      AND type IN ('expense','income')
+    ORDER BY type, name ASC
+");
 $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// 3. Load fiscal year totals
+// 3. Load fiscal year totals from canonical ledger lines (actuals only)
 $fiscal_totals = [];
 $fy_stmt = $pdo->prepare("
     SELECT
-        YEAR(CASE WHEN MONTH(t.date) = 1 AND DAY(t.date) < 13 THEN DATE_SUB(t.date, INTERVAL 1 YEAR) ELSE t.date END) AS fiscal_year,
-        SUM(CASE WHEN coalesce(top.type, c.type) = 'expense' or coalesce(tops.type, cs.type) = 'expense' THEN -t.amount else t.amount end) AS total
-    FROM transactions t
-    left join transaction_splits ts on ts.transaction_id = t.id
-    join categories c on t.category_id=c.id
-    left join categories top on c.parent_id=top.id
-    left join categories cs on ts.category_id=cs.id
-    left join categories tops on cs.parent_id=tops.id
-    WHERE coalesce(top.id, c.id) = ? or coalesce(tops.id, cs.id) = ?
+        YEAR(
+            CASE
+                WHEN MONTH(ll.line_date) = 1 AND DAY(ll.line_date) < 13
+                    THEN DATE_SUB(ll.line_date, INTERVAL 1 YEAR)
+                ELSE ll.line_date
+            END
+        ) AS fiscal_year,
+        SUM(CASE WHEN ll.category_type = 'expense' THEN -ll.amount ELSE ll.amount END) AS total
+    FROM ledger_lines ll
+    WHERE ll.is_prediction = 0
+      AND (ll.category_id = ? OR ll.parent_category_id = ?)
     GROUP BY fiscal_year
     ORDER BY fiscal_year
-
 ");
 $fy_stmt->execute([$selected_category, $selected_category]);
 while ($row = $fy_stmt->fetch(PDO::FETCH_ASSOC)) {
     $fiscal_totals[$row['fiscal_year']] = round($row['total'], 2);
 }
 
-// 4. Load recent 6 months of subcategory breakdowns
-
+// 4. Load recent 6 months of subcategory breakdowns from canonical ledger lines
 $now = new DateTime();
 $start = new DateTime($now->format('Y-m-13'));
-if ((int)$now->format('d') < 13) $start->modify('-1 month');
+if ((int)$now->format('d') < 13) {
+    $start->modify('-1 month');
+}
 $end = (clone $start)->modify('+1 month')->modify('-1 day');
 $start->modify('-6 months');
 
@@ -45,100 +53,79 @@ $month_totals = [];
 $months = [];
 $sub_stmt = $pdo->prepare("
     SELECT
-        COALESCE(c.parent_id, c.id) AS top_category,
-        IF(c.parent_id IS NULL, c.name, (SELECT name FROM categories WHERE id = c.parent_id)) AS parent_name,
-        c.id AS category_id,
-        c.name AS category_name,
-        DATE_FORMAT(CASE WHEN DAY(t.date) >= 13 THEN t.date ELSE DATE_SUB(t.date, INTERVAL 1 MONTH) END, '%Y-%m') AS fin_month,
-        SUM(CASE WHEN coalesce(top.type, c.type) = 'expense' THEN -t.amount else t.amount end) AS total
-    FROM (
-        SELECT date, amount, category_id FROM transactions
-        UNION ALL
-        SELECT scheduled_date AS date, amount, category_id
-        FROM predicted_instances
-        WHERE COALESCE(fulfilled, 0) = 0
-          AND COALESCE(resolution_status, 'open') = 'open'
-        AND scheduled_date >= CURDATE()
-		UNION all
-		SELECT t.date, ts.amount, ts.category_id from transaction_splits ts join transactions t on t.id=ts.transaction_id
-    ) t
-    JOIN categories c ON c.id = t.category_id
-	left join categories top on top.id = c.parent_id
-    WHERE (c.id = ? OR c.parent_id = ?)
-      AND t.date between ? and ?
-    GROUP BY category_id, fin_month
-    ORDER BY fin_month ASC, category_name ASC
+        ll.category_id,
+        ll.category_name,
+        DATE_FORMAT(
+            CASE
+                WHEN DAY(ll.line_date) >= 13 THEN ll.line_date
+                ELSE DATE_SUB(ll.line_date, INTERVAL 1 MONTH)
+            END,
+            '%Y-%m'
+        ) AS fin_month,
+        SUM(CASE WHEN ll.category_type = 'expense' THEN -ll.amount ELSE ll.amount END) AS total
+    FROM ledger_lines ll
+    WHERE (ll.category_id = ? OR ll.parent_category_id = ?)
+      AND ll.line_date BETWEEN ? AND ?
+      AND (ll.is_prediction = 0 OR ll.line_date >= CURDATE())
+    GROUP BY ll.category_id, ll.category_name, fin_month
+    ORDER BY fin_month ASC, ll.category_name ASC
 ");
 $sub_stmt->execute([$selected_category, $selected_category, $start->format('Y-m-d'), $end->format('Y-m-d')]);
 while ($row = $sub_stmt->fetch(PDO::FETCH_ASSOC)) {
     $month = $row['fin_month'];
     $cat = $row['category_name'];
-    if (!isset($month_totals[$month])) $month_totals[$month] = [];
+    if (!isset($month_totals[$month])) {
+        $month_totals[$month] = [];
+    }
     $month_totals[$month][$cat] = round($row['total'], 2);
-    if (!in_array($month, $months)) $months[] = $month;
+    if (!in_array($month, $months, true)) {
+        $months[] = $month;
+    }
 }
 
-// 5. Load individual transactions and predicted instances for current month
-
-
+// 5. Load individual ledger lines for current month
 $stmt = $pdo->prepare("
-	SELECT 'Actual' AS source, t.id, t.date, t.amount, a.name as account, COALESCE(p.name, t.description) as description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
-    FROM transactions t
-    join categories c on t.category_id=c.id
-    join accounts a on t.account_id=a.id
-    left join categories top on c.parent_id=top.id
-	LEFT JOIN transaction_splits ts ON ts.transaction_id = t.id
-	left join payees p on p.id = t.payee_id
-    WHERE coalesce(top.id, c.id) = ?
-     AND t.date between ? and ?
-	 AND ts.transaction_id IS NULL
-	
-	UNION ALL
-	
-	Select 'Split' AS source, t.id, t.date, ts.amount, a.name as account, COALESCE(p.name, t.description) as description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
-	from transaction_splits ts
-	join transactions t on t.id=ts.transaction_id
-    join categories c on ts.category_id=c.id
-    join accounts a on t.account_id=a.id
-    left join categories top on c.parent_id=top.id
-	left join payees p on p.id = t.payee_id
-    WHERE coalesce(top.id, c.id) = ?
-     AND t.date between ? and ?
-	
-    
-    UNION ALL
-    SELECT 'Predicted' AS source, '' as id, pi.scheduled_date, pi.amount, a.name as account, COALESCE(p.name, pi.description) as description, c.name as subcategory, c.id as cat_id, (case when c.parent_id is not null then 1 else 0 end) as sub_flag
-    FROM predicted_instances pi
-    join categories c on pi.category_id=c.id
-    join accounts a on pi.from_account_id=a.id
-    left join categories top on c.parent_id=top.id
-	left join payee_patterns pp on pi.description like pp.match_pattern
-	left join payees p on pp.payee_id = p.id
-    WHERE coalesce(top.id, c.id) = ?
-    AND pi.scheduled_date between ? and ?
-    AND pi.scheduled_date >= CURDATE()
-    AND COALESCE(pi.fulfilled, 0) = 0
-    AND COALESCE(pi.resolution_status, 'open') = 'open'
-    
-    ORDER BY date DESC
+    SELECT
+        ll.source,
+        ll.transaction_id AS id,
+        ll.line_date AS date,
+        ll.amount,
+        ll.account_name AS account,
+        ll.description,
+        ll.category_name AS subcategory,
+        ll.category_id AS cat_id,
+        ll.sub_flag
+    FROM ledger_lines ll
+    WHERE (ll.category_id = ? OR ll.parent_category_id = ?)
+      AND ll.line_date BETWEEN ? AND ?
+      AND (ll.is_prediction = 0 OR ll.line_date >= CURDATE())
+    ORDER BY
+        ll.line_date DESC,
+        COALESCE(ll.transaction_id, 0) DESC,
+        COALESCE(ll.transaction_split_id, 0) DESC,
+        COALESCE(ll.predicted_instance_id, 0) DESC
 ");
-$stmt->execute([$selected_category, $start->format('Y-m-d'), $end->format('Y-m-d'),$selected_category, $start->format('Y-m-d'), $end->format('Y-m-d'), $selected_category, $start->format('Y-m-d'), $end->format('Y-m-d')]);
+$stmt->execute([
+    $selected_category,
+    $selected_category,
+    $start->format('Y-m-d'),
+    $end->format('Y-m-d'),
+]);
 $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-?>
 
-<?php
 $cat_name = array_column($categories, 'name', 'id')[$selected_category] ?? 'Unknown';
 echo "<h2>Category Report: " . htmlspecialchars($cat_name) . "</h2>";
-echo "<p><a href='category_edit.php?id=" . $selected_category . "'>Edit " . $cat_name . " →</a><p>";
+echo "<p><a href='category_edit.php?id=" . (int)$selected_category . "'>Edit " . htmlspecialchars($cat_name) . " →</a><p>";
 ?>
 
 <form method="get">
   <label for="category_id">Select Category:</label>
   <select name="category_id" id="category_id" onchange="this.form.submit()">
+    <?php $incomeHeader = false; $expenseHeader = false; ?>
     <?php foreach ($categories as $cat): ?>
       <?php if ($cat['type'] === 'income' && !$incomeHeader): $incomeHeader = true; echo "<optgroup label='Income Categories'>"; endif; ?>
       <?php if ($cat['type'] === 'expense' && !$expenseHeader): $expenseHeader = true; echo "<optgroup label='Expense Categories'>"; endif; ?>
-      <option value="<?= $cat['id'] ?>" <?= $cat['id'] == $selected_category ? 'selected' : '' ?>>
+      <option value="<?= (int)$cat['id'] ?>" <?= (int)$cat['id'] === $selected_category ? 'selected' : '' ?>>
         <?= htmlspecialchars($cat['name']) ?>
       </option>
     <?php endforeach; ?>
@@ -159,25 +146,25 @@ echo "<p><a href='category_edit.php?id=" . $selected_category . "'>Edit " . $cat
   <tr><th>Date</th><th>Amount</th><th>Account</th><th>Description</th><th>Category</th><th>Source</th><th></th></tr>
   <?php foreach ($transactions as $tx): ?>
     <tr>
-      <td><?= $tx['date'] ?></td>
-      <td>£<?= number_format($tx['amount'], 2) ?></td>
+      <td><?= htmlspecialchars($tx['date']) ?></td>
+      <td>£<?= number_format((float)$tx['amount'], 2) ?></td>
       <td><?= htmlspecialchars($tx['account']) ?></td>
       <td><?= htmlspecialchars($tx['description']) ?></td>
       <td>
-        <?php if (!empty($tx['sub_flag']) && $tx['sub_flag'] == 1): ?>
-          <a href="subcategory_report.php?subcategory_id=<?= $tx['cat_id'] ?>">
+        <?php if (!empty($tx['sub_flag']) && (int)$tx['sub_flag'] === 1): ?>
+          <a href="subcategory_report.php?subcategory_id=<?= (int)$tx['cat_id'] ?>">
             <?= htmlspecialchars($tx['subcategory']) ?>
           </a>
         <?php else: ?>
-          <a href="category_report.php?category_id=<?= $tx['cat_id'] ?>">
+          <a href="category_report.php?category_id=<?= (int)$tx['cat_id'] ?>">
             <?= htmlspecialchars($tx['subcategory']) ?>
           </a>
         <?php endif; ?>
       </td>
-      <td><?= $tx['source'] ?></td>
+      <td><?= htmlspecialchars($tx['source']) ?></td>
       <td>
-	  <?= $tx['id'] != '' ? '<a href="transaction_edit.php?id=' . $tx['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) .'" title="Edit Transaction">✏️</a>' : '' ?>
-	  </td>
+          <?= !empty($tx['id']) ? '<a href="transaction_edit.php?id=' . (int)$tx['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) . '" title="Edit Transaction">✏️</a>' : '' ?>
+      </td>
     </tr>
   <?php endforeach; ?>
 </table>

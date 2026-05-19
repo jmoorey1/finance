@@ -1,204 +1,171 @@
 <?php
 require_once '../config/db.php';
 require_once '../scripts/get_accounts.php';
-include '../layout/header.php';
 
+$pdo = get_db_connection();
+
+// Load active accounts once
 $accounts = get_all_active_accounts($pdo);
 
-// Default account = JOINT BILLS
+// Resolve project / earmark first, because they influence default account scope
+$ledger_title = '';
+
+$project_id = null;
+if (isset($_GET['project_id']) && is_numeric($_GET['project_id'])) {
+    $project_id = (int)$_GET['project_id'];
+    $project_name_stmt = $pdo->prepare("SELECT name FROM projects WHERE id = ?");
+    $project_name_stmt->execute([$project_id]);
+    $project = $project_name_stmt->fetch(PDO::FETCH_ASSOC);
+    $ledger_title = $project ? $project['name'] : '';
+}
+
+$earmark_id = null;
+if (isset($_GET['earmark_id']) && is_numeric($_GET['earmark_id'])) {
+    $earmark_id = (int)$_GET['earmark_id'];
+    $earmark_name_stmt = $pdo->prepare("SELECT name FROM earmarks WHERE id = ?");
+    $earmark_name_stmt->execute([$earmark_id]);
+    $earmark = $earmark_name_stmt->fetch(PDO::FETCH_ASSOC);
+    $ledger_title = $earmark ? $earmark['name'] : '';
+}
+
+// Default account = JOINT BILLS, unless a project/earmark ledger is being opened,
+// in which case default to ALL active accounts.
 $default_account = null;
 foreach ($accounts as $acct) {
     if ($acct['name'] === 'JOINT BILLS') {
-        $default_account = $acct['id'];
+        $default_account = (int)$acct['id'];
         break;
     }
 }
+if ($default_account === null && !empty($accounts)) {
+    $default_account = (int)$accounts[0]['id'];
+}
+
+$all_active_account_ids = array_map(fn($a) => (int)$a['id'], $accounts);
+$has_explicit_accounts = isset($_GET['accounts']) && is_array($_GET['accounts']) && count($_GET['accounts']) > 0;
 
 // Inputs from query string
-$selected_accounts = $_GET['accounts'] ?? [$default_account];
+if ($has_explicit_accounts) {
+    $selected_accounts = array_map('intval', (array)$_GET['accounts']);
+    $selected_accounts = array_values(array_filter($selected_accounts, fn($v) => $v > 0));
+} else {
+    if ($project_id !== null || $earmark_id !== null) {
+        $selected_accounts = $all_active_account_ids;
+    } else {
+        $selected_accounts = $default_account !== null ? [$default_account] : [];
+    }
+}
+
+if (empty($selected_accounts) && $default_account !== null) {
+    $selected_accounts = [$default_account];
+}
+
 $start_date = $_GET['start'] ?? (new DateTimeImmutable('-30 days'))->format('Y-m-d');
 $end_date = $_GET['end'] ?? (new DateTimeImmutable('today'))->format('Y-m-d');
-$selected_categories = $_GET['category_id'] ?? [];
-$parent_filter = $_GET['parent_id'] ?? '';
+$selected_categories = array_map('intval', (array)($_GET['category_id'] ?? []));
+$parent_filter = isset($_GET['parent_id']) && $_GET['parent_id'] !== '' ? (int)$_GET['parent_id'] : null;
 $search_term = trim($_GET['description'] ?? '');
 $search_like = '%' . $search_term . '%';
-$ledger_title = '';
-// Add to your existing filter logic:
-$projectFilter = '';
-if (isset($_GET['project_id']) && is_numeric($_GET['project_id'])) {
-    $project_id = (int) $_GET['project_id'];
-    $projectFilter = "AND (t.project_id = $project_id)";
-	
-	$project_name_query = "SELECT name FROM projects WHERE id = ?";
-	$project_name_stmt = $pdo->prepare($project_name_query);
-	$project_name_stmt->execute([$_GET['project_id']]);
-	$project = $project_name_stmt->fetch(PDO::FETCH_ASSOC);
-	$ledger_title = $project ? $project['name'] : '';
-}
-$earmarkFilter = '';
-if (isset($_GET['earmark_id']) && is_numeric($_GET['earmark_id'])) {
-	$earmark_id = (int) $_GET['earmark_id'];
-	$earmarkFilter = "AND (t.earmark_id = $earmark_id)";
-	
-	$earmark_name_query = "SELECT name FROM earmarks WHERE id = ?";
-	$earmark_name_stmt = $pdo->prepare($earmark_name_query);
-	$earmark_name_stmt->execute([$_GET['earmark_id']]);
-	$earmark = $earmark_name_stmt->fetch(PDO::FETCH_ASSOC);
-	$ledger_title = $earmark ? $earmark['name'] : '';
-}
-
 
 // Load categories
-$categories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE type IN ('income','expense') ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$categories = $pdo->query("
+    SELECT id, name, parent_id
+    FROM categories
+    WHERE type IN ('income','expense')
+    ORDER BY name
+")->fetchAll(PDO::FETCH_ASSOC);
+
 $parents = array_filter($categories, fn($c) => is_null($c['parent_id']));
 $children = array_filter($categories, fn($c) => !is_null($c['parent_id']));
 
 // If a parent is selected, add it and its children to the filter
-if ($parent_filter !== '') {
-    $selected_categories[] = $parent_filter; // include parent itself
+if ($parent_filter !== null) {
+    $selected_categories[] = $parent_filter;
+
     $child_ids = array_column(
-        array_filter($children, fn($c) => $c['parent_id'] == $parent_filter),
+        array_filter($children, fn($c) => (int)$c['parent_id'] === $parent_filter),
         'id'
     );
-    $selected_categories = array_merge($selected_categories, $child_ids);
+    $selected_categories = array_merge($selected_categories, array_map('intval', $child_ids));
 
-	if ($ledger_title == '') {
-		$parent_name_query = "SELECT name FROM categories WHERE id = ?";
-		$parent_name_stmt = $pdo->prepare($parent_name_query);
-		$parent_name_stmt->execute([$parent_filter]);
-		$parent = $parent_name_stmt->fetch(PDO::FETCH_ASSOC);
-		$ledger_title = $parent ? $parent['name'] : '';
-	}
+    if ($ledger_title === '') {
+        $parent_name_stmt = $pdo->prepare("SELECT name FROM categories WHERE id = ?");
+        $parent_name_stmt->execute([$parent_filter]);
+        $parent = $parent_name_stmt->fetch(PDO::FETCH_ASSOC);
+        $ledger_title = $parent ? $parent['name'] : '';
+    }
 }
 
-// Remove duplicates
-$selected_categories = array_unique($selected_categories);
+$selected_categories = array_values(array_unique(array_filter($selected_categories, fn($v) => $v > 0)));
 
 $account_placeholders = implode(',', array_fill(0, count($selected_accounts), '?'));
-$category_clause = '';
-$category_placeholders = [];
 
-if (!empty($selected_categories)) {
-    $category_placeholders = array_fill(0, count($selected_categories), '?');
-    $cat_placeholder_str = implode(',', $category_placeholders);
-    $category_clause = "
-        AND (
-            (s.category_id IS NOT NULL AND s.category_id IN ($cat_placeholder_str)) OR
-            (s.category_id IS NULL AND t.category_id IN ($cat_placeholder_str))
-        )
-    ";
-}
-
-// SQL query
 $query = "
-	SELECT 
-		CASE
-				WHEN s.id IS NOT NULL THEN 'Split'
-				ELSE 'Actual'
-		END AS source, t.id, t.date, t.account_id,
-		CASE 
-			WHEN s.id IS NOT NULL THEN s.amount
-			ELSE t.amount
-		END AS amount, coalesce(p.name, t.description) as description, IFNULL(cs.name, ct.name) AS category, IFNULL(cs.type, ct.type) as cat_type, (case when cs.parent_id is null and ct.parent_id is null then 0 else 1 end) as sub_flag, IFNULL(cs.id, ct.id) as cat_id
-	FROM transactions t
-	LEFT JOIN transaction_splits s ON t.id = s.transaction_id
-	LEFT JOIN categories cs ON cs.id = s.category_id
-	LEFT JOIN categories ct ON ct.id = t.category_id
-    left join payees p on p.id = t.payee_id
-    WHERE t.account_id IN ($account_placeholders)
-      AND t.date BETWEEN ? AND ?
-      $category_clause
-      $projectFilter
-      $earmarkFilter
-      AND COALESCE(p.name, t.description) LIKE ?
+    SELECT
+        ll.source,
+        ll.transaction_id AS id,
+        ll.line_date AS date,
+        ll.account_id,
+        ll.account_name,
+        ll.amount,
+        ll.description,
+        ll.category_name AS category,
+        ll.category_type AS cat_type,
+        ll.sub_flag,
+        ll.category_id AS cat_id,
+        ll.line_role,
+        ll.transaction_split_id,
+        ll.predicted_instance_id
+    FROM ledger_lines ll
+    WHERE ll.account_id IN ($account_placeholders)
+      AND ll.line_date BETWEEN ? AND ?
+      AND ll.description LIKE ?
+      AND (ll.is_prediction = 0 OR ll.line_date >= CURDATE())
 ";
 
-if (!isset($_GET['project_id'])) {
-$query .= "
-    UNION ALL
-    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, p.amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
-    FROM predicted_instances p
-    JOIN categories c ON p.category_id = c.id
-	left join payee_patterns pp on p.description like pp.match_pattern
-	left join payees pay on pp.payee_id = pay.id
-    WHERE c.type IN ('income', 'expense')
-      AND p.from_account_id IN ($account_placeholders)
-      AND p.scheduled_date BETWEEN ? AND ?
-      AND p.scheduled_date >= CURDATE()
-      AND COALESCE(pay.name, p.description) LIKE ?
-      AND COALESCE(p.fulfilled, 0) = 0
-      AND COALESCE(p.resolution_status, 'open') = 'open'
-";
+$params = array_merge($selected_accounts, [$start_date, $end_date, $search_like]);
 
 if (!empty($selected_categories)) {
-    $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
+    $category_placeholders = implode(',', array_fill(0, count($selected_categories), '?'));
+    $query .= " AND ll.category_id IN ($category_placeholders)";
+    $params = array_merge($params, $selected_categories);
 }
 
-$query .= "
-    UNION ALL
-    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.from_account_id, -p.amount AS amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
-    FROM predicted_instances p
-    JOIN categories c ON p.category_id = c.id
-	left join payee_patterns pp on p.description like pp.match_pattern
-	left join payees pay on pp.payee_id = pay.id
-    WHERE c.type = 'transfer'
-      AND p.from_account_id IN ($account_placeholders)
-      AND p.scheduled_date BETWEEN ? AND ?
-      AND p.scheduled_date >= CURDATE()
-      AND COALESCE(pay.name, p.description) LIKE ?
-      AND COALESCE(p.fulfilled, 0) = 0
-      AND COALESCE(p.resolution_status, 'open') = 'open'
-";
+// Project / earmark filtering still works for actual lines only until the view is expanded further.
+if ($project_id !== null) {
+    $query .= " AND ll.transaction_id IN (
+        SELECT id
+        FROM transactions
+        WHERE project_id = ?
+    )";
+    $params[] = $project_id;
+}
 
-if (!empty($selected_categories)) {
-    $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
+if ($earmark_id !== null) {
+    $query .= " AND ll.transaction_id IN (
+        SELECT id
+        FROM transactions
+        WHERE earmark_id = ?
+    )";
+    $params[] = $earmark_id;
 }
 
 $query .= "
-    UNION ALL
-    SELECT 'Predicted' AS source, '' as id, p.scheduled_date AS date, p.to_account_id, p.amount AS amount, COALESCE(pay.name, p.description) as description, c.name as category, c.type as cat_type, (case when c.parent_id is null then 0 else 1 end) as sub_flag, c.id as cat_id
-    FROM predicted_instances p
-    JOIN categories c ON p.category_id = c.id
-	left join payee_patterns pp on p.description like pp.match_pattern
-	left join payees pay on pp.payee_id = pay.id
-    WHERE p.to_account_id IN ($account_placeholders)
-      AND p.scheduled_date BETWEEN ? AND ?
-      AND p.scheduled_date >= CURDATE()
-      AND COALESCE(pay.name, p.description) LIKE ?
-      AND COALESCE(p.fulfilled, 0) = 0
-      AND COALESCE(p.resolution_status, 'open') = 'open'
+    ORDER BY
+        ll.line_date ASC,
+        COALESCE(ll.transaction_id, 0) ASC,
+        COALESCE(ll.transaction_split_id, 0) ASC,
+        COALESCE(ll.predicted_instance_id, 0) ASC
 ";
-
-if (!empty($selected_categories)) {
-    $query .= " AND p.category_id IN (" . implode(',', $category_placeholders) . ")";
-}
-}
-$query .= " ORDER BY date ASC";
-
-// Build parameters
-
-if (!isset($_GET['project_id'])) {
-$params = array_merge(
-    $selected_accounts, [$start_date, $end_date],
-    $selected_categories, $selected_categories, [$search_like], // actuals
-    $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories, // predicted income/expense
-    $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories, // predicted transfer (from)
-    $selected_accounts, [$start_date, $end_date], [$search_like], $selected_categories  // predicted transfer (to)
-);
-} else {
-$params = array_merge(
-    $selected_accounts, [$start_date, $end_date],
-    $selected_categories, $selected_categories, [$search_like] // actuals
-);
-}
-
 
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
-?>
-<h1 class="mb-4">📒 Ledger Viewer<?= isset($ledger_title) && $ledger_title !== '' ? " : " . $ledger_title : '' ?></h1>
 
+include '../layout/header.php';
+?>
+
+<h1 class="mb-4">📒 Ledger Viewer<?= $ledger_title !== '' ? ' : ' . htmlspecialchars($ledger_title) : '' ?></h1>
 
 <form method="GET" class="mb-4">
     <div class="row g-3">
@@ -206,35 +173,48 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <label class="form-label">Account(s)</label>
             <select name="accounts[]" class="form-select" multiple size="5">
                 <?php foreach ($accounts as $acct): ?>
-                    <option value="<?= $acct['id'] ?>" <?= in_array($acct['id'], $selected_accounts) ? 'selected' : '' ?>>
+                    <option value="<?= (int)$acct['id'] ?>" <?= in_array((int)$acct['id'], $selected_accounts, true) ? 'selected' : '' ?>>
                         <?= htmlspecialchars($acct['name']) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
+
         <div class="col-md-2">
             <label class="form-label">From Date</label>
-            <input type="date" name="start" class="form-control" value="<?= $start_date ?>">
+            <input type="date" name="start" class="form-control" value="<?= htmlspecialchars($start_date) ?>">
         </div>
+
         <div class="col-md-2">
             <label class="form-label">To Date</label>
-            <input type="date" name="end" class="form-control" value="<?= $end_date ?>">
+            <input type="date" name="end" class="form-control" value="<?= htmlspecialchars($end_date) ?>">
         </div>
+
         <div class="col-md-3">
             <label class="form-label">Top-Level Category</label>
             <select name="parent_id" class="form-select">
                 <option value="">— All —</option>
                 <?php foreach ($parents as $p): ?>
-                    <option value="<?= $p['id'] ?>" <?= $parent_filter == $p['id'] ? 'selected' : '' ?>>
+                    <option value="<?= (int)$p['id'] ?>" <?= $parent_filter === (int)$p['id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($p['name']) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
+
         <div class="col-md-2">
             <label class="form-label">Description Contains</label>
             <input type="text" name="description" class="form-control" value="<?= htmlspecialchars($search_term) ?>">
         </div>
+
+        <?php if ($project_id !== null): ?>
+            <input type="hidden" name="project_id" value="<?= $project_id ?>">
+        <?php endif; ?>
+
+        <?php if ($earmark_id !== null): ?>
+            <input type="hidden" name="earmark_id" value="<?= $earmark_id ?>">
+        <?php endif; ?>
+
         <div class="col-md-12 text-end">
             <button type="submit" class="btn btn-primary mt-2">Filter</button>
         </div>
@@ -242,67 +222,61 @@ $ledger = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </form>
 
 <?php if ($ledger): ?>
-	<table class="table table-striped table-sm align-middle">
-		<thead>
-			<tr>
-				<th>Date</th>
-				<th>Account</th>
-				<th>Description</th>
-				<th>Category</th>
-				<th class="text-end">Amount</th>
-				<th>Source</th>
-				<th></th> <!-- Pencil column -->
-			</tr>
-		</thead>
-		<tbody>
-			<?php $total = 0; ?>
-			<?php foreach ($ledger as $entry): ?>
-				<?php
-					$acct_name = '';
-					foreach ($accounts as $acct) {
-						if ($acct['id'] == $entry['account_id']) {
-							$acct_name = $acct['name'];
-							break;
-						}
-					}
-				?>
-				<tr>
-					<td><?= $entry['date'] ?></td>
-					<td><?= htmlspecialchars($acct_name) ?></td>
-					<td><?= htmlspecialchars($entry['description']) ?></td>
-					<td>
-						<?php if ($entry['cat_type'] !== 'transfer'): ?>
-							<?php if (!empty($entry['sub_flag']) && $entry['sub_flag'] == 1): ?>
-								<a href="subcategory_report.php?subcategory_id=<?= $entry['cat_id'] ?>">
-									<?= htmlspecialchars($entry['category']) ?>
-								</a>
-							<?php else: ?>
-								<a href="category_report.php?category_id=<?= $entry['cat_id'] ?>">
-									<?= htmlspecialchars($entry['category']) ?>
-								</a>
-							<?php endif; ?>
-						<?php else: ?>
-							<?= htmlspecialchars($entry['category']) ?>
-						<?php endif; ?>
-					</td>
-					<td class="text-end <?= $entry['amount'] < 0 ? 'text-danger' : '' ?>">
-						£<?= number_format($entry['amount'], 2) ?>
-						<?php $total += $entry['amount']; ?>
-					</td>
-					<td><?= $entry['source'] ?></td>
-					<td>
-						<?= $entry['id'] != '' ? '<a href="transaction_edit.php?id=' . $entry['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) .'" title="Edit Transaction">✏️</a>' : '' ?>
-					</td>
-				</tr>
-			<?php endforeach; ?>
-		</tbody>
-		<?php //if (!empty($_GET['earmark_id']) || !empty($_GET['project_id'])): ?>
-			<tfoot>
-				<tr><td colspan='4'><strong>TOTAL</strong></td><td class="text-end <?= $total < 0 ? 'text-danger' : '' ?>"><strong>£<?= number_format($total, 2) ?></strong></td><td colspan="2"></td></tr>
-			</tfoot>
-		<?php //endif; ?>
-	</table>
-
+    <table class="table table-striped table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Account</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th class="text-end">Amount</th>
+                <th>Source</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php $total = 0; ?>
+            <?php foreach ($ledger as $entry): ?>
+                <tr>
+                    <td><?= htmlspecialchars($entry['date']) ?></td>
+                    <td><?= htmlspecialchars($entry['account_name']) ?></td>
+                    <td><?= htmlspecialchars($entry['description']) ?></td>
+                    <td>
+                        <?php if ($entry['cat_type'] !== 'transfer'): ?>
+                            <?php if (!empty($entry['sub_flag']) && (int)$entry['sub_flag'] === 1): ?>
+                                <a href="subcategory_report.php?subcategory_id=<?= (int)$entry['cat_id'] ?>">
+                                    <?= htmlspecialchars($entry['category']) ?>
+                                </a>
+                            <?php else: ?>
+                                <a href="category_report.php?category_id=<?= (int)$entry['cat_id'] ?>">
+                                    <?= htmlspecialchars($entry['category']) ?>
+                                </a>
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <?= htmlspecialchars($entry['category']) ?>
+                        <?php endif; ?>
+                    </td>
+                    <td class="text-end <?= (float)$entry['amount'] < 0 ? 'text-danger' : '' ?>">
+                        £<?= number_format((float)$entry['amount'], 2) ?>
+                        <?php $total += (float)$entry['amount']; ?>
+                    </td>
+                    <td><?= htmlspecialchars($entry['source']) ?></td>
+                    <td>
+                        <?= !empty($entry['id'])
+                            ? '<a href="transaction_edit.php?id=' . (int)$entry['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) . '" title="Edit Transaction">✏️</a>'
+                            : '' ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="4"><strong>TOTAL</strong></td>
+                <td class="text-end <?= $total < 0 ? 'text-danger' : '' ?>"><strong>£<?= number_format($total, 2) ?></strong></td>
+                <td colspan="2"></td>
+            </tr>
+        </tfoot>
+    </table>
 <?php else: ?>
     <p>No results found for the selected criteria.</p>
 <?php endif; ?>

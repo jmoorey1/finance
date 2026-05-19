@@ -146,6 +146,38 @@ CREATE TABLE `import_runs` (
   CONSTRAINT `fk_import_runs_requested_account` FOREIGN KEY (`requested_account_id`) REFERENCES `accounts` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `ledger_lines`;
+/*!50001 DROP VIEW IF EXISTS `ledger_lines`*/;
+SET @saved_cs_client     = @@character_set_client;
+/*!50503 SET character_set_client = utf8mb4 */;
+/*!50001 CREATE VIEW `ledger_lines` AS SELECT 
+ 1 AS `source`,
+ 1 AS `line_role`,
+ 1 AS `transaction_id`,
+ 1 AS `transaction_split_id`,
+ 1 AS `predicted_instance_id`,
+ 1 AS `line_date`,
+ 1 AS `account_id`,
+ 1 AS `account_name`,
+ 1 AS `other_account_id`,
+ 1 AS `other_account_name`,
+ 1 AS `amount`,
+ 1 AS `description`,
+ 1 AS `raw_description`,
+ 1 AS `original_ref`,
+ 1 AS `transaction_type`,
+ 1 AS `transfer_group_id`,
+ 1 AS `project_id`,
+ 1 AS `earmark_id`,
+ 1 AS `category_id`,
+ 1 AS `category_name`,
+ 1 AS `category_type`,
+ 1 AS `parent_category_id`,
+ 1 AS `parent_category_name`,
+ 1 AS `sub_flag`,
+ 1 AS `is_prediction`,
+ 1 AS `is_editable`*/;
+SET character_set_client = @saved_cs_client;
 DROP TABLE IF EXISTS `ofx_account_map`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -242,7 +274,7 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_to_sched_state` (`to_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=90890 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=91037 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -441,6 +473,19 @@ CREATE TABLE `transfer_groups` (
 /*!50001 CREATE ALGORITHM=UNDEFINED */
 /*!50013 DEFINER=`john`@`localhost` SQL SECURITY DEFINER */
 /*!50001 VIEW `forecast_timeline_view` AS select `t`.`account_id` AS `account_id`,`t`.`date` AS `date`,(sum(`t`.`amount`) OVER (PARTITION BY `t`.`account_id` ORDER BY `t`.`date` )  + `a`.`starting_balance`) AS `running_balance` from ((select `transactions`.`account_id` AS `account_id`,`transactions`.`date` AS `date`,`transactions`.`amount` AS `amount` from `transactions` where (`transactions`.`date` <= curdate()) union all select `predicted_instances`.`from_account_id` AS `from_account_id`,`predicted_instances`.`scheduled_date` AS `scheduled_date`,-(`predicted_instances`.`amount`) AS `-amount` from `predicted_instances` where (`predicted_instances`.`scheduled_date` > curdate()) union all select `predicted_instances`.`to_account_id` AS `to_account_id`,`predicted_instances`.`scheduled_date` AS `scheduled_date`,`predicted_instances`.`amount` AS `amount` from `predicted_instances` where (`predicted_instances`.`scheduled_date` > curdate())) `t` join `accounts` `a` on((`a`.`id` = `t`.`account_id`))) where ((`a`.`active` = 1) and (`a`.`type` = 'current')) */;
+/*!50001 SET character_set_client      = @saved_cs_client */;
+/*!50001 SET character_set_results     = @saved_cs_results */;
+/*!50001 SET collation_connection      = @saved_col_connection */;
+/*!50001 DROP VIEW IF EXISTS `ledger_lines`*/;
+/*!50001 SET @saved_cs_client          = @@character_set_client */;
+/*!50001 SET @saved_cs_results         = @@character_set_results */;
+/*!50001 SET @saved_col_connection     = @@collation_connection */;
+/*!50001 SET character_set_client      = utf8mb4 */;
+/*!50001 SET character_set_results     = utf8mb4 */;
+/*!50001 SET collation_connection      = utf8mb4_0900_ai_ci */;
+/*!50001 CREATE ALGORITHM=UNDEFINED */
+/*!50013 DEFINER=`john`@`localhost` SQL SECURITY DEFINER */
+/*!50001 VIEW `ledger_lines` AS select 'Actual' AS `source`,'actual' AS `line_role`,`t`.`id` AS `transaction_id`,NULL AS `transaction_split_id`,NULL AS `predicted_instance_id`,`t`.`date` AS `line_date`,`t`.`account_id` AS `account_id`,`a`.`name` AS `account_name`,NULL AS `other_account_id`,NULL AS `other_account_name`,`t`.`amount` AS `amount`,coalesce(`p`.`name`,`t`.`description`) AS `description`,`t`.`description` AS `raw_description`,`t`.`original_ref` AS `original_ref`,`t`.`type` AS `transaction_type`,`t`.`transfer_group_id` AS `transfer_group_id`,`t`.`project_id` AS `project_id`,`t`.`earmark_id` AS `earmark_id`,`t`.`category_id` AS `category_id`,`c`.`name` AS `category_name`,`c`.`type` AS `category_type`,`c`.`parent_id` AS `parent_category_id`,`pc`.`name` AS `parent_category_name`,(case when (`c`.`parent_id` is null) then 0 else 1 end) AS `sub_flag`,0 AS `is_prediction`,1 AS `is_editable` from (((((`transactions` `t` join `accounts` `a` on((`a`.`id` = `t`.`account_id`))) join `categories` `c` on((`c`.`id` = `t`.`category_id`))) left join `categories` `pc` on((`pc`.`id` = `c`.`parent_id`))) left join `payees` `p` on((`p`.`id` = `t`.`payee_id`))) left join `transaction_splits` `ts` on((`ts`.`transaction_id` = `t`.`id`))) where (`ts`.`transaction_id` is null) union all select 'Split' AS `source`,'split' AS `line_role`,`t`.`id` AS `transaction_id`,`ts`.`id` AS `transaction_split_id`,NULL AS `predicted_instance_id`,`t`.`date` AS `line_date`,`t`.`account_id` AS `account_id`,`a`.`name` AS `account_name`,NULL AS `other_account_id`,NULL AS `other_account_name`,`ts`.`amount` AS `amount`,coalesce(`p`.`name`,`t`.`description`) AS `description`,`t`.`description` AS `raw_description`,`t`.`original_ref` AS `original_ref`,`t`.`type` AS `transaction_type`,`t`.`transfer_group_id` AS `transfer_group_id`,`t`.`project_id` AS `project_id`,`t`.`earmark_id` AS `earmark_id`,`ts`.`category_id` AS `category_id`,`c`.`name` AS `category_name`,`c`.`type` AS `category_type`,`c`.`parent_id` AS `parent_category_id`,`pc`.`name` AS `parent_category_name`,(case when (`c`.`parent_id` is null) then 0 else 1 end) AS `sub_flag`,0 AS `is_prediction`,1 AS `is_editable` from (((((`transaction_splits` `ts` join `transactions` `t` on((`t`.`id` = `ts`.`transaction_id`))) join `accounts` `a` on((`a`.`id` = `t`.`account_id`))) join `categories` `c` on((`c`.`id` = `ts`.`category_id`))) left join `categories` `pc` on((`pc`.`id` = `c`.`parent_id`))) left join `payees` `p` on((`p`.`id` = `t`.`payee_id`))) union all select 'Predicted' AS `source`,'predicted' AS `line_role`,NULL AS `transaction_id`,NULL AS `transaction_split_id`,`pi`.`id` AS `predicted_instance_id`,`pi`.`scheduled_date` AS `line_date`,`pi`.`from_account_id` AS `account_id`,`fa`.`name` AS `account_name`,`pi`.`to_account_id` AS `other_account_id`,`ta`.`name` AS `other_account_name`,`pi`.`amount` AS `amount`,coalesce((select `py`.`name` from (`payee_patterns` `pp` join `payees` `py` on((`py`.`id` = `pp`.`payee_id`))) where (`pi`.`description` like `pp`.`match_pattern`) order by `pp`.`priority` desc,(case when ((locate('%',`pp`.`match_pattern`) = 0) and (locate('_',`pp`.`match_pattern`) = 0)) then 1 else 0 end) desc,((case when (left(`pp`.`match_pattern`,1) not in ('%','_')) then 1 else 0 end) + (case when (right(`pp`.`match_pattern`,1) not in ('%','_')) then 1 else 0 end)) desc,char_length(replace(replace(`pp`.`match_pattern`,'%',''),'_','')) desc,((char_length(`pp`.`match_pattern`) - char_length(replace(`pp`.`match_pattern`,'%',''))) + (char_length(`pp`.`match_pattern`) - char_length(replace(`pp`.`match_pattern`,'_','')))),char_length(`pp`.`match_pattern`) desc,`pp`.`id` limit 1),`pi`.`description`) AS `description`,`pi`.`description` AS `raw_description`,NULL AS `original_ref`,NULL AS `transaction_type`,NULL AS `transfer_group_id`,NULL AS `project_id`,NULL AS `earmark_id`,`pi`.`category_id` AS `category_id`,`c`.`name` AS `category_name`,`c`.`type` AS `category_type`,`c`.`parent_id` AS `parent_category_id`,`pc`.`name` AS `parent_category_name`,(case when (`c`.`parent_id` is null) then 0 else 1 end) AS `sub_flag`,1 AS `is_prediction`,0 AS `is_editable` from ((((`predicted_instances` `pi` join `categories` `c` on((`c`.`id` = `pi`.`category_id`))) join `accounts` `fa` on((`fa`.`id` = `pi`.`from_account_id`))) left join `accounts` `ta` on((`ta`.`id` = `pi`.`to_account_id`))) left join `categories` `pc` on((`pc`.`id` = `c`.`parent_id`))) where ((`c`.`type` in ('income','expense')) and (coalesce(`pi`.`fulfilled`,0) = 0) and (coalesce(`pi`.`resolution_status`,'open') = 'open')) union all select 'Predicted' AS `source`,'predicted_transfer_out' AS `line_role`,NULL AS `transaction_id`,NULL AS `transaction_split_id`,`pi`.`id` AS `predicted_instance_id`,`pi`.`scheduled_date` AS `line_date`,`pi`.`from_account_id` AS `account_id`,`fa`.`name` AS `account_name`,`pi`.`to_account_id` AS `other_account_id`,`ta`.`name` AS `other_account_name`,-(`pi`.`amount`) AS `amount`,coalesce((select `py`.`name` from (`payee_patterns` `pp` join `payees` `py` on((`py`.`id` = `pp`.`payee_id`))) where (`pi`.`description` like `pp`.`match_pattern`) order by `pp`.`priority` desc,(case when ((locate('%',`pp`.`match_pattern`) = 0) and (locate('_',`pp`.`match_pattern`) = 0)) then 1 else 0 end) desc,((case when (left(`pp`.`match_pattern`,1) not in ('%','_')) then 1 else 0 end) + (case when (right(`pp`.`match_pattern`,1) not in ('%','_')) then 1 else 0 end)) desc,char_length(replace(replace(`pp`.`match_pattern`,'%',''),'_','')) desc,((char_length(`pp`.`match_pattern`) - char_length(replace(`pp`.`match_pattern`,'%',''))) + (char_length(`pp`.`match_pattern`) - char_length(replace(`pp`.`match_pattern`,'_','')))),char_length(`pp`.`match_pattern`) desc,`pp`.`id` limit 1),`pi`.`description`) AS `description`,`pi`.`description` AS `raw_description`,NULL AS `original_ref`,NULL AS `transaction_type`,NULL AS `transfer_group_id`,NULL AS `project_id`,NULL AS `earmark_id`,`pi`.`category_id` AS `category_id`,`c`.`name` AS `category_name`,`c`.`type` AS `category_type`,`c`.`parent_id` AS `parent_category_id`,`pc`.`name` AS `parent_category_name`,(case when (`c`.`parent_id` is null) then 0 else 1 end) AS `sub_flag`,1 AS `is_prediction`,0 AS `is_editable` from ((((`predicted_instances` `pi` join `categories` `c` on((`c`.`id` = `pi`.`category_id`))) join `accounts` `fa` on((`fa`.`id` = `pi`.`from_account_id`))) left join `accounts` `ta` on((`ta`.`id` = `pi`.`to_account_id`))) left join `categories` `pc` on((`pc`.`id` = `c`.`parent_id`))) where ((`c`.`type` = 'transfer') and (coalesce(`pi`.`fulfilled`,0) = 0) and (coalesce(`pi`.`resolution_status`,'open') = 'open')) union all select 'Predicted' AS `source`,'predicted_transfer_in' AS `line_role`,NULL AS `transaction_id`,NULL AS `transaction_split_id`,`pi`.`id` AS `predicted_instance_id`,`pi`.`scheduled_date` AS `line_date`,`pi`.`to_account_id` AS `account_id`,`ta`.`name` AS `account_name`,`pi`.`from_account_id` AS `other_account_id`,`fa`.`name` AS `other_account_name`,`pi`.`amount` AS `amount`,coalesce((select `py`.`name` from (`payee_patterns` `pp` join `payees` `py` on((`py`.`id` = `pp`.`payee_id`))) where (`pi`.`description` like `pp`.`match_pattern`) order by `pp`.`priority` desc,(case when ((locate('%',`pp`.`match_pattern`) = 0) and (locate('_',`pp`.`match_pattern`) = 0)) then 1 else 0 end) desc,((case when (left(`pp`.`match_pattern`,1) not in ('%','_')) then 1 else 0 end) + (case when (right(`pp`.`match_pattern`,1) not in ('%','_')) then 1 else 0 end)) desc,char_length(replace(replace(`pp`.`match_pattern`,'%',''),'_','')) desc,((char_length(`pp`.`match_pattern`) - char_length(replace(`pp`.`match_pattern`,'%',''))) + (char_length(`pp`.`match_pattern`) - char_length(replace(`pp`.`match_pattern`,'_','')))),char_length(`pp`.`match_pattern`) desc,`pp`.`id` limit 1),`pi`.`description`) AS `description`,`pi`.`description` AS `raw_description`,NULL AS `original_ref`,NULL AS `transaction_type`,NULL AS `transfer_group_id`,NULL AS `project_id`,NULL AS `earmark_id`,`pi`.`category_id` AS `category_id`,`c`.`name` AS `category_name`,`c`.`type` AS `category_type`,`c`.`parent_id` AS `parent_category_id`,`pc`.`name` AS `parent_category_name`,(case when (`c`.`parent_id` is null) then 0 else 1 end) AS `sub_flag`,1 AS `is_prediction`,0 AS `is_editable` from ((((`predicted_instances` `pi` join `categories` `c` on((`c`.`id` = `pi`.`category_id`))) join `accounts` `fa` on((`fa`.`id` = `pi`.`from_account_id`))) join `accounts` `ta` on((`ta`.`id` = `pi`.`to_account_id`))) left join `categories` `pc` on((`pc`.`id` = `c`.`parent_id`))) where ((`c`.`type` = 'transfer') and (coalesce(`pi`.`fulfilled`,0) = 0) and (coalesce(`pi`.`resolution_status`,'open') = 'open')) */;
 /*!50001 SET character_set_client      = @saved_cs_client */;
 /*!50001 SET character_set_results     = @saved_cs_results */;
 /*!50001 SET collation_connection      = @saved_col_connection */;
