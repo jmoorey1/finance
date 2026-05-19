@@ -230,6 +230,12 @@
                     </ul>
                 </li>
             </ul>
+            <?php if (function_exists('auth_is_enabled') && auth_is_enabled() && function_exists('auth_current_username')): ?>
+                <div class="d-flex align-items-center text-white gap-3">
+                    <span class="small">Signed in as <?= htmlspecialchars(auth_current_username() ?? 'unknown', ENT_QUOTES, 'UTF-8') ?></span>
+                    <a class="btn btn-outline-light btn-sm" href="/finance/public/logout.php">Log out</a>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </nav>

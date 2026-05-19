@@ -62,7 +62,7 @@ if (!isset($APP_CONFIG) || !is_array($APP_CONFIG)) {
         'features' => [
             // Reserved for later backlog items — default OFF unless already live behaviour.
             'show_env_banner'       => false,
-            'enable_auth'           => false,
+            'enable_auth'           => true,
             'enforce_csrf'          => false,
 
             // This reflects current behaviour (index.php can trigger reforecast)

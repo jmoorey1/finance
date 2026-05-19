@@ -1,8 +1,9 @@
 <?php
-session_start();
-
 require_once '../config/db.php';
+auth_session_start();
+
 require_once '../scripts/run_predict_instances.php';
+require_once '../scripts/lib/finance_periods.php';
 
 // Handle manual reforecast BEFORE we include other scripts / output anything
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['reforecast']) || isset($_POST['force_reforecast']))) {
@@ -27,6 +28,11 @@ require_once '../scripts/get_account_balances.php';
 require_once '../scripts/get_account_import_status.php';
 require_once '../scripts/get_missed_predictions.php';
 require_once '../scripts/get_missed_statements.php';
+
+$financial_period = get_financial_month_range();
+$start_month = $financial_period['start'];
+$end_month = $financial_period['end'];
+
 $headlines = require_once '../scripts/get_insights.php';
 
 include '../layout/header.php';

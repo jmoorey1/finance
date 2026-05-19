@@ -296,7 +296,7 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_to_sched_state` (`to_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=91037 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=91184 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

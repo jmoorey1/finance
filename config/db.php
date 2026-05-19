@@ -10,6 +10,7 @@
 
 require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/app.php';
+require_once __DIR__ . '/../scripts/lib/auth.php';
 
 if (!function_exists('is_cli_request')) {
     function is_cli_request(): bool {
@@ -85,6 +86,18 @@ if (!is_cli_request() && app_config('maintenance.enabled', false)) {
                 </div>
               </body></html>";
         exit;
+    }
+}
+
+/**
+ * Authentication gate
+ * - Only affects web requests
+ * - Login/logout/healthcheck are allowlisted
+ */
+if (!is_cli_request() && auth_is_enabled()) {
+    $requestUri = $_SERVER['REQUEST_URI'] ?? '';
+    if (!auth_is_allowlisted_path($requestUri)) {
+        auth_require_login();
     }
 }
 
