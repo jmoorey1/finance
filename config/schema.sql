@@ -114,7 +114,7 @@ CREATE TABLE `import_run_accounts` (
   KEY `idx_import_run_accounts_account` (`account_id`,`created_at`),
   CONSTRAINT `fk_import_run_accounts_account` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_import_run_accounts_run` FOREIGN KEY (`import_run_id`) REFERENCES `import_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `import_runs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -143,7 +143,7 @@ CREATE TABLE `import_runs` (
   KEY `idx_import_runs_status_created` (`status`,`created_at`),
   KEY `idx_import_runs_requested_account` (`requested_account_id`),
   CONSTRAINT `fk_import_runs_requested_account` FOREIGN KEY (`requested_account_id`) REFERENCES `accounts` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `ofx_account_map`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
