@@ -1,7 +1,7 @@
-<?php include '../layout/header.php'; ?>
 <?php
 require_once '../config/db.php';
 require_once '../scripts/payee_matching.php';
+
 $conn = get_db_connection();
 
 // Load full category hierarchy for dropdown rendering
@@ -33,9 +33,9 @@ $stmt = $conn->prepare($sql);
 $stmt->execute();
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Prepare helper queries
+// Suggestion queries
 $topCatsByPayeeStmt = $conn->prepare("
-    SELECT category_id, c.name
+    SELECT category_id, c.name, COUNT(*) AS use_count
     FROM (
         SELECT t.category_id
         FROM transactions t
@@ -53,12 +53,35 @@ $topCatsByPayeeStmt = $conn->prepare("
     JOIN categories c ON c.id = usage_data.category_id
     WHERE c.type IN ('expense', 'income')
     GROUP BY category_id, c.name
-    ORDER BY COUNT(*) DESC, c.name
+    ORDER BY use_count DESC, c.name
     LIMIT 5
 ");
 
-$topCatsByDescriptionStmt = $conn->prepare("
-    SELECT category_id, c.name
+$topCatsByExactDescriptionStmt = $conn->prepare("
+    SELECT category_id, c.name, COUNT(*) AS use_count
+    FROM (
+        SELECT t.category_id
+        FROM transactions t
+        LEFT JOIN transaction_splits ts ON ts.transaction_id = t.id
+        WHERE ts.id IS NULL
+          AND t.description = ?
+
+        UNION ALL
+
+        SELECT ts.category_id
+        FROM transactions t
+        JOIN transaction_splits ts ON ts.transaction_id = t.id
+        WHERE t.description = ?
+    ) usage_data
+    JOIN categories c ON c.id = usage_data.category_id
+    WHERE c.type IN ('expense', 'income')
+    GROUP BY category_id, c.name
+    ORDER BY use_count DESC, c.name
+    LIMIT 5
+");
+
+$topCatsByLikeDescriptionStmt = $conn->prepare("
+    SELECT category_id, c.name, COUNT(*) AS use_count
     FROM (
         SELECT t.category_id
         FROM transactions t
@@ -76,49 +99,115 @@ $topCatsByDescriptionStmt = $conn->prepare("
     JOIN categories c ON c.id = usage_data.category_id
     WHERE c.type IN ('expense', 'income')
     GROUP BY category_id, c.name
-    ORDER BY COUNT(*) DESC, c.name
+    ORDER BY use_count DESC, c.name
     LIMIT 10
 ");
 
-function get_top_categories_for_review(PDOStatement $topCatsByPayeeStmt, PDOStatement $topCatsByDescriptionStmt, string $description, ?int $payeeId): array
+function add_review_suggestions(array &$suggestions, array &$seen, array $rows, string $sourceLabel, int $limit = 5): void
 {
+    foreach ($rows as $row) {
+        $catId = (int)$row['category_id'];
+        if (isset($seen[$catId])) {
+            continue;
+        }
+
+        $seen[$catId] = true;
+        $row['source_label'] = $sourceLabel;
+        $suggestions[] = $row;
+
+        if (count($suggestions) >= $limit) {
+            break;
+        }
+    }
+}
+
+function get_top_categories_for_review(
+    PDOStatement $topCatsByPayeeStmt,
+    PDOStatement $topCatsByExactDescriptionStmt,
+    PDOStatement $topCatsByLikeDescriptionStmt,
+    string $description,
+    ?int $payeeId
+): array {
     $suggestions = [];
     $seen = [];
 
     if ($payeeId) {
         $topCatsByPayeeStmt->execute([$payeeId, $payeeId]);
-        foreach ($topCatsByPayeeStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $catId = (int)$row['category_id'];
-            if (!isset($seen[$catId])) {
-                $seen[$catId] = true;
-                $suggestions[] = $row;
-            }
-        }
+        add_review_suggestions($suggestions, $seen, $topCatsByPayeeStmt->fetchAll(PDO::FETCH_ASSOC), 'Payee history');
+    }
+
+    if (count($suggestions) < 5 && trim($description) !== '') {
+        $topCatsByExactDescriptionStmt->execute([$description, $description]);
+        add_review_suggestions($suggestions, $seen, $topCatsByExactDescriptionStmt->fetchAll(PDO::FETCH_ASSOC), 'Exact description');
     }
 
     if (count($suggestions) < 5 && trim($description) !== '') {
         $descPattern = '%' . $description . '%';
-        $topCatsByDescriptionStmt->execute([$descPattern, $descPattern]);
-        foreach ($topCatsByDescriptionStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $catId = (int)$row['category_id'];
-            if (!isset($seen[$catId])) {
-                $seen[$catId] = true;
-                $suggestions[] = $row;
-                if (count($suggestions) >= 5) {
-                    break;
-                }
-            }
-        }
+        $topCatsByLikeDescriptionStmt->execute([$descPattern, $descPattern]);
+        add_review_suggestions($suggestions, $seen, $topCatsByLikeDescriptionStmt->fetchAll(PDO::FETCH_ASSOC), 'Description history');
     }
 
-    return $suggestions;
+    return array_slice($suggestions, 0, 5);
 }
 
-// Categorize transactions and attach top categories
+function render_category_options(array $allCategories, array $topCategories, ?int $selectedCategoryId = null): string
+{
+    $html = '';
+
+    if (!empty($topCategories)) {
+        $html .= '<optgroup label="Suggested Categories">';
+        foreach ($topCategories as $cat) {
+            $catId = (int)$cat['category_id'];
+            $selected = ($selectedCategoryId === $catId) ? ' selected' : '';
+            $label = htmlspecialchars($cat['name']);
+            $meta = htmlspecialchars($cat['source_label'] . ' • ' . (int)$cat['use_count'] . ' use' . ((int)$cat['use_count'] !== 1 ? 's' : ''));
+            $html .= "<option value=\"{$catId}\"{$selected}>{$label} — {$meta}</option>";
+        }
+        $html .= '</optgroup>';
+    }
+
+    $alreadySuggested = array_map(fn($c) => (int)$c['category_id'], $topCategories);
+    $lastType = null;
+
+    foreach ($allCategories as $cat) {
+        if ((int)$cat['id'] === 197) {
+            continue;
+        }
+
+        if ($cat['type'] !== $lastType) {
+            if ($lastType !== null) {
+                $html .= '</optgroup>';
+            }
+            $html .= '<optgroup label="' . ucfirst($cat['type']) . ' Categories">';
+            $lastType = $cat['type'];
+        }
+
+        if (in_array((int)$cat['id'], $alreadySuggested, true)) {
+            continue;
+        }
+
+        $indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
+        $selected = ($selectedCategoryId === (int)$cat['id']) ? ' selected' : '';
+        $label = $indent . htmlspecialchars($cat['name']);
+        $html .= "<option value=\"{$cat['id']}\"{$selected}>{$label}</option>";
+    }
+
+    if ($lastType !== null) {
+        $html .= '</optgroup>';
+    }
+
+    return $html;
+}
+
+// Categorize transactions and attach suggestions
 $grouped = ['all' => [], 'new' => [], 'fulfills_prediction' => [], 'potential_duplicate' => []];
 
 foreach ($rows as $row) {
     $row['top_categories'] = [];
+    $row['matched_payee_id'] = null;
+    $row['matched_payee_name'] = null;
+    $row['matched_payee_pattern'] = null;
+    $row['suggested_category_id'] = null;
 
     if ($row['status'] === 'new') {
         $bestPayeeMatch = resolve_best_payee_match($conn, (string)($row['description'] ?? ''));
@@ -130,15 +219,22 @@ foreach ($rows as $row) {
 
         $row['top_categories'] = get_top_categories_for_review(
             $topCatsByPayeeStmt,
-            $topCatsByDescriptionStmt,
+            $topCatsByExactDescriptionStmt,
+            $topCatsByLikeDescriptionStmt,
             (string)($row['description'] ?? ''),
             $payeeId
         );
+
+        if (!empty($row['top_categories'])) {
+            $row['suggested_category_id'] = (int)$row['top_categories'][0]['category_id'];
+        }
     }
 
     $grouped['all'][] = $row;
     $grouped[$row['status']][] = $row;
 }
+
+include '../layout/header.php';
 ?>
 
 <h1>Review Staging Transactions</h1>
@@ -172,7 +268,7 @@ foreach ($rows as $row) {
                         <td><?= htmlspecialchars($row['date']) ?></td>
                         <td><?= htmlspecialchars($row['account_name']) ?></td>
                         <td><?= htmlspecialchars($row['description']) ?></td>
-                        <td><?= number_format($row['amount'], 2) ?></td>
+                        <td><?= number_format((float)$row['amount'], 2) ?></td>
                         <td><?= htmlspecialchars(ucwords(str_replace('_', ' ', $row['status']))) ?></td>
                         <td>
                             <?php if ($row['status'] === 'fulfills_prediction'): ?>
@@ -180,12 +276,13 @@ foreach ($rows as $row) {
                                     <input type="hidden" name="action" value="fulfill_prediction">
                                     <input type="hidden" name="staging_transaction_id" value="<?= $row['id'] ?>">
                                     <input type="hidden" name="predicted_instance_id" value="<?= $row['predicted_instance_id'] ?>">
-                                    <p class="note">⚡ Predicted: <?= htmlspecialchars($row['predicted_description']) ?> (<?= $row['scheduled_date'] ?>, £<?= number_format($row['predicted_amount'], 2) ?>)</p>
+                                    <p class="note">⚡ Predicted: <?= htmlspecialchars($row['predicted_description']) ?> (<?= $row['scheduled_date'] ?>, £<?= number_format((float)$row['predicted_amount'], 2) ?>)</p>
                                     <div class="actions">
                                         <button type="submit">Confirm Match</button>
                                         <button type="submit" name="action" value="reject_prediction">Not a Match</button>
                                     </div>
                                 </form>
+
                             <?php elseif ($row['status'] === 'potential_duplicate'): ?>
                                 <form method="post" action="review_actions.php">
                                     <input type="hidden" name="staging_transaction_id" value="<?= $row['id'] ?>">
@@ -196,114 +293,133 @@ foreach ($rows as $row) {
                                         <button type="submit" name="action" value="reject_duplicate">Not a Duplicate</button>
                                     </div>
                                 </form>
+
                             <?php elseif ($row['status'] === 'new'): ?>
                                 <form method="post" action="review_actions.php">
                                     <input type="hidden" name="staging_transaction_id" value="<?= $row['id'] ?>">
 
-                                    <!-- Category Dropdown -->
+                                    <?php if ($row['matched_payee_name']): ?>
+                                        <p class="note">
+                                            🏷️ Matched payee: <strong><?= htmlspecialchars($row['matched_payee_name']) ?></strong>
+                                            via pattern <code><?= htmlspecialchars($row['matched_payee_pattern']) ?></code>
+                                        </p>
+                                    <?php else: ?>
+                                        <p class="note">🏷️ No payee pattern matched this description.</p>
+                                    <?php endif; ?>
 
-									<label>Category:
-										<select name="category_id" class="category-select" data-parent-id="<?= $row['id'] ?>">
-											<?php if (isset($row['top_categories']) && is_array($row['top_categories']) && count($row['top_categories']) > 0): ?>
-												<optgroup label="Suggested Categories">
-												<?php foreach ($row['top_categories'] as $cat): ?>
-													<option value="<?= $cat['category_id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-												<?php endforeach; ?>
-												</optgroup>
-											<?php endif; ?>
+                                    <?php if (!empty($row['top_categories'])): ?>
+                                        <div style="margin-bottom: 8px;">
+                                            <div class="note" style="margin-bottom: 4px;">Suggested categories:</div>
+                                            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                                <?php foreach ($row['top_categories'] as $cat): ?>
+                                                    <button
+                                                        type="button"
+                                                        class="quick-category btn btn-sm btn-outline-success"
+                                                        data-category="<?= (int)$cat['category_id'] ?>"
+                                                        title="<?= htmlspecialchars($cat['source_label'] . ' • ' . (int)$cat['use_count'] . ' use' . ((int)$cat['use_count'] !== 1 ? 's' : '')) ?>"
+                                                    >
+                                                        <?= htmlspecialchars($cat['name']) ?>
+                                                    </button>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        </div>
+                                    <?php else: ?>
+                                        <p class="note">No category suggestions found from payee or description history.</p>
+                                    <?php endif; ?>
 
-											<?php
-											$lastType = null;
-											foreach ($allCategories as $cat):
-												if ($cat['type'] !== $lastType):
-													if ($lastType !== null) echo "</optgroup>";
-													echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
-													$lastType = $cat['type'];
-												endif;
+                                    <label>
+                                        Category:
+                                        <select
+                                            name="category_id"
+                                            class="category-select"
+                                            data-parent-id="<?= $row['id'] ?>"
+                                            required
+                                        >
+                                            <?php if (empty($row['top_categories'])): ?>
+                                                <option value="" selected>-- Choose Category --</option>
+                                            <?php endif; ?>
 
-												$indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
-												
-												$alreadySuggested = isset($row['top_categories']) && is_array($row['top_categories']) ? array_column($row['top_categories'], 'category_id') : [];
-												if (!in_array($cat['id'], $alreadySuggested)):
-											?>
-												<option value="<?= $cat['id'] ?>"><?= $indent . htmlspecialchars($cat['name']) ?></option>
-											<?php
-												endif;
-											endforeach;
-											echo "</optgroup>";
-											?>
-											<option value="197">-- Split/Multiple Categories --</option>
-											<option value="-1">-- Mark as Transfer --</option>
-										</select>
-									</label>
+                                            <?= render_category_options(
+                                                $allCategories,
+                                                $row['top_categories'],
+                                                $row['suggested_category_id'] ? (int)$row['suggested_category_id'] : null
+                                            ) ?>
 
-									<!-- 🔁 Transfer Pair Dropdown (shown only if category = -1) -->
-									<div class="transfer-section" style="display: none; margin-top: 10px;">
-										<label>
-											Select Counterparty:
-											<select name="transfer_target">
-												<?php
-												$this_amount = (float)$row['amount'];
-												$opposite_amount = -1 * $this_amount;
-												$target_date = $row['date'];
-												$start_date = (new DateTime($target_date))->modify('-3 days')->format('Y-m-d');
-												$end_date = (new DateTime($target_date))->modify('+3 days')->format('Y-m-d');
+                                            <option value="197">-- Split/Multiple Categories --</option>
+                                            <option value="-1">-- Mark as Transfer --</option>
+                                        </select>
+                                    </label>
 
-												// Candidate staging rows
-												$candidates = $conn->prepare("
-													SELECT id, description, date, amount
-													FROM staging_transactions
-													WHERE id != ? 
-													  AND ABS(amount - ?) < 0.01 
-													  AND date BETWEEN ? AND ?
-												");
-												$candidates->execute([$row['id'], $opposite_amount, $start_date, $end_date]);
-												$candidates_list = $candidates->fetchAll(PDO::FETCH_ASSOC);
-												$candidates_count = count($candidates_list);
-												foreach ($candidates_list as $match) {
-													echo "<option value=\"staging_{$match['id']}\">[STAGING] {$match['description']} ({$match['date']}, {$match['amount']})</option>";
-												}
+                                    <?php if (!empty($row['top_categories'])): ?>
+                                        <p class="note">Top suggestion preselected. You can override it or use split/transfer instead.</p>
+                                    <?php endif; ?>
 
-												// Placeholder transactions (FIXED: fetch once, reuse)
-												$placeholders = $conn->prepare("
-													SELECT id, account_id, date, amount 
-													FROM transactions 
-													WHERE description = 'PLACEHOLDER' 
-													  AND ABS(amount - ?) < 0.01 
-													  AND date BETWEEN ? AND ?
-												");
-												$placeholders->execute([$opposite_amount, $start_date, $end_date]);
-												$placeholders_list = $placeholders->fetchAll(PDO::FETCH_ASSOC);
-												$placeholders_count = count($placeholders_list);
+                                    <!-- Transfer Pair Dropdown -->
+                                    <div class="transfer-section" style="display: none; margin-top: 10px;">
+                                        <label>
+                                            Select Counterparty:
+                                            <select name="transfer_target" disabled>
+                                                <?php
+                                                $this_amount = (float)$row['amount'];
+                                                $opposite_amount = -1 * $this_amount;
+                                                $target_date = $row['date'];
+                                                $start_date = (new DateTime($target_date))->modify('-3 days')->format('Y-m-d');
+                                                $end_date = (new DateTime($target_date))->modify('+3 days')->format('Y-m-d');
 
-												foreach ($placeholders_list as $match) {
-													echo "<option value=\"existing_{$match['id']}\">[PLACEHOLDER] Account {$match['account_id']} ({$match['date']}, {$match['amount']})</option>";
-												}
+                                                $candidates = $conn->prepare("
+                                                    SELECT id, description, date, amount
+                                                    FROM staging_transactions
+                                                    WHERE id != ?
+                                                      AND ABS(amount - ?) < 0.01
+                                                      AND date BETWEEN ? AND ?
+                                                ");
+                                                $candidates->execute([$row['id'], $opposite_amount, $start_date, $end_date]);
+                                                $candidates_list = $candidates->fetchAll(PDO::FETCH_ASSOC);
+                                                $candidates_count = count($candidates_list);
 
-												if ($candidates_count === 0 && $placeholders_count === 0) {
-													echo "<option value=''>--Choose Transfer Type--</option>";
-												}
-												echo "<option value=\"one_sided\">Counterparty Not Yet Uploaded</option>";
-												?>
-											</select>
-										</label>
-									</div>
-									<!-- 🔗 Linked account selection (only if one_sided is selected) -->
-									<div class="linked-account-section" style="display: none; margin-top: 10px;">
-										<label>
-											Placeholder Account:
-											<select name="linked_account_id" disabled>
-												<?php
-												$acctStmt = $conn->prepare("SELECT id, name FROM accounts WHERE id != ? and active=1");
-												$acctStmt->execute([$row['account_id']]);
-												foreach ($acctStmt->fetchAll(PDO::FETCH_ASSOC) as $acct) {
-													echo "<option value=\"{$acct['id']}\">{$acct['name']}</option>";
-												}
-												?>
-											</select>
-										</label>
-									</div>
+                                                foreach ($candidates_list as $match) {
+                                                    echo "<option value=\"staging_{$match['id']}\">[STAGING] {$match['description']} ({$match['date']}, {$match['amount']})</option>";
+                                                }
 
+                                                $placeholders = $conn->prepare("
+                                                    SELECT id, account_id, date, amount
+                                                    FROM transactions
+                                                    WHERE description = 'PLACEHOLDER'
+                                                      AND ABS(amount - ?) < 0.01
+                                                      AND date BETWEEN ? AND ?
+                                                ");
+                                                $placeholders->execute([$opposite_amount, $start_date, $end_date]);
+                                                $placeholders_list = $placeholders->fetchAll(PDO::FETCH_ASSOC);
+                                                $placeholders_count = count($placeholders_list);
+
+                                                foreach ($placeholders_list as $match) {
+                                                    echo "<option value=\"existing_{$match['id']}\">[PLACEHOLDER] Account {$match['account_id']} ({$match['date']}, {$match['amount']})</option>";
+                                                }
+
+                                                if ($candidates_count === 0 && $placeholders_count === 0) {
+                                                    echo "<option value=''>--Choose Transfer Type--</option>";
+                                                }
+
+                                                echo "<option value=\"one_sided\">Counterparty Not Yet Uploaded</option>";
+                                                ?>
+                                            </select>
+                                        </label>
+                                    </div>
+
+                                    <div class="linked-account-section" style="display: none; margin-top: 10px;">
+                                        <label>
+                                            Placeholder Account:
+                                            <select name="linked_account_id" disabled>
+                                                <?php
+                                                $acctStmt = $conn->prepare("SELECT id, name FROM accounts WHERE id != ? AND active = 1");
+                                                $acctStmt->execute([$row['account_id']]);
+                                                foreach ($acctStmt->fetchAll(PDO::FETCH_ASSOC) as $acct) {
+                                                    echo "<option value=\"{$acct['id']}\">{$acct['name']}</option>";
+                                                }
+                                                ?>
+                                            </select>
+                                        </label>
+                                    </div>
 
                                     <!-- Split Table -->
                                     <div class="split-section" style="display: none;">
@@ -318,38 +434,17 @@ foreach ($rows as $row) {
                                             <tbody>
                                                 <tr>
                                                     <td>
-														<select name="split_categories[]">
-															<?php if (!empty($row['top_categories'])): ?>
-																<optgroup label="Suggested Categories">
-																<?php foreach ($row['top_categories'] as $cat): ?>
-																	<?php if ($cat['category_id'] != 197): ?>
-																		<option value="<?= $cat['category_id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-																	<?php endif; ?>
-																<?php endforeach; ?>
-																</optgroup>
-															<?php endif; ?>
+                                                        <select name="split_categories[]" required>
+                                                            <?php if (empty($row['top_categories'])): ?>
+                                                                <option value="" selected>-- Choose Category --</option>
+                                                            <?php endif; ?>
 
-															<?php
-															$lastType = null;
-															foreach ($allCategories as $cat):
-																if ($cat['id'] == 197) continue;
-																if ($cat['type'] !== $lastType):
-																	if ($lastType !== null) echo "</optgroup>";
-																	echo "<optgroup label=\"" . ucfirst($cat['type']) . " Categories\">";
-																	$lastType = $cat['type'];
-																endif;
-
-																$alreadySuggested = isset($row['top_categories']) && is_array($row['top_categories']) ? array_column($row['top_categories'], 'category_id') : [];
-																if (!in_array($cat['id'], $alreadySuggested)):
-																	$indent = $cat['parent_id'] ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '';
-															?>
-																	<option value="<?= $cat['id'] ?>"><?= $indent . htmlspecialchars($cat['name']) ?></option>
-															<?php
-																endif;
-															endforeach;
-															echo "</optgroup>";
-															?>
-														</select>
+                                                            <?= render_category_options(
+                                                                $allCategories,
+                                                                $row['top_categories'],
+                                                                $row['suggested_category_id'] ? (int)$row['suggested_category_id'] : null
+                                                            ) ?>
+                                                        </select>
                                                     </td>
                                                     <td><input type="number" step="0.01" name="split_amounts[]" required></td>
                                                     <td><button type="button" class="remove-split">−</button></td>
@@ -357,10 +452,10 @@ foreach ($rows as $row) {
                                             </tbody>
                                         </table>
                                         <button type="button" class="add-split">+ Add Split</button>
-                                        <p class="split-warning" style="color: red; display: none;">⚠️ Split amounts must match total (<?= number_format($row['amount'], 2) ?>)</p>
+                                        <p class="split-warning" style="color: red; display: none;">⚠️ Split amounts must match total (<?= number_format((float)$row['amount'], 2) ?>)</p>
                                     </div>
 
-                                    <div class="actions">
+                                    <div class="actions" style="margin-top: 10px;">
                                         <button type="submit" name="action" value="categorise">Approve</button>
                                         <button type="submit" name="action" value="delete_staging">Delete</button>
                                     </div>
@@ -376,12 +471,12 @@ foreach ($rows as $row) {
 <?php endforeach; ?>
 
 <?php else: ?>
-            <p>No transactions found in any category.</p>
+    <p>No transactions found in any category.</p>
 <?php endif; ?>
 
 <script>
 function toggleSplitSection(select) {
-    const selected = parseInt($(select).val());
+    const selected = parseInt($(select).val(), 10);
     const form = $(select).closest('form');
     const split = form.find('.split-section');
     const transfer = form.find('.transfer-section');
@@ -394,8 +489,6 @@ function toggleSplitSection(select) {
     } else if (selected === -1) {
         transfer.show().find('select').prop('disabled', false);
         split.hide().find('input, select').prop('disabled', true);
-
-        // Trigger downstream logic on page load
         form.find('select[name="transfer_target"]').trigger('change');
     } else {
         split.hide().find('input, select').prop('disabled', true);
@@ -407,7 +500,6 @@ function toggleSplitSection(select) {
 $(function () {
     const tabKey = 'review_active_tab';
 
-    // Tab switching
     $('.tab-btn').click(function () {
         const tab = $(this).data('tab');
         localStorage.setItem(tabKey, tab);
@@ -417,14 +509,12 @@ $(function () {
         $('#tab-' + tab).addClass('active');
     });
 
-    // Explicitly activate the saved tab on page load (no reliance on .click())
     const savedTab = localStorage.getItem(tabKey) || 'all';
     $('.tab-btn').removeClass('active');
     $('.tab-btn[data-tab="' + savedTab + '"]').addClass('active');
     $('.tab-content').removeClass('active');
     $('#tab-' + savedTab).addClass('active');
 
-    // Initial toggle of split/transfer UI
     $('.category-select').each(function () {
         toggleSplitSection(this);
     });
@@ -433,7 +523,12 @@ $(function () {
         toggleSplitSection(this);
     });
 
-    // Transfer target dropdown triggers linked account visibility
+    $(document).on('click', '.quick-category', function () {
+        const form = $(this).closest('form');
+        const categoryId = $(this).data('category');
+        form.find('.category-select').val(String(categoryId)).trigger('change');
+    });
+
     $(document).on('change', 'select[name="transfer_target"]', function () {
         const form = $(this).closest('form');
         const wrapper = form.find('.linked-account-section');
@@ -448,12 +543,10 @@ $(function () {
         }
     });
 
-    // Ensure it triggers on load too
     $('select[name="transfer_target"]').each(function () {
         $(this).trigger('change');
     });
 
-    // Split logic
     $('.add-split').click(function () {
         const table = $(this).siblings('table.split-table');
         const row = table.find('tbody tr:first').clone();
