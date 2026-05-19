@@ -93,6 +93,28 @@ CREATE TABLE `earmarks` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `email_runs`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `email_runs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `job_name` varchar(100) NOT NULL,
+  `run_mode` enum('live','dry_run') NOT NULL DEFAULT 'live',
+  `status` enum('running','success','failed') NOT NULL DEFAULT 'running',
+  `effective_date` date DEFAULT NULL,
+  `summary_period_start` date DEFAULT NULL,
+  `summary_period_end` date DEFAULT NULL,
+  `recipients` text,
+  `subject` varchar(255) DEFAULT NULL,
+  `error_message` text,
+  `started_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `finished_at` datetime DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_email_runs_job_started` (`job_name`,`started_at`),
+  KEY `idx_email_runs_status_started` (`status`,`started_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `forecast_timeline_view`;
 /*!50001 DROP VIEW IF EXISTS `forecast_timeline_view`*/;
 SET @saved_cs_client     = @@character_set_client;
@@ -204,7 +226,7 @@ CREATE TABLE `payee_patterns` (
   UNIQUE KEY `payee_id` (`payee_id`,`match_pattern`),
   KEY `idx_payee_patterns_priority` (`priority`,`payee_id`),
   CONSTRAINT `payee_patterns_ibfk_1` FOREIGN KEY (`payee_id`) REFERENCES `payees` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=100 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=108 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payees`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -214,7 +236,7 @@ CREATE TABLE `payees` (
   `name` varchar(100) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=81 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=83 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `planned_income_events`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

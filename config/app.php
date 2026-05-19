@@ -44,6 +44,20 @@ if (!isset($APP_CONFIG) || !is_array($APP_CONFIG)) {
             'file' => 'app.log',
         ],
 
+        // Weekly email digest configuration (non-secret)
+        'weekly_email' => [
+            'enabled' => true,
+            'recipients' => [
+                'john@moorey.uk.com',
+                'india@moorey.uk.com',
+                'indiamo@amazon.co.uk',
+            ],
+            'from_name' => 'Home Finances',
+            'from_address' => 'no-reply@moorey.uk.com',
+            'subject' => 'Weekly Budget Summary – Variable Expenses',
+            'lock_name' => 'finance:weekly_email_summary',
+        ],
+
         // Feature flags for phased deployment later
         'features' => [
             // Reserved for later backlog items — default OFF unless already live behaviour.

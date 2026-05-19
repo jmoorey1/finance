@@ -1,194 +1,121 @@
 <?php
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/lib/finance_periods.php';
+require_once __DIR__ . '/lib/weekly_summary_builder.php';
+require_once __DIR__ . '/lib/mailer.php';
+require_once __DIR__ . '/lib/email_run_logger.php';
 
-// Email Recipients
-//$to = 'john@moorey.uk.com';
-$to = 'john@moorey.uk.com, india@moorey.uk.com, indiamo@amazon.co.uk';
-
-$subject = 'Weekly Budget Summary – Variable Expenses';
-$headers = "MIME-Version: 1.0\r\n";
-$headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-$headers .= "From: Home Finaces <no-reply@moorey.uk.com>\r\n";
-
-// Current financial month
-$today = new DateTime();
-$monthOffset = ((int)$today->format('d') < 13) ? -1 : 0;
-$inputMonth = (clone $today)->modify("$monthOffset month");
-$start_month = new DateTime($inputMonth->format('Y-m-13'));
-$end_month = (clone $start_month)->modify('+1 month')->modify('-1 day');
-
-// YTD range
-$year = $inputMonth->format('Y');
-$start_ytd = new DateTime("$year-01-13");
-
-// Get variable expense categories
-$categories = [];
-$stmt = $pdo->query("
-    SELECT id, name FROM categories
-    WHERE type = 'expense' AND fixedness = 'variable' AND parent_id IS NULL
-    ORDER BY budget_order
-");
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $categories[$row['id']] = $row['name'];
+if (!is_cli_request()) {
+    http_response_code(403);
+    echo "This script is CLI-only.\n";
+    exit(1);
 }
 
-$priorities = [];
-$stmt = $pdo->query("
-    SELECT id, priority FROM categories
-    WHERE type = 'expense' AND fixedness = 'variable' AND parent_id IS NULL
-");
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $priorities[$row['id']] = $row['priority'];
+function weekly_email_acquire_lock(PDO $pdo, string $lockName): bool
+{
+    $stmt = $pdo->prepare("SELECT GET_LOCK(?, 0)");
+    $stmt->execute([$lockName]);
+    return (int)$stmt->fetchColumn() === 1;
 }
 
-
-// Load budgets
-function load_budgets($pdo, $start, $end) {
-    $budgets = [];
-    $stmt = $pdo->prepare("
-        SELECT category_id, SUM(amount) AS total
-        FROM budgets
-        WHERE month_start BETWEEN ? AND ?
-        GROUP BY category_id
-    ");
-    $stmt->execute([$start->format('Y-m-d'), $end->format('Y-m-d')]);
-    foreach ($stmt as $row) {
-        $budgets[$row['category_id']] = floatval($row['total']);
+function weekly_email_release_lock(PDO $pdo, string $lockName): void
+{
+    try {
+        $stmt = $pdo->prepare("SELECT RELEASE_LOCK(?)");
+        $stmt->execute([$lockName]);
+    } catch (Throwable $e) {
+        // Do not mask the main job result with lock-release issues.
     }
-    return $budgets;
-}
-$monthly_budget = load_budgets($pdo, $start_month, $end_month);
-$ytd_budget = load_budgets($pdo, $start_ytd, $end_month);
-
-// Load actuals
-function load_actuals($pdo, $start, $end) {
-    $actuals = [];
-    $stmt = $pdo->prepare("
-        SELECT IFNULL(top.id, raw.id) AS top_id, SUM(raw.amount) AS total
-        FROM (
-            SELECT s.amount, c.id FROM transaction_splits s
-            JOIN transactions t ON t.id = s.transaction_id
-            JOIN categories c ON s.category_id = c.id
-            WHERE t.date BETWEEN ? AND ?
-            UNION ALL
-            SELECT t.amount, c.id FROM transactions t
-            JOIN categories c ON t.category_id = c.id
-            LEFT JOIN transaction_splits s ON s.transaction_id = t.id
-            WHERE t.date BETWEEN ? AND ? AND s.id IS NULL
-        ) raw
-        LEFT JOIN categories c2 ON raw.id = c2.id
-        LEFT JOIN categories top ON c2.parent_id = top.id
-        GROUP BY top_id
-    ");
-    $stmt->execute([$start->format('Y-m-d'), $end->format('Y-m-d'), $start->format('Y-m-d'), $end->format('Y-m-d')]);
-    foreach ($stmt as $row) {
-        $actuals[$row['top_id']] = floatval($row['total']);
-    }
-    return $actuals;
 }
 
-$monthly_actual = load_actuals($pdo, $start_month, $end_month);
-$ytd_actual = load_actuals($pdo, $start_ytd, $end_month);
+$options = getopt('', ['dry-run', 'date:', 'to:']);
+$dryRun = array_key_exists('dry-run', $options);
 
-// Load forecast
-function load_forecast($pdo, $start, $end) {
-    $forecast = [];
-    $stmt = $pdo->prepare("
-        SELECT IFNULL(top.id, c.id) AS top_id, SUM(pi.amount) AS total
-        FROM predicted_instances pi
-        JOIN categories c ON pi.category_id = c.id
-        LEFT JOIN categories top ON c.parent_id = top.id
-        WHERE pi.scheduled_date BETWEEN ? AND ?
-          AND COALESCE(pi.fulfilled, 0) = 0
-        GROUP BY top_id
-    ");
-    $stmt->execute([$start->format('Y-m-d'), $end->format('Y-m-d')]);
-    foreach ($stmt as $row) {
-        $forecast[$row['top_id']] = floatval($row['total']);
-    }
-    return $forecast;
+try {
+    $effectiveDate = isset($options['date'])
+        ? new DateTimeImmutable((string)$options['date'])
+        : new DateTimeImmutable('now');
+} catch (Throwable $e) {
+    fwrite(STDERR, "Invalid --date value.\n");
+    exit(1);
 }
-$monthly_forecast = load_forecast($pdo, $today, $end_month);
-$ytd_forecast = load_forecast($pdo, $today, $end_month);
 
-$headlines = require_once __DIR__ . '/../scripts/get_insights.php';
+if (!$dryRun && !app_config('weekly_email.enabled', true)) {
+    echo "Weekly email is disabled in config.\n";
+    exit(0);
+}
 
+$lockName = (string)app_config('weekly_email.lock_name', 'finance:weekly_email_summary');
+if (!weekly_email_acquire_lock($pdo, $lockName)) {
+    app_log('Weekly email skipped because another run already holds the lock.', 'WARNING');
+    fwrite(STDERR, "Weekly email is already running.\n");
+    exit(2);
+}
 
-// Build HTML
-function build_table($label, $categories, $budget, $actual, $forecast, $priorities) {
-    $html = "<h3 style='margin-top:30px; font-family:sans-serif;'>$label</h3>";
-    $html .= "<table cellpadding='6' cellspacing='0' style='border-collapse: collapse; font-family: sans-serif; font-size: 14px; width: 100%;'>";
-    $html .= "<tr style='background:#333; color:#fff;'>
-                <th align='left'>Category</th>
-                <th align='right'>Budget</th>
-                <th align='right'>Actual</th>
-                <th align='right'>Forecast</th>
-                <th align='right'>Variance</th>
-              </tr>";
+$runId = null;
 
-    foreach (['essential' => 'Essential Expenses', 'discretionary' => 'Discretionary Expenses'] as $priority => $labelText) {
-        $section = '';
+try {
+    $configuredRecipients = app_config('weekly_email.recipients', []);
+    $recipients = isset($options['to'])
+        ? normalize_email_recipients((string)$options['to'])
+        : normalize_email_recipients($configuredRecipients);
 
-        foreach ($categories as $id => $name) {
-            if (($priorities[$id] ?? '') !== $priority) continue;
+    $subject = (string)app_config('weekly_email.subject', 'Weekly Budget Summary – Variable Expenses');
+    $fromName = (string)app_config('weekly_email.from_name', 'Home Finances');
+    $fromAddress = (string)app_config('weekly_email.from_address', 'no-reply@moorey.uk.com');
 
-            $b = $budget[$id] ?? 0;
-            $a = -($actual[$id] ?? 0);   // reverse sign for expenses
-            $f = -($forecast[$id] ?? 0);
-            $v = $b - $a - $f;
+    $period = get_weekly_digest_reporting_range($effectiveDate);
 
-            if ($b == 0 && $a == 0 && $f == 0) continue;
+    $runId = email_run_start($pdo, [
+        'job_name' => 'weekly_budget_summary',
+        'run_mode' => $dryRun ? 'dry_run' : 'live',
+        'effective_date' => $effectiveDate->format('Y-m-d'),
+        'summary_period_start' => $period['start']->format('Y-m-d'),
+        'summary_period_end' => $period['end']->format('Y-m-d'),
+        'recipients' => implode(', ', $recipients),
+        'subject' => $subject,
+    ]);
 
-            $color = $v >= 0 ? 'green' : 'red';
-            $section .= "<tr>
-                <td style='border:1px solid #ccc;'>$name</td>
-                <td align='right' style='border:1px solid #ccc;'>£" . number_format($b, 2) . "</td>
-                <td align='right' style='border:1px solid #ccc;'>£" . number_format($a, 2) . "</td>
-                <td align='right' style='border:1px solid #ccc;'>£" . number_format($f, 2) . "</td>
-                <td align='right' style='border:1px solid #ccc; color:$color;'>£" . number_format($v, 2) . "</td>
-            </tr>";
-        }
+    $summary = weekly_summary_build($pdo, $effectiveDate);
+    $htmlBody = weekly_summary_render_html($summary);
+    $textBody = weekly_summary_render_text($summary);
 
-        if ($section !== '') {
-            $html .= "<tr>
-                        <td colspan='5' style='background:#f5f5f5; font-weight:bold;'>$labelText</td>
-                      </tr>";
-            $html .= $section;
-        }
+    if ($dryRun) {
+        echo "DRY RUN — no email sent.\n";
+        echo "To: " . implode(', ', $recipients) . "\n";
+        echo "Subject: {$subject}\n";
+        echo "Period: " . $summary['start_month']->format('Y-m-d') . " to " . $summary['end_month']->format('Y-m-d') . "\n\n";
+        echo $textBody;
+
+        email_run_finish($pdo, $runId, 'success', null);
+        app_log('Weekly summary dry-run completed successfully.', 'INFO');
+        exit(0);
     }
 
-    $html .= "</table>";
-    return $html;
-}
+    send_html_email(
+        $recipients,
+        $subject,
+        $htmlBody,
+        $textBody,
+        $fromName,
+        $fromAddress
+    );
 
-function build_headlines_table($headlines) {
-    if (empty($headlines)) return '';
+    email_run_finish($pdo, $runId, 'success', null);
+    app_log('Weekly summary email sent successfully.', 'INFO');
 
-    $html = "<h3 style='font-family:sans-serif;'>Key Budget Headlines</h3>";
-    $html .= "<table cellpadding='6' cellspacing='0' style='border-collapse: collapse; font-family: sans-serif; font-size: 14px; width: 100%;'>";
-    $html .= "<tr style='background:#333; color:#fff;'>
-                <th align='left'>Considering current and planned spending this financial month</th>
-              </tr>";
-    foreach ($headlines as $line) {
-        $html .= "<tr><td style='border:1px solid #ccc;'>$line</td></tr>";
+    echo "Weekly summary sent successfully.\n";
+    exit(0);
+} catch (Throwable $e) {
+    $message = $e->getMessage();
+
+    if ($runId !== null) {
+        email_run_finish($pdo, $runId, 'failed', $message);
     }
-    $html .= "</table><br>";
-    return $html;
+
+    app_log('Weekly summary failed: ' . $message, 'ERROR');
+    fwrite(STDERR, "Weekly summary failed: {$message}\n");
+    exit(1);
+} finally {
+    weekly_email_release_lock($pdo, $lockName);
 }
-
-
-
-$month_label = $start_month->format('j M') . " – " . $end_month->format('j M');
-$ytd_label = $start_ytd->format('j M') . " – " . $end_month->format('j M Y');
-
-$body = "<h2 style='font-family:sans-serif;'>Weekly Budget Summary</h2>";
-$body .= build_headlines_table($headlines);
-
-$body .= "<p style='font-family:sans-serif;'>This email includes <strong>variable expense categories</strong> only.</p>";
-$body .= build_table("This Month: $month_label", $categories, $monthly_budget, $monthly_actual, $monthly_forecast, $priorities);
-$body .= build_table("Year to Date: $ytd_label", $categories, $ytd_budget, $ytd_actual, $ytd_forecast, $priorities);
-
-
-// Send it
-mail($to, $subject, $body, $headers);
-?>
