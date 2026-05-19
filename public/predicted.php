@@ -280,6 +280,9 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <button type="submit" class="btn btn-sm btn-outline-secondary">↩️ Reopen</button>
                                 </form>
                             <?php else: ?>
+                                <?php if ($date !== '' && $date < $today): ?>
+                                    <a href="predicted_reconcile.php?id=<?= (int)$i['id'] ?>&redirect=<?= urlencode('predicted.php?future_days=' . (int)$futureDays) ?>" class="btn btn-sm btn-outline-primary">🔗 Match to Actual</a>
+                                <?php endif; ?>
                                 <form method="post" action="prediction_action.php" class="d-inline">
                                     <input type="hidden" name="id" value="<?= (int)$i['id'] ?>">
                                     <input type="hidden" name="action" value="skip">

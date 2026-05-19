@@ -211,23 +211,24 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                     $is_late = $today > $scheduled;
                 ?>
                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <form method="post" action="prediction_action.php" class="d-flex justify-content-between w-100">
-                        <input type="hidden" name="id" value="<?= $m['id'] ?>">
-                        <input type="hidden" name="action" value="skip">
-                        <input type="hidden" name="redirect" value="index.php">
-                        <span>
-                            <?= htmlspecialchars($m['scheduled_date']) ?>
-                            <?php if ($is_late): ?>
-                                (<?= $days_late ?> day<?= $days_late !== 1 ? 's' : '' ?> late)
-                            <?php endif; ?>
-                            – <?= htmlspecialchars($m['description'] ?? $m['category']) ?>
-                            (<?= htmlspecialchars($m['acc_name']) ?>)
-                        </span>
-                        <span class="d-flex align-items-center">
-                            £<?= number_format($m['amount'], 2) ?>
-                            <button type="submit" class="btn btn-sm btn-outline-warning ms-2" title="Skip Prediction">⏭️</button>
-                        </span>
-                    </form>
+                    <span>
+                        <?= htmlspecialchars($m['scheduled_date']) ?>
+                        <?php if ($is_late): ?>
+                            (<?= $days_late ?> day<?= $days_late !== 1 ? 's' : '' ?> late)
+                        <?php endif; ?>
+                        – <?= htmlspecialchars($m['description'] ?? $m['category']) ?>
+                        (<?= htmlspecialchars($m['acc_name']) ?>)
+                    </span>
+                    <span class="d-flex align-items-center gap-2">
+                        <span>£<?= number_format($m['amount'], 2) ?></span>
+                        <a href="predicted_reconcile.php?id=<?= (int)$m['id'] ?>&redirect=<?= urlencode('index.php') ?>" class="btn btn-sm btn-outline-primary" title="Match to Actual">🔗</a>
+                        <form method="post" action="prediction_action.php" class="d-inline">
+                            <input type="hidden" name="id" value="<?= $m['id'] ?>">
+                            <input type="hidden" name="action" value="skip">
+                            <input type="hidden" name="redirect" value="index.php">
+                            <button type="submit" class="btn btn-sm btn-outline-warning" title="Skip Prediction">⏭️</button>
+                        </form>
+                    </span>
                 </li>
             <?php endforeach; ?>
         </ul>
