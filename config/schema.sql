@@ -60,6 +60,7 @@ CREATE TABLE `budgets` (
   `capex` tinyint(1) DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `category_id` (`category_id`,`month_start`),
+  KEY `idx_budgets_month_start` (`month_start`),
   CONSTRAINT `budgets_ibfk_1` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=26565 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -114,7 +115,7 @@ CREATE TABLE `import_run_accounts` (
   KEY `idx_import_run_accounts_account` (`account_id`,`created_at`),
   CONSTRAINT `fk_import_run_accounts_account` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_import_run_accounts_run` FOREIGN KEY (`import_run_id`) REFERENCES `import_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `import_runs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -143,7 +144,7 @@ CREATE TABLE `import_runs` (
   KEY `idx_import_runs_status_created` (`status`,`created_at`),
   KEY `idx_import_runs_requested_account` (`requested_account_id`),
   CONSTRAINT `fk_import_runs_requested_account` FOREIGN KEY (`requested_account_id`) REFERENCES `accounts` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `ofx_account_map`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -237,6 +238,8 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_fulfilled_by_tx` (`fulfilled_by_transaction_id`),
   KEY `idx_predicted_instances_fulfilled_by_tg` (`fulfilled_by_transfer_group_id`),
   KEY `idx_predicted_instances_resolution` (`resolution_status`,`fulfilled`,`scheduled_date`),
+  KEY `idx_predicted_instances_from_sched_state` (`from_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
+  KEY `idx_predicted_instances_to_sched_state` (`to_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=90890 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -315,10 +318,11 @@ CREATE TABLE `staging_transactions` (
   `original_memo` text,
   `predicted_instance_id` int DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `account_id` (`account_id`),
   KEY `category_id` (`category_id`),
   KEY `fk_staging_matched_transaction` (`matched_transaction_id`),
   KEY `predicted_instance_id` (`predicted_instance_id`),
+  KEY `idx_staging_account_date_amount` (`account_id`,`date`,`amount`),
+  KEY `idx_staging_status_date` (`status`,`date`),
   CONSTRAINT `fk_staging_matched_transaction` FOREIGN KEY (`matched_transaction_id`) REFERENCES `transactions` (`id`) ON DELETE SET NULL,
   CONSTRAINT `staging_transactions_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `staging_transactions_ibfk_2` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
@@ -340,7 +344,7 @@ CREATE TABLE `statements` (
   `payment_due_date` date DEFAULT NULL,
   `minimum_payment_due` decimal(10,2) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `account_id` (`account_id`),
+  KEY `idx_statements_account_statement_date` (`account_id`,`statement_date`),
   CONSTRAINT `statements_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=127 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -391,11 +395,13 @@ CREATE TABLE `transactions` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `account_id` (`account_id`),
   KEY `fk_transactions_category` (`category_id`),
   KEY `predicted_transaction_id` (`predicted_transaction_id`),
   KEY `idx_statement_id` (`statement_id`),
   KEY `fk_payee` (`payee_id`),
+  KEY `idx_transactions_account_date` (`account_id`,`date`),
+  KEY `idx_transactions_account_amount_date` (`account_id`,`amount`,`date`),
+  KEY `idx_transactions_transfer_group` (`transfer_group_id`),
   CONSTRAINT `fk_payee` FOREIGN KEY (`payee_id`) REFERENCES `payees` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_transactions_category` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`),
