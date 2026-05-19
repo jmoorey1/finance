@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../scripts/payee_matching.php';
 $conn = get_db_connection();
 
 $action = $_POST['action'] ?? '';
@@ -288,11 +289,13 @@ switch ($action) {
                     throw new RuntimeException('Predicted instance is already fully fulfilled.');
                 }
 
+                $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($row['description'] ?? ''));
+
                 $insert = $conn->prepare("
                     INSERT INTO transactions
-                        (account_id, date, description, amount, original_ref, category_id, predicted_transaction_id)
+                        (account_id, date, description, amount, original_ref, category_id, predicted_transaction_id, payee_id)
                     VALUES
-                        (?, ?, ?, ?, ?, ?, ?)
+                        (?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $insert->execute([
                     $row['account_id'],
@@ -301,7 +304,8 @@ switch ($action) {
                     $row['amount'],
                     substr((string) ($row['original_memo'] ?? ''), 0, 100),
                     $row['instance_category_id'] ?? null,
-                    $row['predicted_transaction_id']
+                    $row['predicted_transaction_id'],
+                    $resolved_payee_id
                 ]);
                 $transaction_id = (int) $conn->lastInsertId();
 
@@ -332,7 +336,28 @@ switch ($action) {
     // ----------------------------------------
     case 'confirm_duplicate':
         $matched_id = (int) ($_POST['matched_transaction_id'] ?? 0);
-        $conn->prepare("UPDATE transactions set date=(select date from staging_transactions WHERE id = ? limit 1), description=(select description from staging_transactions where id = ? limit 1) WHERE id = ?")->execute([$staging_id, $staging_id, $matched_id]);
+
+        $dupStmt = $conn->prepare("SELECT date, description FROM staging_transactions WHERE id = ? LIMIT 1");
+        $dupStmt->execute([$staging_id]);
+        $dupRow = $dupStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$dupRow) {
+            die("❌ Staging transaction not found.");
+        }
+
+        $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($dupRow['description'] ?? ''));
+
+        $conn->prepare("
+            UPDATE transactions
+            SET date = ?, description = ?, payee_id = ?
+            WHERE id = ?
+        ")->execute([
+            $dupRow['date'],
+            $dupRow['description'],
+            $resolved_payee_id,
+            $matched_id
+        ]);
+
         $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
         break;
 
@@ -498,9 +523,11 @@ switch ($action) {
 
         // REGULAR categorisation
         if ($category_id !== 197) {
+            $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
+
             $insert = $conn->prepare("
-                INSERT INTO transactions (account_id, date, description, amount, original_ref, category_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO transactions (account_id, date, description, amount, original_ref, category_id, payee_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
             $insert->execute([
                 $staging['account_id'],
@@ -508,7 +535,8 @@ switch ($action) {
                 $staging['description'],
                 $staging['amount'],
                 substr($staging['original_memo'], 0, 100),
-                $category_id
+                $category_id,
+                $resolved_payee_id
             ]);
             $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
             break;
@@ -538,9 +566,11 @@ switch ($action) {
         // Insert parent transaction (with category_id = 197 for split)
         $conn->beginTransaction();
 
+        $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
+
         $insert = $conn->prepare("
-            INSERT INTO transactions (account_id, date, description, amount, original_ref, category_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (account_id, date, description, amount, original_ref, category_id, payee_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ");
         $insert->execute([
             $staging['account_id'],
@@ -548,7 +578,8 @@ switch ($action) {
             $staging['description'],
             $staging['amount'],
             substr($staging['original_memo'], 0, 100),
-            197
+            197,
+            $resolved_payee_id
         ]);
         $transaction_id = $conn->lastInsertId();
 

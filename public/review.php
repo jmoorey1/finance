@@ -1,6 +1,7 @@
 <?php include '../layout/header.php'; ?>
 <?php
 require_once '../config/db.php';
+require_once '../scripts/payee_matching.php';
 $conn = get_db_connection();
 
 // Load full category hierarchy for dropdown rendering
@@ -33,33 +34,85 @@ $stmt->execute();
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Prepare helper queries
-$payeeMatchStmt = $conn->prepare("
-    SELECT payee_id
-    FROM payee_patterns
-    WHERE ? LIKE match_pattern
-    ORDER BY LENGTH(match_pattern) DESC
-    LIMIT 1
-");
-$topCatsStmt = $conn->prepare("
+$topCatsByPayeeStmt = $conn->prepare("
     SELECT category_id, c.name
     FROM (
         SELECT t.category_id
         FROM transactions t
         LEFT JOIN transaction_splits ts ON ts.transaction_id = t.id
-        WHERE ts.id IS NULL AND (t.description LIKE ? OR (? != 0 AND t.payee_id = ?))
+        WHERE ts.id IS NULL
+          AND t.payee_id = ?
+
         UNION ALL
+
         SELECT ts.category_id
         FROM transactions t
         JOIN transaction_splits ts ON ts.transaction_id = t.id
-        WHERE t.description LIKE ? OR (? != 0 AND t.payee_id = ?)
+        WHERE t.payee_id = ?
     ) usage_data
     JOIN categories c ON c.id = usage_data.category_id
     WHERE c.type IN ('expense', 'income')
     GROUP BY category_id, c.name
-    ORDER BY COUNT(*) DESC
+    ORDER BY COUNT(*) DESC, c.name
     LIMIT 5
 ");
 
+$topCatsByDescriptionStmt = $conn->prepare("
+    SELECT category_id, c.name
+    FROM (
+        SELECT t.category_id
+        FROM transactions t
+        LEFT JOIN transaction_splits ts ON ts.transaction_id = t.id
+        WHERE ts.id IS NULL
+          AND t.description LIKE ?
+
+        UNION ALL
+
+        SELECT ts.category_id
+        FROM transactions t
+        JOIN transaction_splits ts ON ts.transaction_id = t.id
+        WHERE t.description LIKE ?
+    ) usage_data
+    JOIN categories c ON c.id = usage_data.category_id
+    WHERE c.type IN ('expense', 'income')
+    GROUP BY category_id, c.name
+    ORDER BY COUNT(*) DESC, c.name
+    LIMIT 10
+");
+
+function get_top_categories_for_review(PDOStatement $topCatsByPayeeStmt, PDOStatement $topCatsByDescriptionStmt, string $description, ?int $payeeId): array
+{
+    $suggestions = [];
+    $seen = [];
+
+    if ($payeeId) {
+        $topCatsByPayeeStmt->execute([$payeeId, $payeeId]);
+        foreach ($topCatsByPayeeStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $catId = (int)$row['category_id'];
+            if (!isset($seen[$catId])) {
+                $seen[$catId] = true;
+                $suggestions[] = $row;
+            }
+        }
+    }
+
+    if (count($suggestions) < 5 && trim($description) !== '') {
+        $descPattern = '%' . $description . '%';
+        $topCatsByDescriptionStmt->execute([$descPattern, $descPattern]);
+        foreach ($topCatsByDescriptionStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $catId = (int)$row['category_id'];
+            if (!isset($seen[$catId])) {
+                $seen[$catId] = true;
+                $suggestions[] = $row;
+                if (count($suggestions) >= 5) {
+                    break;
+                }
+            }
+        }
+    }
+
+    return $suggestions;
+}
 
 // Categorize transactions and attach top categories
 $grouped = ['all' => [], 'new' => [], 'fulfills_prediction' => [], 'potential_duplicate' => []];
@@ -68,17 +121,19 @@ foreach ($rows as $row) {
     $row['top_categories'] = [];
 
     if ($row['status'] === 'new') {
-        $descPattern = '%' . $row['description'] . '%';
-        $desc = $row['description'];
-        $payeeMatchStmt->execute([$desc]);
-        $payee_id = (int) ($payeeMatchStmt->fetchColumn() ?? 0);
+        $bestPayeeMatch = resolve_best_payee_match($conn, (string)($row['description'] ?? ''));
+        $payeeId = $bestPayeeMatch ? (int)$bestPayeeMatch['payee_id'] : null;
 
-        $topCatsStmt->execute([
-            $descPattern, $payee_id, $payee_id,
-            $descPattern, $payee_id, $payee_id
-        ]);
+        $row['matched_payee_id'] = $payeeId;
+        $row['matched_payee_name'] = $bestPayeeMatch['payee_name'] ?? null;
+        $row['matched_payee_pattern'] = $bestPayeeMatch['match_pattern'] ?? null;
 
-        $row['top_categories'] = $topCatsStmt->fetchAll(PDO::FETCH_ASSOC);
+        $row['top_categories'] = get_top_categories_for_review(
+            $topCatsByPayeeStmt,
+            $topCatsByDescriptionStmt,
+            (string)($row['description'] ?? ''),
+            $payeeId
+        );
     }
 
     $grouped['all'][] = $row;

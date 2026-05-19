@@ -6,7 +6,7 @@ config/db.php
 *.log
 .env
 */__pycache__/*
-
+/migrations/*
 
 !/uploads/.gitkeep
 config/config.php
