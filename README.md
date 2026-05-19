@@ -1,105 +1,100 @@
 # 🏡 Household Finance System
 
-An advanced personal finance manager built in **PHP**, **MySQL**, and **Python**, designed to track income, expenses, budgets, cash flow, savings earmarks, and credit card repayments, all while supporting detailed reconciliation and forecasting.
+An advanced personal finance manager built in **PHP**, **MySQL**, and **Python**, designed to track income, expenses, budgets, cash flow, earmarked savings, credit card repayments, and forward-looking liquidity across the year.
+
+The system is built around one core idea: **the database is the source of truth**, and the application should help turn day-to-day transaction history into a reliable view of what is happening next.
 
 ---
 
 ## 🚀 Core Features
 
 ### ✅ Accounts Management
-- Current, Savings, Credit Card, Investment, and House account types supported.
-- Starting balances, statement dates, and payment days configurable.
+- Current, savings, credit card, investment, and house account types supported.
+- Starting balances configurable for historical continuity.
+- Credit accounts support statement dates, payment dates, and paid-from account relationships.
+- Active/inactive accounts supported for cleaner operational views.
 
-### 💳 Transactions
-- Manual entry or automatic OFX/CSV file uploads.
-- Split transactions across multiple categories.
-- Intelligent duplicate detection and transfer matching.
-- Support for one-sided transfers and PLACEHOLDER reconciliation.
+### 💳 Transaction Ingestion & Review
+- Manual transaction entry supported.
+- CSV and OFX import pipeline with structured staging and review.
+- Exact duplicate suppression for repeated imports.
+- Potential duplicate detection for near-matches that still need judgement.
+- CSV parser repair logic for malformed merchant fields containing commas.
+- Import runs are logged, so recent uploads and account freshness are visible.
 
-### 🔮 Predicted Transactions
-- Fixed or variable recurring transactions.
-- Weekly, monthly, or custom recurrence intervals.
-- Auto-calculated average values for variable entries.
-- Automatic prediction of credit card repayments.
-- Confirmed predictions are frozen from overwrite.
+### 🧾 Review & Reconciliation Workflow
+- Staged transactions are separated into new items, duplicates, and predicted matches.
+- Review flow supports categorisation, deletion, transfer handling, and split transactions.
+- One-sided transfers can create PLACEHOLDER entries for later reconciliation.
+- Predicted transactions can be matched retrospectively when the automatic match misses.
+- Statement reconciliation supports credit card statement tracking and repayment confirmation.
 
-### 📊 Budgeting
+### 🏷️ Payees & Matching
+- Dedicated payee management page.
+- Payee patterns can be created, edited, prioritised, and tested.
+- Best-match logic supports more reliable payee assignment from imported descriptions.
+- Payee matching now feeds smarter category suggestions in the review process.
+
+### 🔮 Predicted Transactions & Forecasting
+- Recurring predicted transactions supported across fixed and flexible patterns.
+- Weekly, monthly, and custom recurrence logic supported.
+- Prediction instances generated into the future and protected against accidental duplication.
+- Automatic credit card repayment prediction based on statements and spend behaviour.
+- Missed predictions can be reviewed, resolved, or matched after the fact.
+- Predicted transactions have their own management UI rather than living only in the database.
+
+### 📊 Budgeting & Insights
 - Monthly budgets by top-level category.
-- Dashboard with variance tracking (budget vs actual vs forecast).
-- Forecast column integrated into budget views.
-- YTD tracking included.
+- Actuals, forecast, and variance views across both current month and YTD reporting.
+- Separate insights page for overspend, utilisation, discretionary concentration, and vendor trends.
+- Budget headlines used by the weekly summary and wider reporting surfaces.
 
-### 📒 Ledger Viewer
-- Search by account, date, parent category, or subcategory.
-- Displays both actual and predicted transactions.
-- Linked directly from dashboard actuals for drilldown.
+### 📒 Ledger & Reporting
+- Canonical ledger-line model now underpins ledger and category reporting.
+- Ledger view supports filtering by account, date range, parent category, project, earmark, and description.
+- Category and subcategory reports show both historic actuals and forward-looking predicted items where relevant.
+- Split transactions are represented correctly at line level rather than double-counting the parent entry.
 
-### 💼 Project Fund Forecasting
-- Tracks discretionary fund available for non-essential projects.
-- Accounts for earmarked savings and solvency fund.
-- Forecasts when funds become available across the year.
+### 💼 Project Fund, Solvency & Cash Planning
+- Project fund view models discretionary funds available after protected reserves and earmarks.
+- Solvency logic separates “money we can really spend” from “money that must remain available”.
+- One-off planned commitments can be entered into the cash-planning horizon.
+- Flexible planned income events support non-monthly compensation such as bonus/share timing.
+- Cash planner pulls future events together into one forward-looking view of liquidity pressure.
 
-### 📈 Forecasting & Automation
-- Balance forecasting over 90 days.
-- Identifies shortfalls and suggests top-ups.
-- Automatically reconciles confirmed repayments after statements.
-- Python engine runs via cron or manual trigger.
+### 🔁 Transfer & Liquidity Management
+- Transfer recommendations take account of solvency needs and upcoming pressure.
+- Current-account shortfalls can be surfaced before they become real problems.
+- Reserve-aware planning supports the reality that some months are funded from savings rather than salary alone.
+- Credit card repayment timing is modelled as part of the cash flow, not as an isolated expense view.
 
-### 🔁 Reconciliation Engine
-- Create and manage account statements.
-- Match unreconciled transactions to statement balances.
-- Confirms predicted repayment entries automatically.
-- Finalize reconciliations and updates balances reliably.
-
-### 📬 Weekly Email Summary
-- Sends weekly email of insights and spending health.
-- Flags overspending, underspending, and prediction mismatches.
+### 📬 Weekly Summary & Operational Monitoring
+- Weekly email digest summarises variable spending and budget health.
+- Import logging shows whether account data is fresh or going stale.
+- Scheduled jobs support regular forecasting, payee updates, and reporting.
+- The system is increasingly designed to surface issues, not just record transactions.
 
 ---
 
-## 📁 Folder Structure
+## 🧱 Design Principles
 
-- .
-  - public/
-    - manual_entry.php
-    - assets/
-    - review_actions.php
-    - toggle_rule.php
-    - reconcile.php
-    - dashboard.php
-    - budgets.php
-    - statements.php
-    - index.php
-    - upload.php
-    - ledger.php
-    - project_fund.php
-    - insights.php
-    - review.php
-    - finalize_reconciliation.php
-    - predicted.php
-    - dashboard_ytd.php
-    - view_statement.php
-  - config/
-    - db.php
-    - accounts_schema_only.sql
-  - uploads/
-  - layout/
-    - footer.php
-    - header.php
-  - README.md
-  - scripts/
-    - forecast_utils.php
-    - parse_csv.py
-    - get_accounts.php
-    - predict_instances.py
-    - email_weekly_summary.php
-    - get_account_balances.php
-    - get_insights.php
-    - get_missed_predictions.php
-    - get_upcoming_predictions.php
-    - parse_ofx.py
-    - forecast_balance_timeline.py
+- **Database first** — business state belongs in MySQL, not scattered through files.
+- **Review before commit** — imported transactions land in staging before they become part of the ledger.
+- **Forecasts must be explainable** — cash planning should be traceable back to real transactions, budgets, and predicted instances.
+- **Household reality over accounting purity** — the goal is not just categorisation, but knowing whether the right money will be in the right place at the right time.
 
+---
+
+## 📁 Key Structure
+
+- `public/` — application pages and user-facing workflows
+- `scripts/` — importers, forecast jobs, reporting jobs, and support utilities
+- `scripts/lib/` — reusable service-style helpers for periods, insights, mail, and reporting
+- `config/` — database/bootstrap/configuration
+- `layout/` — shared page chrome
+- `migrations/` — schema migrations
+- `uploads/` — uploaded source files for ingestion
+- `logs/` — PHP and application logs
 
 ---
 
@@ -109,37 +104,41 @@ An advanced personal finance manager built in **PHP**, **MySQL**, and **Python**
 - **MySQL** 8.x
 - **Python** 3.x
 - **Bootstrap 5**
-- **cron** (for automated forecasting and email)
+- **cron** for scheduled forecasting, updates, and reporting
 
 ---
 
-## 🔭 Roadmap
+## 🔭 Next Direction
 
-- Enhanced graphs and mobile-first UX
-- Multi-year planning support
-- Smarter alerting engine
-- Recategorization and tagging tools
-- Role-based access or user-specific views (optional)
-- Net worth tracker and investment forecasting (stretch)
+The platform has moved beyond simple transaction tracking and now has the foundations for:
+
+- stronger authentication and request protection
+- smarter alerting and watcher-style analysis
+- reduced dependence on manual monitoring
+- cleaner operational reporting
+- possible future automated bank-feed ingestion, if the integration cost proves worthwhile
 
 ---
 
 ## 👨‍👩‍👧‍👦 Family-Centered Design
 
-This system was built not just for tracking — but for making sure my wife and I can always stay ahead of our bills, optimize savings, and make financial decisions together. It's fast, clean, and works great from an iPhone.
+This system was built to answer practical household questions, not just accounting ones:
+
+- Are we safe this month?
+- How much needs moving from savings?
+- Are we drifting into a hole later in the quarter?
+- Can we afford the next big payment without breaking something else?
+
+It is designed to help my wife and me make decisions together, with less spreadsheet archaeology and fewer unpleasant surprises.
 
 ---
 
 ## 🧠 Author
 
-Built and maintained by **John** as a fully self-hosted, personal finance automation suite.
+Built and maintained by **John** as a self-hosted household finance platform.
 
 ---
 
 ## 📌 License
 
-This is a personal, private project. No license or distribution currently intended.
-
----
-
-
+This is a personal, private project. No public license or distribution is currently intended.
