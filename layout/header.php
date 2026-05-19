@@ -225,6 +225,7 @@
                     <ul class="dropdown-menu" aria-labelledby="settingsDropdown">
                         <li><a class="dropdown-item" href="/finance/public/accounts.php">Accounts Management</a></li>
                         <li><a class="dropdown-item" href="/finance/public/categories.php">Categories Management</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/payees.php">Payees Management</a></li>
                         <li><a class="dropdown-item" href="/finance/public/healthcheck.php">System Healthcheck</a></li>
                     </ul>
                 </li>
