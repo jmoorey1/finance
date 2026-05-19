@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import re
 import sys
@@ -175,6 +176,8 @@ suppressed_exact = 0
 potential = 0
 predictions = 0
 unresolved_accounts = 0
+rows_parsed_total = 0
+touched_account_ids = set()
 
 for account in ofx.accounts:
     acct_id = account.account_id
@@ -187,7 +190,9 @@ for account in ofx.accounts:
         unresolved_accounts += 1
         continue
 
+    touched_account_ids.add(int(account_id))
     parsed_rows = parse_account_rows(account_id, account.statement.transactions)
+    rows_parsed_total += len(parsed_rows)
 
     sample_rows = {}
     for row in parsed_rows:
@@ -285,7 +290,7 @@ for account in ofx.accounts:
                       AND pi.description LIKE %s
                       AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
                       AND COALESCE(pi.fulfilled, 0) IN (0, 2)
-                  AND COALESCE(pi.resolution_status, 'open') = 'open'
+                      AND COALESCE(pi.resolution_status, 'open') = 'open'
                     LIMIT 1
                     """,
                     (
@@ -332,8 +337,25 @@ conn.commit()
 cursor.close()
 conn.close()
 
+summary = {
+    "parser": "parse_ofx.py",
+    "file_type": "ofx",
+    "account_ids": sorted(touched_account_ids),
+    "rows_parsed": rows_parsed_total,
+    "rows_new": staged_new,
+    "rows_predictions": predictions,
+    "rows_potential_duplicates": potential,
+    "rows_exact_suppressed": suppressed_exact,
+    "rows_repaired": 0,
+    "rows_malformed": 0,
+    "rows_non_billed": 0,
+    "rows_unresolved_accounts": unresolved_accounts,
+}
+
+print(f"📄 Rows parsed: {rows_parsed_total}")
 print(f"✅ Staged as new: {staged_new}")
 print(f"⚡ Matches to predicted instances: {predictions}")
 print(f"⚠️ Potential duplicates for review: {potential}")
 print(f"♻️ Exact duplicates suppressed: {suppressed_exact}")
 print(f"ℹ️ Unresolved OFX accounts skipped: {unresolved_accounts}")
+print("IMPORT_SUMMARY_JSON:" + json.dumps(summary, sort_keys=True))

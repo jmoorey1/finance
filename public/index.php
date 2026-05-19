@@ -24,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['reforecast']) || iss
 require_once '../scripts/forecast_utils.php';
 require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
+require_once '../scripts/get_account_import_status.php';
 require_once '../scripts/get_missed_predictions.php';
 require_once '../scripts/get_missed_statements.php';
 $headlines = require_once '../scripts/get_insights.php';
@@ -85,6 +86,7 @@ $shortfall_window_days = 31;
 $balance_issues = get_forecast_shortfalls($pdo, 90, $shortfall_window_days);
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
+$import_status_by_account = get_account_import_status($pdo);
 $missed = get_missed_predictions($pdo);
 $missed_state = get_missed_statements($pdo);
 
@@ -172,6 +174,8 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                 <th>Account</th>
                 <th>Type</th>
                 <th>Last Transaction</th>
+                <th>Last Successful Import</th>
+                <th>Import Freshness</th>
                 <th class="text-end">Balance</th>
             </tr>
         </thead>
@@ -184,11 +188,28 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                     $start_query = (clone $last_tx)->modify('-1 month');
                     $today = new DateTime();
                     $days_ago = $today->diff($last_tx)->days;
+                    $import_meta = $import_status_by_account[(int)$b['account_id']] ?? null;
+                    $last_import_label = '—';
+                    $freshness_label = 'No log yet';
+                    $freshness_badge = 'bg-secondary';
+
+                    if ($import_meta && !empty($import_meta['last_successful_import_at'])) {
+                        $last_import_dt = new DateTime($import_meta['last_successful_import_at']);
+                        $last_import_days = (int)$today->diff($last_import_dt)->days;
+                        $last_import_label = $last_import_dt->format('d M Y') . " ({$last_import_days} day" . ($last_import_days !== 1 ? 's' : '') . " ago)";
+                        $freshness_label = $import_meta['freshness_label'];
+                        $freshness_badge = $import_meta['badge_class'];
+                    } elseif ($import_meta) {
+                        $freshness_label = $import_meta['freshness_label'];
+                        $freshness_badge = $import_meta['badge_class'];
+                    }
                 ?>
                 <tr>
                     <td><a href='ledger.php?accounts[]=<?= $b['account_id'] ?>&start=<?= $start_query->format('Y-m-d') ?>&end=<?= $today->format('Y-m-d') ?>'><?= htmlspecialchars($b['account_name']) ?></a></td>
                     <td><?= ucfirst($b['account_type']) ?></td>
                     <td><?= $last_tx->format('d M Y') ?> (<?= $days_ago ?> day<?= $days_ago !== 1 ? 's' : '' ?> ago)</td>
+                    <td><?= htmlspecialchars($last_import_label) ?></td>
+                    <td><span class="badge <?= htmlspecialchars($freshness_badge) ?>"><?= htmlspecialchars($freshness_label) ?></span></td>
                     <td class="text-end <?= $is_negative ? 'text-danger fw-bold' : '' ?>">
                         £<?= number_format($bal, 2) ?>
                     </td>

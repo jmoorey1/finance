@@ -101,6 +101,50 @@ SET @saved_cs_client     = @@character_set_client;
  1 AS `date`,
  1 AS `running_balance`*/;
 SET character_set_client = @saved_cs_client;
+DROP TABLE IF EXISTS `import_run_accounts`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `import_run_accounts` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `import_run_id` bigint unsigned NOT NULL,
+  `account_id` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_import_run_account` (`import_run_id`,`account_id`),
+  KEY `idx_import_run_accounts_account` (`account_id`,`created_at`),
+  CONSTRAINT `fk_import_run_accounts_account` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_import_run_accounts_run` FOREIGN KEY (`import_run_id`) REFERENCES `import_runs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `import_runs`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `import_runs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `filename` varchar(255) NOT NULL,
+  `file_type` enum('csv','ofx') NOT NULL,
+  `parser` varchar(50) NOT NULL,
+  `requested_account_id` int DEFAULT NULL,
+  `status` enum('running','success','failed') NOT NULL DEFAULT 'running',
+  `exit_code` int DEFAULT NULL,
+  `output_text` mediumtext,
+  `rows_parsed` int DEFAULT NULL,
+  `rows_new` int DEFAULT NULL,
+  `rows_predictions` int DEFAULT NULL,
+  `rows_potential_duplicates` int DEFAULT NULL,
+  `rows_exact_suppressed` int DEFAULT NULL,
+  `rows_repaired` int DEFAULT NULL,
+  `rows_malformed` int DEFAULT NULL,
+  `rows_non_billed` int DEFAULT NULL,
+  `rows_unresolved_accounts` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `finished_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_import_runs_status_created` (`status`,`created_at`),
+  KEY `idx_import_runs_requested_account` (`requested_account_id`),
+  CONSTRAINT `fk_import_runs_requested_account` FOREIGN KEY (`requested_account_id`) REFERENCES `accounts` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `ofx_account_map`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -127,7 +171,7 @@ CREATE TABLE `payee_patterns` (
   UNIQUE KEY `payee_id` (`payee_id`,`match_pattern`),
   KEY `idx_payee_patterns_priority` (`priority`,`payee_id`),
   CONSTRAINT `payee_patterns_ibfk_1` FOREIGN KEY (`payee_id`) REFERENCES `payees` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=92 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=100 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payees`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -137,7 +181,7 @@ CREATE TABLE `payees` (
   `name` varchar(100) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=77 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=81 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `planned_income_events`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

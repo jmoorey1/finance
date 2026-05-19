@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import csv
+import json
 import os
 import re
 import sys
@@ -108,7 +109,6 @@ def find_potential_duplicate(cursor, account_id: int, txn_date, amount: Decimal,
     for candidate in candidates:
         cand_desc = candidate.get("description") or ""
 
-        # Exact same normalized description + same date should already have been suppressed
         if candidate.get("date") == txn_date and canonical_text(cand_desc) == canonical_text(description):
             continue
 
@@ -334,7 +334,7 @@ for row in parsed_rows:
                   AND pi.description LIKE %s
                   AND ABS(DATEDIFF(pi.scheduled_date, %s)) <= 3
                   AND COALESCE(pi.fulfilled, 0) IN (0, 2)
-              AND COALESCE(pi.resolution_status, 'open') = 'open'
+                  AND COALESCE(pi.resolution_status, 'open') = 'open'
                 LIMIT 1
                 """,
                 (
@@ -385,6 +385,21 @@ select_cursor.close()
 insert_cursor.close()
 conn.close()
 
+summary = {
+    "parser": "parse_csv.py",
+    "file_type": "csv",
+    "account_ids": [account_id],
+    "rows_parsed": len(parsed_rows),
+    "rows_new": staged_new,
+    "rows_predictions": predictions,
+    "rows_potential_duplicates": potential,
+    "rows_exact_suppressed": suppressed_exact,
+    "rows_repaired": repaired_rows,
+    "rows_malformed": skipped_malformed,
+    "rows_non_billed": skipped_non_billed,
+    "rows_unresolved_accounts": 0,
+}
+
 print(f"📄 Billed rows parsed: {len(parsed_rows)}")
 print(f"✅ Staged as new: {staged_new}")
 print(f"⚡ Matches to predicted instances: {predictions}")
@@ -393,3 +408,4 @@ print(f"♻️ Exact duplicates suppressed: {suppressed_exact}")
 print(f"🛠 CSV rows repaired: {repaired_rows}")
 print(f"⚠️ Malformed CSV rows skipped: {skipped_malformed}")
 print(f"ℹ️ Non-billed CSV rows ignored: {skipped_non_billed}")
+print("IMPORT_SUMMARY_JSON:" + json.dumps(summary, sort_keys=True))
