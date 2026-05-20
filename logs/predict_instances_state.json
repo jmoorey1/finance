@@ -1,7 +1,7 @@
 {
     "job_name": "predict_instances",
-    "last_start": "2026-05-19T22:28:43+01:00",
-    "last_end": "2026-05-19T22:28:45+01:00",
+    "last_start": "2026-05-20T08:51:39+01:00",
+    "last_end": "2026-05-20T08:51:41+01:00",
     "last_status": "success",
     "last_exit_code": 0,
     "last_trigger": "auto",

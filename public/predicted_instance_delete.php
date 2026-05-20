@@ -1,9 +1,6 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
-    auth_session_start();
-}
-
 require_once '../config/db.php';
+auth_session_start();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['id'])) {
     header('Location: predicted.php');

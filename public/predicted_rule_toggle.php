@@ -1,9 +1,6 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
-    auth_session_start();
-}
-
 require_once '../config/db.php';
+auth_session_start();
 require_once '../scripts/run_predict_instances.php';
 require_once 'prediction_rule_helpers.php';
 

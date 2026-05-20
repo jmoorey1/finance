@@ -63,7 +63,7 @@ if (!isset($APP_CONFIG) || !is_array($APP_CONFIG)) {
             // Reserved for later backlog items — default OFF unless already live behaviour.
             'show_env_banner'       => false,
             'enable_auth'           => true,
-            'enforce_csrf'          => false,
+            'enforce_csrf'          => true,
 
             // This reflects current behaviour (index.php can trigger reforecast)
             // We’ll harden/throttle it in BKL-005.

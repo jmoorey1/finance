@@ -59,6 +59,7 @@ $alreadyLoggedIn = auth_is_logged_in();
                 <?php endif; ?>
 
                 <form method="post">
+                    <?= csrf_input() ?>
                     <input type="hidden" name="next" value="<?= htmlspecialchars($next, ENT_QUOTES, 'UTF-8') ?>">
 
                     <div class="mb-3">

@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <title>Home Finances</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?php if (function_exists('csrf_token')): ?>
+        <meta name="csrf-token" content="<?= htmlspecialchars(csrf_token(), ENT_QUOTES, 'UTF-8') ?>">
+    <?php endif; ?>
     <!-- Bootstrap 5 for responsiveness -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 	<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
@@ -172,6 +175,39 @@
 		.success { background: #e0ffe0; border: 1px solid #4caf50; }
 		.error { background: #ffe0e0; border: 1px solid #f44336; }
 	</style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const meta = document.querySelector('meta[name="csrf-token"]');
+            const token = meta ? meta.getAttribute('content') : '';
+
+            if (!token) {
+                return;
+            }
+
+            document.querySelectorAll('form').forEach(function (form) {
+                const method = (form.getAttribute('method') || 'get').toLowerCase();
+                if (method !== 'post') {
+                    return;
+                }
+
+                if (!form.querySelector('input[name="_csrf"]')) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = '_csrf';
+                    input.value = token;
+                    form.appendChild(input);
+                }
+            });
+
+            if (window.jQuery && typeof window.jQuery.ajaxSetup === 'function') {
+                window.jQuery.ajaxSetup({
+                    headers: {
+                        'X-CSRF-Token': token
+                    }
+                });
+            }
+        });
+    </script>
 
 </head>
 <body>
@@ -233,7 +269,12 @@
             <?php if (function_exists('auth_is_enabled') && auth_is_enabled() && function_exists('auth_current_username')): ?>
                 <div class="d-flex align-items-center text-white gap-3">
                     <span class="small">Signed in as <?= htmlspecialchars(auth_current_username() ?? 'unknown', ENT_QUOTES, 'UTF-8') ?></span>
-                    <a class="btn btn-outline-light btn-sm" href="/finance/public/logout.php">Log out</a>
+                    <form method="post" action="/finance/public/logout.php" class="m-0">
+                        <?php if (function_exists('csrf_input')): ?>
+                            <?= csrf_input() ?>
+                        <?php endif; ?>
+                        <button type="submit" class="btn btn-outline-light btn-sm">Log out</button>
+                    </form>
                 </div>
             <?php endif; ?>
         </div>
