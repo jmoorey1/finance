@@ -27,6 +27,14 @@ if (!in_array($selectedAccountId, $validIds, true)) {
     $selectedAccountId = $defaultAccountId;
 }
 
+$selectedAccount = null;
+foreach ($accounts as $a) {
+    if ((int)$a['id'] === $selectedAccountId) {
+        $selectedAccount = $a;
+        break;
+    }
+}
+
 $days = isset($_GET['days']) ? (int)$_GET['days'] : 90;
 if (!in_array($days, [30, 60, 90, 180], true)) {
     $days = 90;
@@ -60,6 +68,14 @@ foreach ($stream['events'] as $event) {
     Budget-only future items are <strong>not</strong> shown here unless they also exist as dated account-level planned events.
     Flexible planned income events are shown here at their <strong>assumed date</strong> inside the configured window.
 </div>
+
+<?php if (($selectedAccount['type'] ?? '') === 'savings'): ?>
+    <div class="alert alert-secondary">
+        This is <strong>account cash only</strong> for the selected savings account.
+        It does <strong>not</strong> answer whether that cash is needed to support current accounts.
+        Use <a href="funding_health.php">Funding Health</a> for the action-needed view.
+    </div>
+<?php endif; ?>
 
 <form method="get" class="mb-4">
     <div class="row g-3 align-items-end">

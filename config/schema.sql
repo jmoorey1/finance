@@ -62,7 +62,7 @@ CREATE TABLE `budgets` (
   UNIQUE KEY `category_id` (`category_id`,`month_start`),
   KEY `idx_budgets_month_start` (`month_start`),
   CONSTRAINT `budgets_ibfk_1` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=26565 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=27099 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `categories`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -247,6 +247,7 @@ CREATE TABLE `planned_income_events` (
   `category_id` int NOT NULL,
   `account_id` int NOT NULL,
   `amount` decimal(12,2) NOT NULL,
+  `budget_month_start` date DEFAULT NULL,
   `window_start` date NOT NULL,
   `window_end` date NOT NULL,
   `timing_strategy` enum('earliest','midpoint','latest','manual') NOT NULL DEFAULT 'latest',
@@ -259,7 +260,7 @@ CREATE TABLE `planned_income_events` (
   KEY `idx_planned_income_events_active_window` (`active`,`window_start`,`window_end`),
   KEY `idx_planned_income_events_account_window` (`account_id`,`window_start`,`window_end`),
   KEY `idx_planned_income_events_category` (`category_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_instances`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -279,6 +280,9 @@ CREATE TABLE `predicted_instances` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `description` text,
+  `budget_treatment` enum('additional','budget_backed') NOT NULL DEFAULT 'additional',
+  `budget_month_start` date DEFAULT NULL,
+  `budget_amount` decimal(12,2) DEFAULT NULL,
   `confirmed` tinyint(1) DEFAULT '0',
   `resolution_status` enum('open','skipped') NOT NULL DEFAULT 'open',
   `resolved_at` datetime DEFAULT NULL,
@@ -296,7 +300,7 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_to_sched_state` (`to_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=91617 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=92053 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -499,7 +503,7 @@ CREATE TABLE `watcher_alerts` (
   KEY `idx_watcher_alerts_type_status` (`alert_type`,`status`),
   KEY `idx_watcher_alerts_last_detected` (`last_detected_at`),
   KEY `idx_watcher_alerts_related_account` (`related_account_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50001 DROP VIEW IF EXISTS `account_balances_as_of_last_night`*/;
 /*!50001 SET @saved_cs_client          = @@character_set_client */;

@@ -61,6 +61,10 @@ if ($formValues === null) {
     }
 }
 
+if (empty($formValues['budget_month']) && !empty($formValues['budget_month_start'])) {
+    $formValues['budget_month'] = substr((string)$formValues['budget_month_start'], 0, 7);
+}
+
 function pi_selected($a, $b): string {
     return (string)$a === (string)$b ? 'selected' : '';
 }
@@ -83,6 +87,14 @@ function pi_selected($a, $b): string {
     Use this form for one-off planned items that are <strong>not generated from a recurring rule</strong>.
 </div>
 
+<div class="alert alert-secondary">
+    <strong>Solvency treatment</strong> controls whether this item is:
+    <ul class="mb-0">
+        <li><strong>Additional to budget</strong> — the full amount is added on top of the monthly budget baseline.</li>
+        <li><strong>Budget-backed</strong> — this item replaces budget already carried in a chosen financial month, so it is not double counted.</li>
+    </ul>
+</div>
+
 <form method="post" action="predicted_instance_save.php">
     <input type="hidden" name="id" value="<?= htmlspecialchars((string)$formValues['id']) ?>">
     <input type="hidden" name="future_days" value="<?= (int)$futureDays ?>">
@@ -90,7 +102,7 @@ function pi_selected($a, $b): string {
     <div class="row g-3">
         <div class="col-md-4">
             <label class="form-label">Scheduled Date</label>
-            <input type="date" name="scheduled_date" class="form-control" required
+            <input type="date" name="scheduled_date" id="scheduled_date" class="form-control" required
                    value="<?= htmlspecialchars((string)$formValues['scheduled_date']) ?>">
         </div>
 
@@ -160,6 +172,34 @@ function pi_selected($a, $b): string {
             </div>
         </div>
 
+        <div class="col-md-4 js-budget-treatment-wrapper">
+            <label class="form-label">Solvency Treatment</label>
+            <select name="budget_treatment" id="budget_treatment" class="form-select">
+                <option value="additional" <?= pi_selected($formValues['budget_treatment'], 'additional') ?>>Additional to budget</option>
+                <option value="budget_backed" <?= pi_selected($formValues['budget_treatment'], 'budget_backed') ?>>Budget-backed / replaces budget allowance</option>
+            </select>
+        </div>
+
+        <div class="col-md-4 js-budget-fields">
+            <label class="form-label">Budget Financial Month</label>
+            <input type="month" name="budget_month" id="budget_month" class="form-control"
+                   value="<?= htmlspecialchars((string)$formValues['budget_month']) ?>">
+            <div class="form-text">
+                Leave blank and it will default to the financial month containing the scheduled date.
+                For dates before the 13th, that means the previous calendar month.
+            </div>
+        </div>
+
+        <div class="col-md-4 js-budget-fields">
+            <label class="form-label">Budget Amount Already Included (£)</label>
+            <input type="number" name="budget_amount" step="0.01" min="0" class="form-control"
+                   value="<?= htmlspecialchars((string)$formValues['budget_amount']) ?>">
+            <div class="form-text">
+                Optional if an exact budget row exists for the selected top-level category in the chosen financial month.
+                Enter it manually when you want to offset only part of the budget.
+            </div>
+        </div>
+
         <div class="col-12 d-flex gap-2">
             <button type="submit" class="btn btn-primary"><?= $editing ? '💾 Save Changes' : '✅ Create One-off Item' ?></button>
             <a href="predicted.php?future_days=<?= (int)$futureDays ?>" class="btn btn-outline-secondary">Cancel</a>
@@ -168,16 +208,57 @@ function pi_selected($a, $b): string {
 </form>
 
 <script>
+function suggestedBudgetMonthFromScheduledDate(dateStr) {
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return '';
+    }
+
+    const parts = dateStr.split('-').map(Number);
+    let year = parts[0];
+    let month = parts[1];
+    const day = parts[2];
+
+    if (day < 13) {
+        month -= 1;
+        if (month === 0) {
+            month = 12;
+            year -= 1;
+        }
+    }
+
+    return String(year) + '-' + String(month).padStart(2, '0');
+}
+
 function updateOneOffForm() {
     const categorySelect = document.getElementById('category_id');
     const selectedOption = categorySelect.options[categorySelect.selectedIndex];
     const categoryType = selectedOption ? selectedOption.getAttribute('data-type') : '';
     const toAccountFields = document.querySelectorAll('.js-to-account-field');
+    const budgetTreatmentWrapper = document.querySelectorAll('.js-budget-treatment-wrapper');
+    const budgetFields = document.querySelectorAll('.js-budget-fields');
     const amountHelp = document.getElementById('amount_help');
+    const treatmentSelect = document.getElementById('budget_treatment');
+    const budgetMonthInput = document.getElementById('budget_month');
+    const scheduledDateInput = document.getElementById('scheduled_date');
 
     toAccountFields.forEach(el => {
         el.style.display = (categoryType === 'transfer') ? '' : 'none';
     });
+
+    const supportsBudgetTreatment = (categoryType === 'income' || categoryType === 'expense');
+
+    budgetTreatmentWrapper.forEach(el => {
+        el.style.display = supportsBudgetTreatment ? '' : 'none';
+    });
+
+    const showBudgetFields = supportsBudgetTreatment && treatmentSelect.value === 'budget_backed';
+    budgetFields.forEach(el => {
+        el.style.display = showBudgetFields ? '' : 'none';
+    });
+
+    if (showBudgetFields && !budgetMonthInput.value && scheduledDateInput.value) {
+        budgetMonthInput.value = suggestedBudgetMonthFromScheduledDate(scheduledDateInput.value);
+    }
 
     if (categoryType === 'income') {
         amountHelp.textContent = 'Enter a positive amount for income.';
@@ -185,12 +266,15 @@ function updateOneOffForm() {
         amountHelp.textContent = 'Enter a negative amount for expense.';
     } else if (categoryType === 'transfer') {
         amountHelp.textContent = 'Enter a positive transfer amount. The system will flow it from From Account to To Account.';
+        treatmentSelect.value = 'additional';
     } else {
         amountHelp.textContent = 'Enter a signed amount: positive for income, negative for expense, positive for transfer value.';
     }
 }
 
 document.getElementById('category_id').addEventListener('change', updateOneOffForm);
+document.getElementById('budget_treatment').addEventListener('change', updateOneOffForm);
+document.getElementById('scheduled_date').addEventListener('change', updateOneOffForm);
 updateOneOffForm();
 </script>
 

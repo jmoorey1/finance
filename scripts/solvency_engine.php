@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/planned_income_engine.php';
 
 function se_current_financial_year(?DateTimeImmutable $today = null): int
 {
@@ -168,6 +169,31 @@ function se_get_budget_net_by_month(PDO $pdo, int $year): array
     return $out;
 }
 
+function se_signed_budget_amount(string $categoryType, float $budgetAmount): float
+{
+    return $categoryType === 'income' ? $budgetAmount : -$budgetAmount;
+}
+
+function se_init_adjustment_bucket(array &$out, string $key): void
+{
+    if (!isset($out[$key])) {
+        $out[$key] = [
+            'net' => 0.0,
+            'items' => [],
+        ];
+    }
+}
+
+function se_add_adjustment_item(array &$bucket, string $date, string $description, float $impactAmount): void
+{
+    $bucket['net'] += $impactAmount;
+    $bucket['items'][] = [
+        'date' => $date,
+        'description' => $description,
+        'amount' => $impactAmount,
+    ];
+}
+
 function se_get_manual_adjustments_by_month(PDO $pdo, int $year, ?DateTimeImmutable $today = null): array
 {
     $today = $today ?? new DateTimeImmutable('today');
@@ -176,9 +202,14 @@ function se_get_manual_adjustments_by_month(PDO $pdo, int $year, ?DateTimeImmuta
 
     $stmt = $pdo->prepare("
         SELECT
+            pi.id,
             pi.scheduled_date,
             pi.amount,
-            pi.description
+            pi.description,
+            pi.budget_treatment,
+            pi.budget_month_start,
+            pi.budget_amount,
+            c.type AS category_type
         FROM predicted_instances pi
         JOIN categories c ON pi.category_id = c.id
         JOIN accounts a ON pi.from_account_id = a.id
@@ -193,26 +224,160 @@ function se_get_manual_adjustments_by_month(PDO $pdo, int $year, ?DateTimeImmuta
     $stmt->execute([$rangeStart, $rangeEnd]);
 
     $out = [];
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $key = se_financial_month_key($row['scheduled_date']);
 
-        if (!isset($out[$key])) {
-            $out[$key] = [
-                'net' => 0.0,
-                'items' => [],
-            ];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $scheduledDate = (string)$row['scheduled_date'];
+        $scheduledKey = se_financial_month_key($scheduledDate);
+        $amount = (float)$row['amount'];
+        $description = (string)$row['description'];
+        $categoryType = (string)$row['category_type'];
+        $budgetTreatment = (string)($row['budget_treatment'] ?? 'additional');
+        $budgetMonthStart = $row['budget_month_start'] ? se_financial_month_key((string)$row['budget_month_start']) : null;
+        $budgetAmount = $row['budget_amount'] !== null ? (float)$row['budget_amount'] : null;
+
+        se_init_adjustment_bucket($out, $scheduledKey);
+
+        if (
+            $budgetTreatment === 'budget_backed'
+            && in_array($categoryType, ['income', 'expense'], true)
+            && $budgetMonthStart !== null
+            && $budgetAmount !== null
+            && $budgetAmount > 0
+        ) {
+            $signedBudget = se_signed_budget_amount($categoryType, $budgetAmount);
+
+            if ($budgetMonthStart === $scheduledKey) {
+                $netImpact = $amount - $signedBudget;
+
+                se_add_adjustment_item(
+                    $out[$scheduledKey],
+                    $scheduledDate,
+                    $description . ' [budget-backed; replaces ' . $budgetMonthStart . ' budget of £' . number_format($budgetAmount, 2) . ']',
+                    $netImpact
+                );
+            } else {
+                se_add_adjustment_item(
+                    $out[$scheduledKey],
+                    $scheduledDate,
+                    $description . ' [budget-backed cash event; budget released from ' . $budgetMonthStart . ']',
+                    $amount
+                );
+
+                se_init_adjustment_bucket($out, $budgetMonthStart);
+                se_add_adjustment_item(
+                    $out[$budgetMonthStart],
+                    $budgetMonthStart,
+                    'Budget release for ' . $description . ' [budget-backed]',
+                    -$signedBudget
+                );
+            }
+
+            continue;
         }
 
-        $amt = (float)$row['amount'];
-        $out[$key]['net'] += $amt;
-        $out[$key]['items'][] = [
-            'date' => $row['scheduled_date'],
-            'description' => $row['description'],
-            'amount' => $amt,
-        ];
+        se_add_adjustment_item(
+            $out[$scheduledKey],
+            $scheduledDate,
+            $description . ' [additional one-off]',
+            $amount
+        );
     }
 
     return $out;
+}
+
+function se_get_planned_income_adjustments_by_month(PDO $pdo, int $year, ?DateTimeImmutable $today = null): array
+{
+    $today = $today ?? new DateTimeImmutable('today');
+    $currentMonthKey = se_financial_month_key($today);
+    $rangeEnd = (new DateTimeImmutable("{$year}-01-13"))->modify('+12 months')->modify('-1 day')->format('Y-m-d');
+
+    $stmt = $pdo->prepare("
+        SELECT
+            pie.*,
+            c.type AS category_type
+        FROM planned_income_events pie
+        JOIN categories c ON c.id = pie.category_id
+        JOIN accounts a ON a.id = pie.account_id
+        WHERE pie.active = 1
+          AND c.type = 'income'
+          AND a.active = 1
+          AND a.type IN ('current', 'savings')
+          AND pie.window_start <= ?
+        ORDER BY pie.window_start ASC, pie.id ASC
+    ");
+    $stmt->execute([$rangeEnd]);
+
+    $out = [];
+
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $assumedDate = pie_resolve_assumed_date($row);
+        if ($assumedDate === null) {
+            continue;
+        }
+
+        $amount = (float)($row['amount'] ?? 0);
+        if ($amount <= 0) {
+            continue;
+        }
+
+        $description = (string)($row['description'] ?? 'Flexible planned income');
+
+        $targetKey = se_financial_month_key($assumedDate);
+        $sourceKey = !empty($row['budget_month_start'])
+            ? se_financial_month_key((string)$row['budget_month_start'])
+            : se_financial_month_key((string)$row['window_end']);
+
+        if ($sourceKey === $targetKey) {
+            continue;
+        }
+
+        if ($sourceKey >= $currentMonthKey) {
+            se_init_adjustment_bucket($out, $sourceKey);
+            se_add_adjustment_item(
+                $out[$sourceKey],
+                (string)$row['window_end'],
+                $description . ' [planned income released from budget month]',
+                -$amount
+            );
+        }
+
+        if ($targetKey >= $currentMonthKey) {
+            se_init_adjustment_bucket($out, $targetKey);
+            se_add_adjustment_item(
+                $out[$targetKey],
+                $assumedDate,
+                $description . ' [planned income timing assumption]',
+                $amount
+            );
+        }
+    }
+
+    return $out;
+}
+
+function se_merge_adjustment_buckets(array ...$sources): array
+{
+    $merged = [];
+
+    foreach ($sources as $source) {
+        foreach ($source as $key => $bucket) {
+            if (!isset($merged[$key])) {
+                $merged[$key] = [
+                    'net' => 0.0,
+                    'items' => [],
+                ];
+            }
+
+            $merged[$key]['net'] += (float)($bucket['net'] ?? 0.0);
+
+            foreach (($bucket['items'] ?? []) as $item) {
+                $merged[$key]['items'][] = $item;
+            }
+        }
+    }
+
+    return $merged;
 }
 
 function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year = null, ?DateTimeImmutable $today = null): array
@@ -223,6 +388,11 @@ function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year =
     $months = se_build_financial_months($year);
     $budgetNetByMonth = se_get_budget_net_by_month($pdo, $year);
     $manualAdjustmentsByMonth = se_get_manual_adjustments_by_month($pdo, $year, $today);
+    $plannedIncomeAdjustmentsByMonth = se_get_planned_income_adjustments_by_month($pdo, $year, $today);
+    $combinedAdjustmentsByMonth = se_merge_adjustment_buckets(
+        $manualAdjustmentsByMonth,
+        $plannedIncomeAdjustmentsByMonth
+    );
     $earmarksTotal = se_get_total_earmarks($pdo);
 
     $todayStr = $today->format('Y-m-d');
@@ -237,8 +407,8 @@ function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year =
         $endStr = $month['end']->format('Y-m-d');
 
         $budgetNet = (float)($budgetNetByMonth[$key] ?? 0.0);
-        $manualAdjustmentNet = (float)($manualAdjustmentsByMonth[$key]['net'] ?? 0.0);
-        $manualItems = $manualAdjustmentsByMonth[$key]['items'] ?? [];
+        $manualAdjustmentNet = (float)($combinedAdjustmentsByMonth[$key]['net'] ?? 0.0);
+        $manualItems = $combinedAdjustmentsByMonth[$key]['items'] ?? [];
 
         if ($today > $month['end']) {
             $phase = 'past';
@@ -328,7 +498,7 @@ function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year =
 
         $required = abs($minCum);
         $rows[$idx]['required_reserve_from_here'] = $required;
-        $rows[$idx]['available_above_reserve'] = (float)$rows[$idx]['reference_balance'] - $earmarksTotal - $required;
+        $rows[$idx]['available_above_reserve'] = (float)$rows[$idx]['reference_balance'] - $required;
     }
 
     $currentRow = null;
@@ -362,7 +532,7 @@ function se_build_reserve_timeline(PDO $pdo, int $reserveAccountId, ?int $year =
         'current_reserve_balance' => $currentReserveBalance,
         'earmarks_total' => $earmarksTotal,
         'current_required_reserve' => $currentRow['required_reserve_from_here'] ?? 0.0,
-        'current_available_above_reserve' => $currentRow['available_above_reserve'] ?? ($currentReserveBalance - $earmarksTotal),
+        'current_available_above_reserve' => $currentRow['available_above_reserve'] ?? $currentReserveBalance,
         'peak_required_reserve' => $peakRequired,
         'lowest_available_above_reserve' => $lowestAvailable,
         'lowest_available_month' => $lowestAvailableMonth,

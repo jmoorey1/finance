@@ -8,6 +8,8 @@ function pie_defaults(): array
         'category_id' => '',
         'account_id' => '',
         'amount' => '',
+        'budget_month' => '',
+        'budget_month_start' => '',
         'window_start' => '',
         'window_end' => '',
         'timing_strategy' => 'latest',
@@ -36,6 +38,32 @@ function pie_timing_label(string $strategy): string
         'manual' => 'Manual',
         default => ucfirst($strategy),
     };
+}
+
+function pie_financial_month_from_date(string $date): string
+{
+    try {
+        $dt = new DateTimeImmutable($date);
+    } catch (Throwable $e) {
+        return '';
+    }
+
+    if ((int)$dt->format('d') < 13) {
+        $dt = $dt->modify('-1 month');
+    }
+
+    return $dt->format('Y-m');
+}
+
+function pie_month_input_to_start_date(string $monthInput): ?string
+{
+    $monthInput = trim($monthInput);
+
+    if ($monthInput === '' || !preg_match('/^\d{4}-\d{2}$/', $monthInput)) {
+        return null;
+    }
+
+    return $monthInput . '-13';
 }
 
 function pie_resolve_assumed_date(array $row): ?string

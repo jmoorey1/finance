@@ -16,12 +16,19 @@ if (!watcher_is_enabled()) {
 try {
     $result = watcher_run_analysis($pdo);
 
-    echo "Watcher analysis completed.\n";
+    echo "Watcher analysis completed (funding-health aligned).\n";
     echo "Detected: " . (int)$result['detected'] . "\n";
     echo "Created: " . (int)$result['created'] . "\n";
     echo "Updated: " . (int)$result['updated'] . "\n";
     echo "Reopened: " . (int)$result['reopened'] . "\n";
     echo "Resolved: " . (int)$result['resolved'] . "\n";
+
+    if (!empty($result['by_type'])) {
+        echo "By type:\n";
+        foreach ($result['by_type'] as $type => $count) {
+            echo "  - " . $type . ": " . (int)$count . "\n";
+        }
+    }
 
     foreach (($result['alerts'] ?? []) as $alert) {
         echo "- [" . strtoupper((string)$alert['severity']) . "] " . $alert['title'] . "\n";

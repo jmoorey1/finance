@@ -19,9 +19,16 @@ $fromAccountId = isset($_POST['from_account_id']) && $_POST['from_account_id'] !
 $toAccountId = isset($_POST['to_account_id']) && $_POST['to_account_id'] !== '' ? (int)$_POST['to_account_id'] : null;
 $categoryId = isset($_POST['category_id']) && $_POST['category_id'] !== '' ? (int)$_POST['category_id'] : 0;
 $amountRaw = trim((string)($_POST['amount'] ?? ''));
+$budgetTreatment = trim((string)($_POST['budget_treatment'] ?? 'additional'));
+$budgetMonthRaw = trim((string)($_POST['budget_month'] ?? ''));
+$budgetAmountRaw = trim((string)($_POST['budget_amount'] ?? ''));
 $futureDays = isset($_POST['future_days']) ? (int)$_POST['future_days'] : 180;
 if (!in_array($futureDays, [90, 180, 365], true)) {
     $futureDays = 180;
+}
+
+if (!in_array($budgetTreatment, ['additional', 'budget_backed'], true)) {
+    $budgetTreatment = 'additional';
 }
 
 if ($scheduledDate === '') {
@@ -46,6 +53,7 @@ if ($categoryId <= 0) {
     $errors[] = 'Category is required.';
 }
 
+$amount = null;
 if ($amountRaw === '' || !is_numeric($amountRaw)) {
     $errors[] = 'Amount must be a valid number.';
 } else {
@@ -80,6 +88,9 @@ if ($toAccountId !== null) {
     }
 }
 
+$budgetMonthStart = null;
+$budgetAmount = null;
+
 if ($catType === 'income') {
     if ((float)$amount <= 0) {
         $errors[] = 'Income items must use a positive amount.';
@@ -100,8 +111,40 @@ if ($catType === 'income') {
     if ((float)$amount <= 0) {
         $errors[] = 'Transfer items must use a positive amount.';
     }
+
+    // Transfers do not participate in solvency budget offset logic.
+    $budgetTreatment = 'additional';
+    $budgetMonthRaw = '';
+    $budgetAmountRaw = '';
 } else {
     $errors[] = 'Category type must be income, expense, or transfer.';
+}
+
+if (in_array($catType, ['income', 'expense'], true) && $budgetTreatment === 'budget_backed') {
+    if ($budgetMonthRaw === '' && $scheduledDate !== '') {
+        $budgetMonthRaw = predicted_instance_financial_month_from_date($scheduledDate);
+    }
+
+    $budgetMonthStart = predicted_instance_month_input_to_start_date($budgetMonthRaw);
+    if ($budgetMonthStart === null) {
+        $errors[] = 'Budget-backed items require a valid financial month to offset.';
+    }
+
+    if ($budgetAmountRaw !== '') {
+        if (!is_numeric($budgetAmountRaw) || (float)$budgetAmountRaw <= 0) {
+            $errors[] = 'Budget-backed amount must be a positive number.';
+        } else {
+            $budgetAmount = number_format((float)$budgetAmountRaw, 2, '.', '');
+        }
+    } elseif ($budgetMonthStart !== null && $categoryId > 0) {
+        $guessedAmount = predicted_instance_guess_budget_amount($pdo, $categoryId, $budgetMonthStart);
+        if ($guessedAmount !== null && $guessedAmount > 0) {
+            $budgetAmount = number_format((float)$guessedAmount, 2, '.', '');
+            $budgetAmountRaw = $budgetAmount;
+        } else {
+            $errors[] = 'No exact budget row could be inferred for the selected category/month. Enter the budget amount to offset.';
+        }
+    }
 }
 
 $form['id'] = $id ?: '';
@@ -111,6 +154,9 @@ $form['from_account_id'] = $fromAccountId ?: '';
 $form['to_account_id'] = $toAccountId ?: '';
 $form['category_id'] = $categoryId ?: '';
 $form['amount'] = $amountRaw;
+$form['budget_treatment'] = $budgetTreatment;
+$form['budget_month'] = $budgetMonthRaw;
+$form['budget_amount'] = $budgetAmountRaw;
 
 if (!empty($errors)) {
     $_SESSION['predicted_instance_errors'] = $errors;
@@ -130,6 +176,9 @@ try {
                 to_account_id = ?,
                 category_id = ?,
                 description = ?,
+                budget_treatment = ?,
+                budget_month_start = ?,
+                budget_amount = ?,
                 resolution_status = 'open',
                 resolved_at = NULL,
                 resolution_note = NULL,
@@ -145,6 +194,9 @@ try {
             $toAccountId,
             $categoryId,
             $description,
+            $budgetTreatment,
+            $budgetMonthStart,
+            $budgetAmount,
             $id,
         ]);
         $_SESSION['prediction_action_flash'] = '✅ One-off planned item updated.';
@@ -158,10 +210,13 @@ try {
                 to_account_id,
                 category_id,
                 description,
+                budget_treatment,
+                budget_month_start,
+                budget_amount,
                 confirmed,
                 resolution_status
             ) VALUES (
-                NULL, ?, ?, ?, ?, ?, ?, 0, 'open'
+                NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'open'
             )
         ");
         $stmt->execute([
@@ -171,6 +226,9 @@ try {
             $toAccountId,
             $categoryId,
             $description,
+            $budgetTreatment,
+            $budgetMonthStart,
+            $budgetAmount,
         ]);
         $_SESSION['prediction_action_flash'] = '✅ One-off planned item created.';
     }

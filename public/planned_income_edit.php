@@ -61,6 +61,10 @@ if ($formValues === null) {
     }
 }
 
+if (empty($formValues['budget_month']) && !empty($formValues['budget_month_start'])) {
+    $formValues['budget_month'] = substr((string)$formValues['budget_month_start'], 0, 7);
+}
+
 function pie_selected($a, $b): string
 {
     return (string)$a === (string)$b ? 'selected' : '';
@@ -90,8 +94,9 @@ function pie_checked($value): string
     The event will be used for <strong>cash-planning only</strong> at an assumed date within its window.
 </div>
 
-<div class="alert alert-warning">
-    Do <strong>not</strong> also add the same item as a manual one-off predicted instance, or cash planning will double count it.
+<div class="alert alert-secondary">
+    Set the <strong>Budget Financial Month</strong> to the month where this income is already carried in your budget.
+    Solvency and project fund will then rephase that income into the assumed landing month instead of double counting or ignoring it.
 </div>
 
 <form method="post" action="planned_income_save.php">
@@ -144,6 +149,15 @@ function pie_checked($value): string
         </div>
 
         <div class="col-md-4">
+            <label class="form-label">Budget Financial Month</label>
+            <input type="month" name="budget_month" id="budget_month" class="form-control" required
+                   value="<?= htmlspecialchars((string)$formValues['budget_month']) ?>">
+            <div class="form-text">
+                This is the financial month where the income is already included in budget.
+            </div>
+        </div>
+
+        <div class="col-md-4">
             <label class="form-label">Window Start</label>
             <input type="date" name="window_start" class="form-control" required
                    value="<?= htmlspecialchars((string)$formValues['window_start']) ?>">
@@ -151,7 +165,7 @@ function pie_checked($value): string
 
         <div class="col-md-4">
             <label class="form-label">Window End</label>
-            <input type="date" name="window_end" class="form-control" required
+            <input type="date" name="window_end" id="window_end" class="form-control" required
                    value="<?= htmlspecialchars((string)$formValues['window_end']) ?>">
         </div>
 
@@ -193,8 +207,34 @@ function updateFlexibleIncomeForm() {
         el.style.display = (strategy === 'manual') ? '' : 'none';
     });
 }
+
+function defaultBudgetMonthFromWindowEnd() {
+    const windowEnd = document.getElementById('window_end').value;
+    const budgetMonth = document.getElementById('budget_month');
+
+    if (!budgetMonth.value && windowEnd) {
+        const parts = windowEnd.split('-').map(Number);
+        let year = parts[0];
+        let month = parts[1];
+        const day = parts[2];
+
+        if (day < 13) {
+            month -= 1;
+            if (month === 0) {
+                month = 12;
+                year -= 1;
+            }
+        }
+
+        budgetMonth.value = String(year) + '-' + String(month).padStart(2, '0');
+    }
+}
+
 document.getElementById('timing_strategy').addEventListener('change', updateFlexibleIncomeForm);
+document.getElementById('window_end').addEventListener('change', defaultBudgetMonthFromWindowEnd);
+
 updateFlexibleIncomeForm();
+defaultBudgetMonthFromWindowEnd();
 </script>
 
 <?php include '../layout/footer.php'; ?>

@@ -23,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['reforecast']) || iss
 }
 
 require_once '../scripts/forecast_utils.php';
+require_once '../scripts/funding_health_engine.php';
 require_once '../scripts/get_upcoming_predictions.php';
 require_once '../scripts/get_account_balances.php';
 require_once '../scripts/get_account_import_status.php';
@@ -90,7 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && feature_enabled('prediction_job_on_u
 }
 
 $shortfall_window_days = 31;
-$balance_issues = get_forecast_shortfalls($pdo, 90, $shortfall_window_days);
+$fundingHealth = fh_build_primary_funding_health($pdo, $shortfall_window_days);
+$balance_issues = $fundingHealth['issues'];
 $predictions = get_upcoming_predictions($pdo, 5);
 $balances = get_account_balances($pdo);
 $import_status_by_account = get_account_import_status($pdo);
@@ -126,6 +128,65 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
+
+<!-- 💧 Funding Health -->
+<div class="mb-4">
+    <?php
+        $fhAlert = 'alert-success';
+        if (($fundingHealth['status'] ?? '') === 'action') {
+            $fhAlert = 'alert-warning';
+        } elseif (in_array(($fundingHealth['status'] ?? ''), ['gap', 'no_savings'], true)) {
+            $fhAlert = 'alert-danger';
+        }
+    ?>
+    <div class="alert <?= $fhAlert ?>">
+        <strong><?= htmlspecialchars((string)$fundingHealth['headline']) ?></strong><br>
+        <?= htmlspecialchars((string)$fundingHealth['summary']) ?>
+        <div class="mt-2">
+            <a href="funding_health.php?days=<?= (int)$shortfall_window_days ?>" class="btn btn-sm btn-outline-dark">Open Funding Health</a>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-muted small"><?= htmlspecialchars((string)$fundingHealth['reserve_account_name']) ?> balance now</div>
+                    <div class="fw-bold">£<?= number_format((float)$fundingHealth['current_balance'], 2) ?></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-muted small">Required support next <?= (int)$shortfall_window_days ?> days</div>
+                    <div class="fw-bold">£<?= number_format((float)$fundingHealth['total_required_support'], 2) ?></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-<?= ((float)$fundingHealth['lowest_projected_balance'] < 0) ? 'danger' : 'secondary' ?>">
+                <div class="card-body">
+                    <div class="text-muted small">Lowest projected savings balance</div>
+                    <div class="fw-bold <?= ((float)$fundingHealth['lowest_projected_balance'] < 0) ? 'text-danger' : 'text-success' ?>">
+                        £<?= number_format((float)$fundingHealth['lowest_projected_balance'], 2) ?>
+                    </div>
+                    <div class="small text-muted"><?= htmlspecialchars((string)$fundingHealth['lowest_projected_balance_date']) ?></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-<?= ((float)$fundingHealth['total_funding_gap'] > 0) ? 'danger' : 'success' ?>">
+                <div class="card-body">
+                    <div class="text-muted small">Actual funding gap</div>
+                    <div class="fw-bold <?= ((float)$fundingHealth['total_funding_gap'] > 0) ? 'text-danger' : 'text-success' ?>">
+                        £<?= number_format((float)$fundingHealth['total_funding_gap'], 2) ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- 👀 Watcher Alerts -->
 <div class="mb-4">
@@ -337,7 +398,7 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 <!-- 🔴 Forecasted Balance Issues -->
 <?php if (count($balance_issues) > 0): ?>
     <div class="mb-4">
-        <h4>💰 Upcoming Required Transfers (Next <?= (int)$shortfall_window_days ?> Days)</h4>
+        <h4>💰 Actionable Funding Moves (Next <?= (int)$shortfall_window_days ?> Days)</h4>
         <?php foreach ($balance_issues as $f): ?>
             <?php
                 $days_until = (new DateTime($f['start_day']))->diff(new DateTime())->days;
@@ -391,13 +452,11 @@ if (($jobState['last_status'] ?? null) === 'failed') {
                 <p>👉 Required Transfer Into Account: <strong>£<?= number_format($f['top_up'], 2) ?></strong> by <?= $label ?> (<?= $short_date ?>)</p>
                 <p>🔍 Window: <?= $f['start_day'] ?> ➞ <?= $f['min_day'] ?></p>
 
-                <?php if (!empty($f['reserve_account_name'])): ?>
-                    <p>🛡️ Safe from <?= htmlspecialchars($f['reserve_account_name']) ?> without breaching reserve: <strong>£<?= number_format($f['safe_from_reserve'], 2) ?></strong></p>
-                    <?php if (($f['breach_amount'] ?? 0) > 0): ?>
-                        <p class="text-danger">⚠️ Reserve gap: <strong>£<?= number_format($f['breach_amount'], 2) ?></strong> would breach solvency reserve. Another funding source or spending action is needed.</p>
-                    <?php else: ?>
-                        <p class="text-success">✅ Remaining safe reserve headroom after this and earlier required transfers: <strong>£<?= number_format($f['remaining_safe_after_this'], 2) ?></strong></p>
-                    <?php endif; ?>
+                <p>💧 Fundable from <?= htmlspecialchars((string)$fundingHealth['reserve_account_name']) ?> after dated commitments: <strong>£<?= number_format((float)($f['fundable_from_savings'] ?? 0), 2) ?></strong></p>
+                <?php if (((float)($f['funding_gap'] ?? 0)) > 0): ?>
+                    <p class="text-danger">⚠️ Actual funding gap after dated savings events: <strong>£<?= number_format((float)$f['funding_gap'], 2) ?></strong>. Another funding source or spending action is needed.</p>
+                <?php else: ?>
+                    <p class="text-success">✅ After this and earlier support transfers, projected <?= htmlspecialchars((string)$fundingHealth['reserve_account_name']) ?> balance is <strong>£<?= number_format((float)($f['savings_balance_after_support'] ?? 0), 2) ?></strong></p>
                 <?php endif; ?>
 
                 <ul class="mb-0">
@@ -415,8 +474,8 @@ if (($jobState['last_status'] ?? null) === 'failed') {
     </div>
 <?php else: ?>
     <div class="forecast-panel good">
-        <h5>✅ You're in good shape!</h5>
-        <p>No projected current-account shortfalls starting in the next <?= (int)$shortfall_window_days ?> days.</p>
+        <h5>✅ No funding action needed</h5>
+        <p>No projected current-account support transfers are needed in the next <?= (int)$shortfall_window_days ?> days.</p>
     </div>
 <?php endif; ?>
 

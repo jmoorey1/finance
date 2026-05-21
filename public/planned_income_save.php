@@ -17,6 +17,7 @@ $description = trim((string)($_POST['description'] ?? ''));
 $categoryId = isset($_POST['category_id']) && $_POST['category_id'] !== '' ? (int)$_POST['category_id'] : 0;
 $accountId = isset($_POST['account_id']) && $_POST['account_id'] !== '' ? (int)$_POST['account_id'] : 0;
 $amountRaw = trim((string)($_POST['amount'] ?? ''));
+$budgetMonthRaw = trim((string)($_POST['budget_month'] ?? ''));
 $windowStart = trim((string)($_POST['window_start'] ?? ''));
 $windowEnd = trim((string)($_POST['window_end'] ?? ''));
 $timingStrategy = trim((string)($_POST['timing_strategy'] ?? 'latest'));
@@ -56,6 +57,11 @@ if ($amountRaw === '' || !is_numeric($amountRaw) || (float)$amountRaw <= 0) {
     $errors[] = 'Amount must be a positive number.';
 } else {
     $amount = number_format((float)$amountRaw, 2, '.', '');
+}
+
+$budgetMonthStart = pie_month_input_to_start_date($budgetMonthRaw);
+if ($budgetMonthStart === null) {
+    $errors[] = 'Budget financial month is required.';
 }
 
 try {
@@ -103,6 +109,7 @@ $form['description'] = $description;
 $form['category_id'] = $categoryId ?: '';
 $form['account_id'] = $accountId ?: '';
 $form['amount'] = $amountRaw;
+$form['budget_month'] = $budgetMonthRaw;
 $form['window_start'] = $windowStart;
 $form['window_end'] = $windowEnd;
 $form['timing_strategy'] = $timingStrategy;
@@ -126,6 +133,7 @@ try {
                 category_id = ?,
                 account_id = ?,
                 amount = ?,
+                budget_month_start = ?,
                 window_start = ?,
                 window_end = ?,
                 timing_strategy = ?,
@@ -139,6 +147,7 @@ try {
             $categoryId,
             $accountId,
             $amount,
+            $budgetMonthStart,
             $windowStart,
             $windowEnd,
             $timingStrategy,
@@ -151,15 +160,16 @@ try {
     } else {
         $stmt = $pdo->prepare("
             INSERT INTO planned_income_events (
-                description, category_id, account_id, amount,
+                description, category_id, account_id, amount, budget_month_start,
                 window_start, window_end, timing_strategy, manual_date, active, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $description,
             $categoryId,
             $accountId,
             $amount,
+            $budgetMonthStart,
             $windowStart,
             $windowEnd,
             $timingStrategy,
