@@ -1,10 +1,13 @@
-<?php include '../layout/header.php'; ?>
+<?php 
+require_once '../config/db.php';
+auth_session_start();
+include '../layout/header.php'; ?>
+
 <style>
   .container.budget-container { max-width: 100%; }
 </style>
 <?php
 
-require_once '../config/db.php';
 
 // Categories to exclude from budgeting
 $excluded = [

@@ -58,6 +58,14 @@ if (!isset($APP_CONFIG) || !is_array($APP_CONFIG)) {
             'lock_name' => 'finance:weekly_email_summary',
         ],
 
+        // Watcher / analyst baseline configuration
+        'watcher' => [
+            'enabled' => true,
+            'forecast_days' => 90,
+            'shortfall_window_days' => 31,
+            'index_alert_limit' => 5,
+        ],
+
         // Feature flags for phased deployment later
         'features' => [
             // Reserved for later backlog items — default OFF unless already live behaviour.

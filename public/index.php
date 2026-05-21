@@ -28,6 +28,7 @@ require_once '../scripts/get_account_balances.php';
 require_once '../scripts/get_account_import_status.php';
 require_once '../scripts/get_missed_predictions.php';
 require_once '../scripts/get_missed_statements.php';
+require_once '../scripts/get_watcher_alerts.php';
 
 $financial_period = get_financial_month_range();
 $start_month = $financial_period['start'];
@@ -95,6 +96,7 @@ $balances = get_account_balances($pdo);
 $import_status_by_account = get_account_import_status($pdo);
 $missed = get_missed_predictions($pdo);
 $missed_state = get_missed_statements($pdo);
+$watcher_alerts = get_open_watcher_alerts($pdo, (int)app_config('watcher.index_alert_limit', 5));
 
 // Job state for display
 $jobState = get_predict_instances_state();
@@ -124,6 +126,40 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 ?>
 
 <h1 class="mb-4">Dashboard</h1>
+
+<!-- 👀 Watcher Alerts -->
+<div class="mb-4">
+    <h4>👀 Watcher Alerts</h4>
+    <?php if (count($watcher_alerts) > 0): ?>
+        <ul class="list-group">
+            <?php foreach ($watcher_alerts as $alert): ?>
+                <?php
+                    $severityClass = 'bg-info text-dark';
+                    if (($alert['severity'] ?? '') === 'critical') {
+                        $severityClass = 'bg-danger';
+                    } elseif (($alert['severity'] ?? '') === 'warning') {
+                        $severityClass = 'bg-warning text-dark';
+                    }
+                ?>
+                <li class="list-group-item d-flex justify-content-between align-items-start">
+                    <div class="me-3">
+                        <div class="fw-bold"><?= htmlspecialchars((string)$alert['title']) ?></div>
+                        <div class="small text-muted"><?= htmlspecialchars((string)$alert['summary']) ?></div>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge <?= $severityClass ?>"><?= htmlspecialchars((string)$alert['severity']) ?></span>
+                    </div>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+        <div class="mt-2">
+            <a href="watcher_alerts.php" class="btn btn-sm btn-outline-primary">Open Watcher Alerts</a>
+        </div>
+    <?php else: ?>
+        <p class="text-muted mb-1">No open watcher alerts.</p>
+        <a href="watcher_alerts.php" class="btn btn-sm btn-outline-secondary">Open Watcher Alerts</a>
+    <?php endif; ?>
+</div>
 
 <!-- 🔧 Forecast Engine Status -->
 <div class="mb-3">
