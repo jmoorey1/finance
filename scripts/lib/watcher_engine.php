@@ -84,6 +84,11 @@ function watcher_detect_funding_alerts(PDO $pdo): array
             'recommended_action_json' => [
                 'label' => 'Open Funding Health',
                 'url' => '/finance/public/funding_health.php?days=' . $windowDays,
+                'headline' => 'Create or identify the savings account that should act as the funding source.',
+                'details' => [
+                    'Funding Health cannot work without an active savings account.',
+                    'Mark the intended reserve / savings account active, then rerun the watcher.',
+                ],
             ],
             'related_account_id' => null,
             'related_category_id' => null,
@@ -145,6 +150,20 @@ function watcher_detect_funding_alerts(PDO $pdo): array
             'recommended_action_json' => [
                 'label' => 'Open Funding Health',
                 'url' => '/finance/public/funding_health.php?days=' . $windowDays,
+                'headline' => ($gap > 0.005)
+                    ? 'Bridge the gap or reduce outgoings before ' . $startDayStr . '.'
+                    : 'Move £' . number_format($topUp, 2) . ' from ' . $savingsName . ' into ' . $accountName . ' by ' . $startDayStr . '.',
+                'details' => ($gap > 0.005)
+                    ? [
+                        'Projected support need: £' . number_format($topUp, 2) . '.',
+                        'Savings only covers £' . number_format($fundable, 2) . ', leaving a gap of £' . number_format($gap, 2) . '.',
+                        'Review incoming/outgoing timing or use another funding source.',
+                    ]
+                    : [
+                        'Projected support need: £' . number_format($topUp, 2) . '.',
+                        'This is fully coverable from ' . $savingsName . ' after dated savings events.',
+                        'Act by ' . $startDayStr . ' to avoid the forecast dip.',
+                    ],
             ],
             'related_account_id' => $accountId,
             'related_category_id' => null,
@@ -173,6 +192,12 @@ function watcher_detect_funding_alerts(PDO $pdo): array
             'recommended_action_json' => [
                 'label' => 'Open Funding Health',
                 'url' => '/finance/public/funding_health.php?days=' . $windowDays,
+                'headline' => 'The current action window contains an uncovered funding gap.',
+                'details' => [
+                    'Total required support: £' . number_format((float)$funding['total_required_support'], 2) . '.',
+                    'Actual uncovered gap: £' . number_format((float)$funding['total_funding_gap'], 2) . '.',
+                    'Review Funding Health for the dated event sequence driving the gap.',
+                ],
             ],
             'related_account_id' => $funding['reserve_account_id'] ?? null,
             'related_category_id' => null,
@@ -225,6 +250,11 @@ function watcher_detect_stale_import_alerts(PDO $pdo): array
             'recommended_action_json' => [
                 'label' => 'Upload fresh account data',
                 'url' => '/finance/public/upload.php',
+                'headline' => 'Refresh this account feed so forecasts and watcher alerts are based on current data.',
+                'details' => [
+                    'Stale imports reduce trust in Funding Health and watcher recommendations.',
+                    'Prioritise current and credit accounts first if several feeds are stale.',
+                ],
             ],
             'related_account_id' => (int)$accountId,
             'related_category_id' => null,

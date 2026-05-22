@@ -1,5 +1,140 @@
 <?php
 
+function wq_round_money(float $value): float
+{
+    return round($value, 2);
+}
+
+function wq_rule_review_url(?int $ruleId = null): string
+{
+    return '/finance/public/predicted.php' . ($ruleId ? ('#rule-' . $ruleId) : '');
+}
+
+function wq_action(string $label, string $url, string $headline, array $details = [], array $suggestedValues = []): array
+{
+    return [
+        'label' => $label,
+        'url' => $url,
+        'headline' => $headline,
+        'details' => array_values($details),
+        'suggested_values' => $suggestedValues,
+    ];
+}
+
+function wq_build_date_drift_action(int $ruleId, string $direction, int $days, float $ratio, ?string $description): array
+{
+    $headline = 'Review the rule timing. Recent fulfilments are consistently landing ' . $days . ' day' . ($days === 1 ? '' : 's') . ' ' . $direction . ' than scheduled.';
+    $details = [
+        'Check whether the rule cadence or anchor date needs moving.',
+        'If the pattern is intentional, update the rule rather than letting misses accumulate.',
+        'Confidence: ' . number_format($ratio * 100, 0) . '% of the sampled fulfilments show the same day drift.',
+    ];
+
+    return wq_action(
+        'Review recurring rule',
+        wq_rule_review_url($ruleId),
+        $headline,
+        $details,
+        [
+            'rule_id' => $ruleId,
+            'suggested_day_shift' => $direction === 'later' ? $days : -$days,
+            'rule_description' => $description,
+        ]
+    );
+}
+
+function wq_build_amount_drift_action(int $ruleId, float $expected, float $medianActual, ?string $description): array
+{
+    $headline = 'Review the rule amount. Recent fulfilments cluster around £' . number_format($medianActual, 2) . ' rather than the configured £' . number_format($expected, 2) . '.';
+    $details = [
+        'If this is the new normal, update the rule amount to reduce future forecast distortion.',
+        'If the amount varies intentionally, consider whether the rule should be marked variable instead.',
+    ];
+
+    return wq_action(
+        'Review recurring rule',
+        wq_rule_review_url($ruleId),
+        $headline,
+        $details,
+        [
+            'rule_id' => $ruleId,
+            'current_amount' => wq_round_money($expected),
+            'suggested_amount' => wq_round_money($medianActual),
+            'rule_description' => $description,
+        ]
+    );
+}
+
+function wq_build_missing_pattern_action(string $cadence, float $medianAmountAbs, string $payeeName, string $accountName, string $categoryName): array
+{
+    $headline = 'Consider creating a new ' . $cadence . ' recurring rule for ' . ($payeeName !== '' ? $payeeName : 'this payee') . '.';
+    $details = [
+        'Recent transactions look consistent enough to model as a recurring pattern.',
+        'Suggested starting amount: about £' . number_format($medianAmountAbs, 2) . '.',
+        'Check account/category mapping before creating the rule: ' . $accountName . ' / ' . $categoryName . '.',
+    ];
+
+    return wq_action(
+        'Open recurring rules',
+        '/finance/public/predicted.php',
+        $headline,
+        $details,
+        [
+            'suggested_cadence' => $cadence,
+            'suggested_amount_abs' => wq_round_money($medianAmountAbs),
+            'payee_name' => $payeeName,
+            'account_name' => $accountName,
+            'category_name' => $categoryName,
+        ]
+    );
+}
+
+function wq_build_prediction_miss_action(int $ruleId, int $count, string $oldestOpenMiss, ?string $description): array
+{
+    $headline = 'Review this rule and reconcile or skip the missed instances before they distort the forecast further.';
+    $details = [
+        'There are ' . $count . ' open missed instances.',
+        'Oldest unresolved miss: ' . $oldestOpenMiss . '.',
+        'If the pattern has changed, update the rule. If the events already happened, reconcile them.',
+    ];
+
+    return wq_action(
+        'Review predicted instances',
+        '/finance/public/predicted.php',
+        $headline,
+        $details,
+        [
+            'rule_id' => $ruleId,
+            'open_missed_count' => $count,
+            'oldest_open_missed' => $oldestOpenMiss,
+            'rule_description' => $description,
+        ]
+    );
+}
+
+function wq_build_review_backlog_action(string $accountName, int $count, int $age): array
+{
+    $headline = 'Clear the review queue for ' . $accountName . ' before prediction matching quality degrades.';
+    $details = [
+        $count . ' unresolved staging item' . ($count === 1 ? '' : 's') . ' remain.',
+        'Oldest unresolved item is ' . $age . ' day' . ($age === 1 ? '' : 's') . ' old.',
+        'Start with fulfils-prediction and potential-duplicate rows first.',
+    ];
+
+    return wq_action(
+        'Open review queue',
+        '/finance/public/review.php',
+        $headline,
+        $details,
+        [
+            'account_name' => $accountName,
+            'backlog_count' => $count,
+            'age_days' => $age,
+            'recommended_priority' => ['fulfills_prediction', 'potential_duplicate', 'new'],
+        ]
+    );
+}
+
 function wq_config(string $key, $default = null)
 {
     return app_config('watcher.forecast_quality.' . $key, $default);
@@ -220,10 +355,13 @@ function watcher_fq_detect_rule_date_drift(PDO $pdo): array
                 'matching_ratio' => $ratio,
                 'recent_instances' => $evidenceItems,
             ],
-            'recommended_action_json' => [
-                'label' => 'Review recurring rules',
-                'url' => '/finance/public/predicted.php',
-            ],
+            'recommended_action_json' => wq_build_date_drift_action(
+                $ruleId,
+                $direction,
+                $days,
+                $ratio,
+                $sample['rule_description'] ?? null
+            ),
             'related_account_id' => (int)$sample['from_account_id'],
             'related_category_id' => null,
             'related_predicted_transaction_id' => $ruleId,
@@ -343,10 +481,12 @@ function watcher_fq_detect_rule_amount_drift(PDO $pdo): array
                 'cluster_ratio' => $clusterRatio,
                 'recent_instances' => $evidenceItems,
             ],
-            'recommended_action_json' => [
-                'label' => 'Review recurring rules',
-                'url' => '/finance/public/predicted.php',
-            ],
+            'recommended_action_json' => wq_build_amount_drift_action(
+                $ruleId,
+                $expected,
+                $medianActual,
+                $sample['rule_description'] ?? null
+            ),
             'related_account_id' => (int)$sample['from_account_id'],
             'related_category_id' => null,
             'related_predicted_transaction_id' => $ruleId,
@@ -520,10 +660,13 @@ function watcher_fq_detect_missing_recurring_patterns(PDO $pdo): array
                     ];
                 }, array_slice($items, 0, 8)),
             ],
-            'recommended_action_json' => [
-                'label' => 'Review recurring rules',
-                'url' => '/finance/public/predicted.php',
-            ],
+            'recommended_action_json' => wq_build_missing_pattern_action(
+                $cadence['label'],
+                $medianAmountAbs,
+                (string)($sample['payee_name'] ?? ''),
+                (string)$sample['account_name'],
+                (string)$sample['category_name']
+            ),
             'related_account_id' => (int)$sample['account_id'],
             'related_category_id' => null,
             'related_predicted_transaction_id' => null,
@@ -585,10 +728,12 @@ function watcher_fq_detect_prediction_miss_accumulation(PDO $pdo): array
                 'oldest_open_missed' => $row['oldest_open_missed'],
                 'newest_open_missed' => $row['newest_open_missed'],
             ],
-            'recommended_action_json' => [
-                'label' => 'Review predicted instances',
-                'url' => '/finance/public/predicted.php',
-            ],
+            'recommended_action_json' => wq_build_prediction_miss_action(
+                (int)$row['rule_id'],
+                $count,
+                (string)$row['oldest_open_missed'],
+                $row['rule_description'] ?? null
+            ),
             'related_account_id' => (int)$row['from_account_id'],
             'related_category_id' => null,
             'related_predicted_transaction_id' => (int)$row['rule_id'],
@@ -654,10 +799,11 @@ function watcher_fq_detect_review_backlog(PDO $pdo): array
                 'oldest_created_at' => $row['oldest_created_at'],
                 'age_days' => $age,
             ],
-            'recommended_action_json' => [
-                'label' => 'Open review queue',
-                'url' => '/finance/public/review.php',
-            ],
+            'recommended_action_json' => wq_build_review_backlog_action(
+                (string)$row['account_name'],
+                $count,
+                $age
+            ),
             'related_account_id' => (int)$row['account_id'],
             'related_category_id' => null,
             'related_predicted_transaction_id' => null,

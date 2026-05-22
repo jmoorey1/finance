@@ -18,6 +18,17 @@ function watcher_badge_class(string $severity): string
     };
 }
 
+function watcher_action_details($action): array
+{
+    if (!is_array($action)) {
+        return [];
+    }
+    if (!isset($action['details']) || !is_array($action['details'])) {
+        return [];
+    }
+    return array_values(array_filter($action['details'], fn($v) => is_string($v) && trim($v) !== ''));
+}
+
 include '../layout/header.php';
 ?>
 
@@ -87,12 +98,32 @@ include '../layout/header.php';
                             <?php endif; ?>
                         </td>
                         <td>
+                            <?php if (is_array($action) && !empty($action['headline'])): ?>
+                                <div class="small mb-2"><strong><?= htmlspecialchars((string)$action['headline']) ?></strong></div>
+                            <?php endif; ?>
+
+                            <?php $actionDetails = watcher_action_details($action); ?>
+                            <?php if (!empty($actionDetails)): ?>
+                                <ul class="small ps-3 mb-2">
+                                    <?php foreach ($actionDetails as $detail): ?>
+                                        <li><?= htmlspecialchars($detail) ?></li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+
                             <?php if (is_array($action) && !empty($action['url']) && !empty($action['label'])): ?>
                                 <a href="<?= htmlspecialchars((string)$action['url']) ?>" class="btn btn-sm btn-outline-primary">
                                     <?= htmlspecialchars((string)$action['label']) ?>
                                 </a>
                             <?php else: ?>
                                 <span class="text-muted">—</span>
+                            <?php endif; ?>
+
+                            <?php if (is_array($action) && !empty($action['suggested_values']) && is_array($action['suggested_values'])): ?>
+                                <details class="mt-2">
+                                    <summary class="small text-muted">Suggested values</summary>
+                                    <pre class="small mb-0"><?= htmlspecialchars(json_encode($action['suggested_values'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?></pre>
+                                </details>
                             <?php endif; ?>
                         </td>
                     </tr>
