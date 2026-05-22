@@ -25,8 +25,14 @@ $sections = [
 // Load top-level categories
 $categories = [];
 $stmt = $pdo->query("
-    SELECT id, name, type, fixedness, priority FROM categories
-    WHERE parent_id IS NULL AND type IN ('income','expense')
+    SELECT id, name, type, fixedness, priority, watcher_budget_mode
+    FROM categories
+    WHERE parent_id IS NULL
+      AND type IN ('income','expense')
+      AND (
+            type = 'income'
+            OR COALESCE(watcher_budget_mode, 'normal') = 'normal'
+          )
     ORDER BY FIELD(type, 'income','expense'), budget_order
 ");
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {

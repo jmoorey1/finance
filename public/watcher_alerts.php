@@ -36,7 +36,7 @@ include '../layout/header.php';
 
 <p class="text-muted">
     Watcher coverage now includes funding-health alerts, stale account imports, recurring-rule drift, likely missing recurring patterns,
-    prediction miss accumulation, and unresolved review backlog.
+    prediction miss accumulation, unresolved review backlog, budget burn risk, unrealistic monthly budgets, and budget timing mismatch.
 </p>
 
 <div class="mb-3 d-flex gap-2 flex-wrap">

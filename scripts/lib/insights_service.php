@@ -14,6 +14,7 @@ function ins_load_variable_parent_categories(PDO $pdo): array
         WHERE type = 'expense'
           AND fixedness = 'variable'
           AND parent_id IS NULL
+          AND COALESCE(watcher_budget_mode, 'normal') = 'normal'
         ORDER BY budget_order, name
     ");
 
@@ -63,6 +64,7 @@ function ins_fetch_variable_expense_totals(PDO $pdo, DateTimeInterface $start, D
           AND topcat.type = 'expense'
           AND topcat.fixedness = 'variable'
           AND topcat.parent_id IS NULL
+          AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
           AND a.type IN ('current', 'credit', 'savings')
           AND ll.line_date BETWEEN ? AND ?
           AND (ll.is_prediction = 0 OR ll.line_date >= ?)
@@ -103,6 +105,7 @@ function ins_fetch_actual_discretionary_totals(PDO $pdo, DateTimeInterface $star
           AND topcat.type = 'expense'
           AND topcat.parent_id IS NULL
           AND topcat.priority = 'discretionary'
+          AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
           AND a.type IN ('current', 'credit', 'savings')
           AND ll.is_prediction = 0
           AND ll.line_date BETWEEN ? AND ?
@@ -137,6 +140,7 @@ function ins_fetch_period_discretionary_payees(PDO $pdo, DateTimeInterface $star
           AND topcat.type = 'expense'
           AND topcat.parent_id IS NULL
           AND topcat.priority = 'discretionary'
+          AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
           AND a.type IN ('current', 'credit', 'savings')
           AND ll.line_date BETWEEN ? AND ?
           AND (ll.is_prediction = 0 OR ll.line_date >= ?)
@@ -167,6 +171,7 @@ function ins_fetch_period_expense_total(PDO $pdo, DateTimeInterface $start, Date
         WHERE ll.category_type = 'expense'
           AND topcat.type = 'expense'
           AND topcat.parent_id IS NULL
+          AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
           AND a.type IN ('current', 'credit', 'savings')
           AND ll.line_date BETWEEN ? AND ?
           AND (ll.is_prediction = 0 OR ll.line_date >= ?)

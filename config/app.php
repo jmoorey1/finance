@@ -82,6 +82,16 @@ if (!isset($APP_CONFIG) || !is_array($APP_CONFIG)) {
                 'review_backlog_critical_count' => 15,
                 'review_backlog_critical_age_days' => 7,
             ],
+            'budget_quality' => [
+                'burn_ratio_threshold' => 0.85,
+                'burn_month_progress_cap' => 0.80,
+                'burn_min_budget_amount' => 50.00,
+                'unrealistic_overrun_pct' => 0.20,
+                'unrealistic_overrun_abs' => 50.00,
+                'timing_future_budget_months' => 3,
+                'timing_future_budget_min' => 100.00,
+                'timing_current_gap_abs' => 75.00,
+            ],
         ],
 
         // Feature flags for phased deployment later

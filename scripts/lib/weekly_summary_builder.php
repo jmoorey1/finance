@@ -20,6 +20,7 @@ function wsb_load_variable_categories(PDO $pdo): array
         WHERE type = 'expense'
           AND fixedness = 'variable'
           AND parent_id IS NULL
+          AND COALESCE(watcher_budget_mode, 'normal') = 'normal'
         ORDER BY budget_order, name
     ");
 
@@ -65,6 +66,7 @@ function wsb_load_actual_totals(PDO $pdo, DateTimeInterface $start, DateTimeInte
           AND topcat.type = 'expense'
           AND topcat.fixedness = 'variable'
           AND topcat.parent_id IS NULL
+          AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
           AND ll.is_prediction = 0
           AND ll.line_date BETWEEN ? AND ?
         GROUP BY topcat.id
@@ -96,6 +98,7 @@ function wsb_load_forecast_totals(PDO $pdo, DateTimeInterface $start, DateTimeIn
           AND topcat.type = 'expense'
           AND topcat.fixedness = 'variable'
           AND topcat.parent_id IS NULL
+          AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
           AND ll.is_prediction = 1
           AND ll.line_date BETWEEN ? AND ?
         GROUP BY topcat.id

@@ -69,16 +69,19 @@ $account_query = implode('&', array_map(fn($id) => "accounts[]={$id}", $account_
 $actuals = [];
 $stmt = $pdo->prepare("
     SELECT
-        COALESCE(ll.parent_category_id, ll.category_id) AS category_id,
+        topcat.id AS category_id,
         SUM(-ll.amount) AS total
     FROM ledger_lines ll
     JOIN accounts a
       ON a.id = ll.account_id
+    JOIN categories topcat
+      ON topcat.id = COALESCE(ll.parent_category_id, ll.category_id)
     WHERE ll.category_type = 'expense'
+      AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
       AND a.type IN ('current','credit','savings')
       AND ll.line_date BETWEEN ? AND ?
       AND (ll.is_prediction = 0 OR ll.line_date >= ?)
-    GROUP BY COALESCE(ll.parent_category_id, ll.category_id)
+    GROUP BY topcat.id
 ");
 $stmt->execute([
     $start_date->format('Y-m-d'),
@@ -193,6 +196,7 @@ $stmt = $pdo->prepare("
       ON topcat.id = COALESCE(ll.parent_category_id, ll.category_id)
     WHERE ll.category_type = 'expense'
       AND topcat.priority = 'discretionary'
+      AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
       AND a.type IN ('current','credit','savings')
       AND ll.line_date BETWEEN ? AND ?
       AND (ll.is_prediction = 0 OR ll.line_date >= ?)
@@ -217,6 +221,7 @@ $stmt = $pdo->prepare("
       ON topcat.id = COALESCE(ll.parent_category_id, ll.category_id)
     WHERE ll.category_type = 'expense'
       AND topcat.priority = 'discretionary'
+      AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
       AND a.type IN ('current','credit','savings')
       AND ll.line_date BETWEEN ? AND ?
       AND (ll.is_prediction = 0 OR ll.line_date >= ?)
@@ -233,7 +238,10 @@ $stmt = $pdo->prepare("
     FROM ledger_lines ll
     JOIN accounts a
       ON a.id = ll.account_id
+    JOIN categories topcat
+      ON topcat.id = COALESCE(ll.parent_category_id, ll.category_id)
     WHERE ll.category_type = 'expense'
+      AND COALESCE(topcat.watcher_budget_mode, 'normal') = 'normal'
       AND a.type IN ('current','credit','savings')
       AND ll.line_date BETWEEN ? AND ?
       AND (ll.is_prediction = 0 OR ll.line_date >= ?)
