@@ -38,6 +38,7 @@ if (($funding['status'] ?? '') === 'action') {
 <div class="alert alert-info">
     This is now the <strong>primary operational view</strong>.
     It answers one question: <strong>do I need to move money soon to keep current accounts funded?</strong>
+    Starting balances are treated as <strong>cleared as of last night</strong>, and today's uncleared predicted / flexible-income items are included in the dated event stream.
 </div>
 
 <div class="alert alert-secondary">
@@ -65,8 +66,12 @@ if (($funding['status'] ?? '') === 'action') {
     <div class="col-md-3">
         <div class="card">
             <div class="card-body">
-                <div class="text-muted small"><?= htmlspecialchars((string)$funding['reserve_account_name']) ?> balance now</div>
+                <div class="text-muted small"><?= htmlspecialchars((string)$funding['reserve_account_name']) ?> cleared balance as of last night</div>
                 <div class="fw-bold"><?= fh_page_money($funding['current_balance']) ?></div>
+                <div class="small text-muted">
+                    Projected after today's uncleared items:
+                    <?= fh_page_money((float)($funding['projected_balance_after_today_events'] ?? $funding['current_balance'])) ?>
+                </div>
             </div>
         </div>
     </div>

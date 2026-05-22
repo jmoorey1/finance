@@ -69,6 +69,7 @@ function fh_build_primary_funding_health(
             'reserve_account_name' => null,
             'window_days' => $windowDays,
             'current_balance' => 0.0,
+            'projected_balance_after_today_events' => 0.0,
             'soft_earmarks_total' => se_get_total_earmarks($pdo),
             'total_required_support' => 0.0,
             'total_funding_gap' => 0.0,
@@ -81,16 +82,27 @@ function fh_build_primary_funding_health(
     }
 
     $reserveAccountName = se_get_account_name($pdo, $reserveAccountId) ?? 'SAVINGS';
-    $currentBalance = se_get_account_balance_as_of($pdo, $reserveAccountId, $today->format('Y-m-d'));
     $softEarmarksTotal = se_get_total_earmarks($pdo);
 
     $issues = fh_get_required_support_issues($pdo, $windowDays);
 
-    $startDate = $today->modify('+1 day')->format('Y-m-d');
     $endDate = $today->modify('+' . $windowDays . ' days')->format('Y-m-d');
 
-    $reserveStream = cp_get_account_event_stream($pdo, $reserveAccountId, $startDate, $endDate);
+    $reserveStream = cp_get_account_event_stream(
+        $pdo,
+        $reserveAccountId,
+        $today->format('Y-m-d'),
+        $endDate
+    );
     $events = $reserveStream['events'] ?? [];
+    $currentBalance = (float)($reserveStream['balance_before_start'] ?? 0.0);
+    $projectedBalanceAfterTodayEvents = $currentBalance;
+
+    foreach ($events as $todayEvent) {
+        if (($todayEvent['event_date'] ?? '') === $today->format('Y-m-d')) {
+            $projectedBalanceAfterTodayEvents = (float)$todayEvent['balance_after'];
+        }
+    }
 
     foreach ($issues as $idx => $issue) {
         $events[] = [
@@ -198,6 +210,7 @@ function fh_build_primary_funding_health(
         'reserve_account_name' => $reserveAccountName,
         'window_days' => $windowDays,
         'current_balance' => (float)$currentBalance,
+        'projected_balance_after_today_events' => (float)$projectedBalanceAfterTodayEvents,
         'soft_earmarks_total' => (float)$softEarmarksTotal,
         'total_required_support' => (float)$totalRequiredSupport,
         'total_funding_gap' => (float)$totalFundingGap,

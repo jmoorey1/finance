@@ -24,8 +24,8 @@ include '../layout/header.php';
 <h1 class="mb-4">👀 Watcher Alerts</h1>
 
 <p class="text-muted">
-    Baseline watcher coverage currently includes projected shortfalls, reserve breaches, and stale account imports.
-    Richer detections such as rule drift and new recurring-pattern suggestions will come later.
+    Watcher coverage now includes funding-health alerts, stale account imports, recurring-rule drift, likely missing recurring patterns,
+    prediction miss accumulation, and unresolved review backlog.
 </p>
 
 <div class="mb-3 d-flex gap-2 flex-wrap">

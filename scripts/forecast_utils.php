@@ -46,13 +46,21 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
         $acct_id = (int)$acct['id'];
         $acct_name = $acct['name'];
 
-        $today_balance = se_get_account_balance_as_of($db, $acct_id, $today->format('Y-m-d'));
         $stream = cp_get_account_event_stream(
             $db,
             $acct_id,
-            $today->modify('+1 day')->format('Y-m-d'),
+            $today->format('Y-m-d'),
             $end_date->format('Y-m-d')
         );
+
+        $startingBalanceAsOfLastNight = (float)($stream['balance_before_start'] ?? 0.0);
+        $projectedBalanceAfterTodayEvents = $startingBalanceAsOfLastNight;
+
+        foreach ($stream['events'] as $todayEvent) {
+            if (($todayEvent['event_date'] ?? '') === $today->format('Y-m-d')) {
+                $projectedBalanceAfterTodayEvents = (float)$todayEvent['balance_after'];
+            }
+        }
 
         $in_deficit = false;
         $dip_start = null;
@@ -94,7 +102,9 @@ function get_forecast_shortfalls($db, $forecast_days = 90, $shortfall_window = 3
         if ($lowest_point['balance'] < 0 && $dip_start !== null && $dip_start <= $window_end->format('Y-m-d')) {
             $output[] = [
                 'account_name' => $acct_name,
-                'today_balance' => $today_balance,
+                'starting_balance_as_of_last_night' => $startingBalanceAsOfLastNight,
+                'projected_balance_after_today_events' => $projectedBalanceAfterTodayEvents,
+                'today_balance' => $projectedBalanceAfterTodayEvents,
                 'min_day' => $lowest_point['date'],
                 'min_balance' => $lowest_point['balance'],
                 'top_up' => abs($lowest_point['balance']),

@@ -151,8 +151,12 @@ if (($jobState['last_status'] ?? null) === 'failed') {
         <div class="col-md-3">
             <div class="card">
                 <div class="card-body">
-                    <div class="text-muted small"><?= htmlspecialchars((string)$fundingHealth['reserve_account_name']) ?> balance now</div>
+                    <div class="text-muted small"><?= htmlspecialchars((string)$fundingHealth['reserve_account_name']) ?> cleared balance as of last night</div>
                     <div class="fw-bold">£<?= number_format((float)$fundingHealth['current_balance'], 2) ?></div>
+                    <div class="small text-muted">
+                        Projected after today's uncleared items:
+                        £<?= number_format((float)($fundingHealth['projected_balance_after_today_events'] ?? $fundingHealth['current_balance']), 2) ?>
+                    </div>
                 </div>
             </div>
         </div>
@@ -399,6 +403,9 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 <?php if (count($balance_issues) > 0): ?>
     <div class="mb-4">
         <h4>💰 Actionable Funding Moves (Next <?= (int)$shortfall_window_days ?> Days)</h4>
+        <p class="text-muted small">
+            These recommendations start from last night's cleared balances and include today's uncleared predicted / flexible-income events before looking forward.
+        </p>
         <?php foreach ($balance_issues as $f): ?>
             <?php
                 $days_until = (new DateTime($f['start_day']))->diff(new DateTime())->days;
@@ -418,7 +425,8 @@ if (($jobState['last_status'] ?? null) === 'failed') {
             ?>
             <div class="<?= $highlight_class ?>">
                 <h5>💸 <?= htmlspecialchars($f['account_name']) ?></h5>
-                <p>Today's Balance: <strong>£<?= number_format($f['today_balance'], 2) ?></strong></p>
+                <p>Cleared balance as of last night: <strong>£<?= number_format((float)($f['starting_balance_as_of_last_night'] ?? 0), 2) ?></strong></p>
+                <p>Projected after today's uncleared items: <strong>£<?= number_format((float)($f['projected_balance_after_today_events'] ?? $f['today_balance']), 2) ?></strong></p>
                 <p>Projected to hit <strong>£<?= number_format($f['min_balance'], 2) ?></strong> on <?= $f['min_day'] ?></p>
                 <?php
                     $start_date = new DateTime($f['start_day']);

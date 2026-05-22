@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../funding_health_engine.php';
 require_once __DIR__ . '/../get_account_import_status.php';
+require_once __DIR__ . '/watcher_forecast_quality.php';
 
 function watcher_is_enabled(): bool
 {
@@ -13,6 +14,11 @@ function watcher_managed_alert_types(): array
         'current_account_shortfall',
         'funding_gap',
         'stale_import',
+        'forecast_rule_date_drift',
+        'forecast_rule_amount_drift',
+        'missing_recurring_pattern',
+        'prediction_miss_accumulation',
+        'review_backlog',
         // legacy type kept here so old open alerts resolve on the next sync
         'reserve_breach',
     ];
@@ -237,6 +243,7 @@ function watcher_detect_all(PDO $pdo): array
 
     return array_merge(
         watcher_detect_funding_alerts($pdo),
+        watcher_detect_forecast_quality_alerts($pdo),
         watcher_detect_stale_import_alerts($pdo)
     );
 }
