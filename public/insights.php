@@ -1,6 +1,7 @@
 <?php
 require_once '../config/db.php';
 require_once '../scripts/lib/finance_periods.php';
+require_once '../scripts/lib/insights_service.php';
 
 $pdo = get_db_connection();
 
@@ -211,6 +212,8 @@ $stmt->execute([
 ]);
 $top_vendors = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$top_income_transactions = ins_fetch_period_income_transactions($pdo, $start_date, $end_date, $today, 5);
+
 // Totals for discretionary proportion
 $stmt = $pdo->prepare("
     SELECT COALESCE(SUM(-ll.amount), 0) AS total
@@ -343,6 +346,30 @@ include '../layout/header.php';
             </li>
         <?php endforeach; ?>
     </ul>
+</div>
+
+<div class="mb-4">
+    <h4>🏦 Top 5 Incoming Transactions</h4>
+    <?php if (!empty($top_income_transactions)): ?>
+        <ul class="list-group">
+            <?php foreach ($top_income_transactions as $row): ?>
+                <?php
+                    $desc = (string)$row['description'];
+                    $date = (string)$row['line_date'];
+                    $is_prediction = !empty($row['is_prediction']);
+                    $link_base = "ledger.php?$account_query&start={$start_date->format('Y-m-d')}&end={$end_date->format('Y-m-d')}&description=" . urlencode($desc);
+                    $amount_link = "<a href=\"" . htmlspecialchars($link_base) . "\" class=\"text-decoration-none\">" . insights_money((float)$row['amount']) . "</a>";
+                ?>
+                <li class="list-group-item">
+                    <?= htmlspecialchars($date) ?> – <?= htmlspecialchars($desc) ?>
+                    (<?= htmlspecialchars((string)$row['account_name']) ?>, <?= htmlspecialchars((string)($row['category_name'] ?? $row['category_type'] ?? 'uncategorised')) ?><?= $is_prediction ? ', predicted' : '' ?>)
+                    – <?= $amount_link ?>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php else: ?>
+        <p class="text-muted">No income transactions yet this month.</p>
+    <?php endif; ?>
 </div>
 
 <div class="mb-4">

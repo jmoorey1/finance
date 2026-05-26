@@ -54,8 +54,15 @@ if (!isset($APP_CONFIG) || !is_array($APP_CONFIG)) {
             ],
             'from_name' => 'Home Finances',
             'from_address' => 'no-reply@moorey.uk.com',
-            'subject' => 'Weekly Budget Summary – Variable Expenses',
+            'subject' => 'Weekly Home Finances Digest',
             'lock_name' => 'finance:weekly_email_summary',
+            'delivery' => [
+                'funding_window_days' => 31,
+                'funding_issue_limit' => 3,
+                'watcher_open_alert_limit' => 5,
+                'watcher_recent_days' => 7,
+                'watcher_recent_limit' => 3,
+            ],
         ],
 
         // Watcher / analyst baseline configuration

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/finance_periods.php';
 require_once __DIR__ . '/insights_service.php';
+require_once __DIR__ . '/weekly_delivery_sections.php';
 
 function wsb_money(float $amount): string
 {
@@ -143,6 +144,8 @@ function weekly_summary_build(PDO $pdo, ?DateTimeInterface $today = null): array
         'month_label' => $startMonth->format('j M') . ' – ' . $endMonth->format('j M'),
         'ytd_label' => $startYtd->format('j M') . ' – ' . $endMonth->format('j M Y'),
         'categories' => $categories,
+        'funding' => wds_load_funding_snapshot($pdo, $today),
+        'watcher' => wds_load_watcher_snapshot($pdo, $today),
         'headlines' => $headlines,
         'monthly_budget' => $monthlyBudget,
         'monthly_actual' => $monthlyActual,
@@ -218,10 +221,10 @@ function weekly_summary_render_headlines_html(array $headlines): string
         return '';
     }
 
-    $html = '<h3 style="font-family:sans-serif;">Key Budget Headlines</h3>';
+    $html = '<h3 style="font-family:sans-serif;">Key Finance Headlines</h3>';
     $html .= '<table cellpadding="6" cellspacing="0" style="border-collapse: collapse; font-family: sans-serif; font-size: 14px; width: 100%;">';
     $html .= '<tr style="background:#333; color:#fff;">';
-    $html .= '<th align="left">Considering current and planned spending this financial month</th>';
+    $html .= '<th align="left">Considering current and planned activity this financial month</th>';
     $html .= '</tr>';
 
     foreach ($headlines as $line) {
@@ -235,9 +238,11 @@ function weekly_summary_render_headlines_html(array $headlines): string
 
 function weekly_summary_render_html(array $summary): string
 {
-    $body = '<h2 style="font-family:sans-serif;">Weekly Budget Summary</h2>';
+    $body = '<h2 style="font-family:sans-serif;">Weekly Home Finances Digest</h2>';
+    $body .= wds_render_funding_html($summary['funding']);
+    $body .= wds_render_watcher_html($summary['watcher']);
     $body .= weekly_summary_render_headlines_html($summary['headlines']);
-    $body .= '<p style="font-family:sans-serif;">This email includes <strong>variable expense categories</strong> only.</p>';
+    $body .= '<p style="font-family:sans-serif;">Budget tables below include <strong>variable expense categories</strong> only.</p>';
     $body .= weekly_summary_render_table_html(
         'This Month: ' . $summary['month_label'],
         $summary['categories'],
@@ -284,11 +289,13 @@ function wsb_render_section_rows_text(array $categories, array $budget, array $a
 function weekly_summary_render_text(array $summary): string
 {
     $lines = [];
-    $lines[] = 'Weekly Budget Summary';
+    $lines[] = 'Weekly Home Finances Digest';
     $lines[] = '';
+    $lines[] = rtrim(wds_render_funding_text($summary['funding']));
+    $lines[] = rtrim(wds_render_watcher_text($summary['watcher']));
 
     if (!empty($summary['headlines'])) {
-        $lines[] = 'Key Budget Headlines';
+        $lines[] = 'Key Finance Headlines';
         $lines[] = '--------------------';
         foreach ($summary['headlines'] as $headline) {
             $headlineLines = preg_split('/\R/', (string)$headline);
@@ -299,7 +306,7 @@ function weekly_summary_render_text(array $summary): string
         $lines[] = '';
     }
 
-    $lines[] = 'This email includes variable expense categories only.';
+    $lines[] = 'Budget tables below include variable expense categories only.';
     $lines[] = '';
 
     foreach ([

@@ -60,7 +60,7 @@ try {
         ? normalize_email_recipients((string)$options['to'])
         : normalize_email_recipients($configuredRecipients);
 
-    $subject = (string)app_config('weekly_email.subject', 'Weekly Budget Summary – Variable Expenses');
+    $subject = (string)app_config('weekly_email.subject', 'Weekly Home Finances Digest');
     $fromName = (string)app_config('weekly_email.from_name', 'Home Finances');
     $fromAddress = (string)app_config('weekly_email.from_address', 'no-reply@moorey.uk.com');
 

@@ -158,6 +158,68 @@ function ins_fetch_period_discretionary_payees(PDO $pdo, DateTimeInterface $star
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+
+function ins_fetch_period_income_transactions(PDO $pdo, DateTimeInterface $start, DateTimeInterface $end, DateTimeInterface $today, int $limit = 5): array
+{
+    $limit = max(1, min(10, $limit));
+
+    $stmt = $pdo->prepare("
+        SELECT
+            ll.line_date,
+            ll.description,
+            ll.amount,
+            ll.account_id,
+            a.name AS account_name,
+            COALESCE(topcat.name, ll.category_name) AS category_name,
+            ll.category_type,
+            ll.is_prediction
+        FROM ledger_lines ll
+        JOIN accounts a
+          ON a.id = ll.account_id
+        LEFT JOIN categories topcat
+          ON topcat.id = COALESCE(ll.parent_category_id, ll.category_id)
+        WHERE ll.category_type IN ('income', 'expense')
+          AND ll.amount > 0
+          AND a.type IN ('current', 'credit', 'savings')
+          AND ll.line_date BETWEEN ? AND ?
+          AND (ll.is_prediction = 0 OR ll.line_date >= ?)
+        ORDER BY ll.amount DESC, ll.line_date ASC, ll.description ASC
+        LIMIT {$limit}
+    ");
+    $stmt->execute([
+        $start->format('Y-m-d'),
+        $end->format('Y-m-d'),
+        $today->format('Y-m-d'),
+    ]);
+
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function ins_build_income_headline(PDO $pdo, DateTimeInterface $start, DateTimeInterface $end, DateTimeInterface $today, int $limit = 3): ?string
+{
+    $rows = ins_fetch_period_income_transactions($pdo, $start, $end, $today, $limit);
+    if (empty($rows)) {
+        return null;
+    }
+
+    $parts = [];
+    foreach ($rows as $row) {
+        $label = date('j M', strtotime((string)$row['line_date']))
+            . ' — '
+            . (string)$row['description']
+            . ' '
+            . ins_format_money((float)$row['amount']);
+
+        if (!empty($row['is_prediction'])) {
+            $label .= ' (predicted)';
+        }
+
+        $parts[] = $label;
+    }
+
+    return 'Top income items this month: ' . implode('; ', $parts) . '.';
+}
+
 function ins_fetch_period_expense_total(PDO $pdo, DateTimeInterface $start, DateTimeInterface $end, DateTimeInterface $today, bool $discretionaryOnly): float
 {
     $sql = "
@@ -335,6 +397,11 @@ function build_budget_headlines(PDO $pdo, ?DateTimeInterface $today = null): arr
     if ($expenseTotal > 0 && $discretionaryTotal > 0) {
         $percent = (int)round(100 * $discretionaryTotal / $expenseTotal);
         $headlines[] = "Discretionary spending (" . ins_format_money($discretionaryTotal) . ") makes up {$percent}% of total expenses (" . ins_format_money($expenseTotal) . ") this month.";
+    }
+
+    $incomeHeadline = ins_build_income_headline($pdo, $startMonth, $endMonth, $today, 3);
+    if ($incomeHeadline !== null) {
+        $headlines[] = $incomeHeadline;
     }
 
     $headlines = array_values(array_filter(array_map(
