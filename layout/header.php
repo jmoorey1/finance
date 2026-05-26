@@ -252,6 +252,7 @@
                         <li><a class="dropdown-item" href="/finance/public/subcategory_report.php">Subcategory</a></li>
                         <li><a class="dropdown-item" href="/finance/public/job_expense_report.php">Job Expense Report</a></li>
                         <li><a class="dropdown-item" href="/finance/public/watcher_alerts.php">Watcher Alerts</a></li>
+                        <li><a class="dropdown-item" href="/finance/public/funding_explainer.php">Funding Explainer</a></li>
                         <li><a class="dropdown-item" href="/finance/public/projects.php">Projects and Trips Review</a></li>
                         <li><a class="dropdown-item" href="/finance/public/earmarks.php">Fund Review</a></li>
                         <li><a class="dropdown-item" href="/finance/public/analytics_monthly.php">Monthly Analytics</a></li>
