@@ -4,24 +4,66 @@ include '../layout/header.php';
 
 define('TRANSFER_PARENT_ID', 275);
 
+function cat_h(?string $value): string
+{
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function cat_valid_watcher_budget_mode(?string $value): string
+{
+    $allowed = ['normal', 'reimbursable', 'ignore'];
+    return in_array((string)$value, $allowed, true) ? (string)$value : 'normal';
+}
+
+function cat_valid_watcher_timing_mode(?string $value): string
+{
+    $allowed = ['operational', 'flexible', 'ignore'];
+    return in_array((string)$value, $allowed, true) ? (string)$value : 'operational';
+}
+
+function cat_label_or_dash(?string $value): string
+{
+    return $value !== null && $value !== '' ? ucfirst((string)$value) : '—';
+}
+
 // Load top-level (parent) categories for dropdown
 $parent_stmt = $pdo->query("
     SELECT id, name, type
     FROM categories
     WHERE parent_id IS NULL AND id != 197 AND id != 275
-    ORDER BY type asc, name
+    ORDER BY type ASC, name
 ");
 $parent_categories = $parent_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Handle new category form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_category'])) {
-    $name = trim($_POST['name']);
-    $type = $_POST['type'];
-    $parent_id = $_POST['parent_id'] !== '' ? (int)$_POST['parent_id'] : null;
-    $fixedness = $parent_id === null ? $_POST['fixedness'] : null;
-    $priority = ($parent_id === null && $type === 'expense') ? $_POST['priority'] : null;
+    $name = trim((string)($_POST['name'] ?? ''));
+    $type = (string)($_POST['type'] ?? '');
+    $parent_id = ($_POST['parent_id'] ?? '') !== '' ? (int)$_POST['parent_id'] : null;
+    $fixedness = $parent_id === null ? (($_POST['fixedness'] ?? '') !== '' ? (string)$_POST['fixedness'] : null) : null;
+    $priority = ($parent_id === null && $type === 'expense') ? ((($_POST['priority'] ?? '') !== '') ? (string)$_POST['priority'] : null) : null;
+
+    $watcher_budget_mode = ($parent_id === null && $type === 'expense')
+        ? cat_valid_watcher_budget_mode($_POST['watcher_budget_mode'] ?? 'normal')
+        : 'normal';
+
+    $watcher_timing_mode = ($parent_id === null && $type === 'expense')
+        ? cat_valid_watcher_timing_mode($_POST['watcher_timing_mode'] ?? 'operational')
+        : 'operational';
+
+    if ($watcher_budget_mode !== 'normal') {
+        $watcher_timing_mode = 'operational';
+    }
 
     try {
+        if ($name === '') {
+            throw new RuntimeException('Category name is required.');
+        }
+
+        if (!in_array($type, ['income', 'expense'], true)) {
+            throw new RuntimeException('Invalid category type.');
+        }
+
         $pdo->beginTransaction();
 
         // Determine final category name
@@ -29,6 +71,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_category'])) {
             $stmt = $pdo->prepare("SELECT name FROM categories WHERE id = ?");
             $stmt->execute([$parent_id]);
             $parent_name = $stmt->fetchColumn();
+
+            if (!$parent_name) {
+                throw new RuntimeException('Selected parent category was not found.');
+            }
+
             $final_name = "{$parent_name} : {$name}";
         } else {
             $final_name = $name;
@@ -36,22 +83,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_category'])) {
 
         // Insert new category
         $stmt = $pdo->prepare("
-            INSERT INTO categories (name, parent_id, type, fixedness, priority, budget_order)
-            VALUES (?, ?, ?, ?, ?, 0)
+            INSERT INTO categories (
+                name,
+                parent_id,
+                type,
+                fixedness,
+                priority,
+                watcher_budget_mode,
+                watcher_timing_mode,
+                budget_order
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
         ");
         $stmt->execute([
             $final_name,
             $parent_id,
             $type,
             $fixedness ?: null,
-            $priority ?: null
+            $priority ?: null,
+            $watcher_budget_mode,
+            $watcher_timing_mode,
         ]);
 
         $pdo->commit();
-        echo "<div class='alert alert-success'>Category '{$final_name}' added successfully.</div>";
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        echo "<div class='alert alert-danger'>Error adding category: " . htmlspecialchars($e->getMessage()) . "</div>";
+        echo "<div class='alert alert-success'>Category '" . cat_h($final_name) . "' added successfully.</div>";
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        echo "<div class='alert alert-danger'>Error adding category: " . cat_h($e->getMessage()) . "</div>";
     }
 }
 
@@ -72,18 +132,24 @@ last_cat AS (
     FROM cat_dates
     GROUP BY category_id
 )
-SELECT c.*, top.name AS parent_name, a.name AS account_name, last_cat.last_date
+SELECT
+    c.*,
+    top.name AS parent_name,
+    top.watcher_budget_mode AS parent_watcher_budget_mode,
+    top.watcher_timing_mode AS parent_watcher_timing_mode,
+    a.name AS account_name,
+    last_cat.last_date
 FROM categories c
 LEFT JOIN categories top ON c.parent_id = top.id
 LEFT JOIN accounts a ON c.linked_account_id = a.id
 LEFT JOIN last_cat ON last_cat.category_id = c.id
 WHERE c.id != 197 AND c.id != 275 AND (a.active IS NULL OR a.active = 1)
-ORDER BY 
+ORDER BY
     FIELD(c.type, 'income', 'expense', 'transfer'),
-    COALESCE(top.name, c.name), 
+    COALESCE(top.name, c.name),
     c.name
 ");
-$categories = $stmt->fetchAll();
+$categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $grouped = [
     'income' => [],
@@ -97,7 +163,7 @@ foreach ($categories as $cat) {
 
 <div class="container mt-4">
     <h2>📂 Add New Category</h2>
-    <form method="POST" class="mb-4 border p-3 rounded">
+    <form method="POST" class="mb-4 border p-3 rounded" id="new-category-form">
         <div class="mb-2">
             <label for="name" class="form-label">Category Name</label>
             <input type="text" class="form-control" name="name" id="name" required>
@@ -114,7 +180,7 @@ foreach ($categories as $cat) {
             <select name="parent_id" id="parent_id" class="form-select">
                 <option value="">— None —</option>
                 <?php foreach ($parent_categories as $parent): ?>
-                    <option value="<?= $parent['id'] ?>"><?= htmlspecialchars($parent['name']) ?> (<?= ucfirst($parent['type']) ?>)</option>
+                    <option value="<?= (int)$parent['id'] ?>"><?= cat_h($parent['name']) ?> (<?= ucfirst((string)$parent['type']) ?>)</option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -134,6 +200,27 @@ foreach ($categories as $cat) {
                 <option value="discretionary">Discretionary</option>
             </select>
         </div>
+
+        <div class="mb-2" id="watcher-budget-group">
+            <label for="watcher_budget_mode" class="form-label">Watcher Budget Treatment</label>
+            <select name="watcher_budget_mode" id="watcher_budget_mode" class="form-select">
+                <option value="normal" selected>Normal</option>
+                <option value="reimbursable">Reimbursable</option>
+                <option value="ignore">Ignore</option>
+            </select>
+            <div class="form-text">Used only for top-level expense categories.</div>
+        </div>
+
+        <div class="mb-2" id="watcher-timing-group">
+            <label for="watcher_timing_mode" class="form-label">Watcher Timing Treatment</label>
+            <select name="watcher_timing_mode" id="watcher_timing_mode" class="form-select">
+                <option value="operational" selected>Operational</option>
+                <option value="flexible">Flexible</option>
+                <option value="ignore">Ignore</option>
+            </select>
+            <div class="form-text">Used only for top-level expense categories with normal budget treatment.</div>
+        </div>
+
         <button type="submit" name="new_category" class="btn btn-primary">Add Category</button>
     </form>
 
@@ -141,13 +228,22 @@ foreach ($categories as $cat) {
     <table class="table table-bordered table-striped mt-3">
         <thead class="table-dark">
             <tr>
-                <th>Name</th><th>Type</th><th>Parent</th><th>Account</th><th>Fixedness</th><th>Priority</th><th>Last Transaction</th><th>Edit</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Parent</th>
+                <th>Account</th>
+                <th>Fixedness</th>
+                <th>Priority</th>
+                <th>Budget Watcher</th>
+                <th>Timing Watcher</th>
+                <th>Last Transaction</th>
+                <th>Edit</th>
             </tr>
         </thead>
         <tbody>
         <?php foreach (['income', 'expense', 'transfer'] as $type): ?>
             <tr class="table-secondary">
-                <td colspan="8" class="fw-bold"><?= ucfirst($type) ?> Categories</td>
+                <td colspan="10" class="fw-bold"><?= ucfirst($type) ?> Categories</td>
             </tr>
             <?php foreach ($grouped[$type] as $cat): ?>
                 <?php
@@ -155,20 +251,33 @@ foreach ($categories as $cat) {
                     $nameStyle = $isParent ? 'fw-bold' : '';
                     $nameIndent = $isParent ? '' : ' style="padding-left: 2rem;"';
                     $link_base = $isParent ? "category_report.php?category_id={$cat['id']}" : "subcategory_report.php?subcategory_id={$cat['id']}";
-                    $cat_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . htmlspecialchars($cat['name']) . "</a>";
-                    $last_date = $cat['last_date'] 
-                        ? (new DateTime($cat['last_date']))->format('jS M y') 
+                    $cat_link = "<a href=\"$link_base\" class=\"text-decoration-none\">" . cat_h((string)$cat['name']) . "</a>";
+                    $last_date = $cat['last_date']
+                        ? (new DateTime((string)$cat['last_date']))->format('jS M y')
                         : '—';
+
+                    $budgetWatcher = '—';
+                    $timingWatcher = '—';
+
+                    if ($cat['type'] === 'expense' && $isParent) {
+                        $budgetWatcher = ucfirst((string)$cat['watcher_budget_mode']);
+                        $timingWatcher = ucfirst((string)$cat['watcher_timing_mode']);
+                    } elseif ($cat['type'] === 'expense' && !$isParent && !empty($cat['parent_name'])) {
+                        $budgetWatcher = 'Inherited: ' . ucfirst((string)$cat['parent_watcher_budget_mode']);
+                        $timingWatcher = 'Inherited: ' . ucfirst((string)$cat['parent_watcher_timing_mode']);
+                    }
                 ?>
                 <tr>
                     <td class="<?= $nameStyle ?>"<?= $nameIndent ?>><?= $cat_link ?></td>
-                    <td><?= ucfirst($cat['type']) ?></td>
-                    <td><?= htmlspecialchars($cat['parent_name'] ?? '—') ?></td>
-                    <td><?= htmlspecialchars($cat['account_name'] ?? '—') ?></td>
-                    <td><?= ucfirst(htmlspecialchars($cat['fixedness'] ?? '—')) ?></td>
-                    <td><?= ucfirst(htmlspecialchars($cat['priority'] ?? '—')) ?></td>
-                    <td><?= htmlspecialchars($last_date) ?></td>
-                    <td><a href="category_edit.php?id=<?= $cat['id'] ?>" title="Edit Category">✏️</a></td>
+                    <td><?= ucfirst((string)$cat['type']) ?></td>
+                    <td><?= cat_h((string)($cat['parent_name'] ?? '—')) ?></td>
+                    <td><?= cat_h((string)($cat['account_name'] ?? '—')) ?></td>
+                    <td><?= cat_label_or_dash($cat['fixedness'] ?? null) ?></td>
+                    <td><?= cat_label_or_dash($cat['priority'] ?? null) ?></td>
+                    <td><?= cat_h($budgetWatcher) ?></td>
+                    <td><?= cat_h($timingWatcher) ?></td>
+                    <td><?= cat_h((string)$last_date) ?></td>
+                    <td><a href="category_edit.php?id=<?= (int)$cat['id'] ?>" title="Edit Category">✏️</a></td>
                 </tr>
             <?php endforeach; ?>
         <?php endforeach; ?>
@@ -182,22 +291,52 @@ document.addEventListener('DOMContentLoaded', () => {
     const fixednessSelect = document.getElementById('fixedness');
     const prioritySelect = document.getElementById('priority');
     const typeSelect = document.getElementById('type');
+    const watcherBudgetGroup = document.getElementById('watcher-budget-group');
+    const watcherTimingGroup = document.getElementById('watcher-timing-group');
+    const watcherBudgetSelect = document.getElementById('watcher_budget_mode');
+    const watcherTimingSelect = document.getElementById('watcher_timing_mode');
 
     function updateFields() {
         const hasParent = parentSelect.value !== '';
         const isExpense = typeSelect.value === 'expense';
+        const isTopLevelExpense = !hasParent && isExpense;
 
         fixednessSelect.disabled = hasParent;
         prioritySelect.disabled = hasParent || !isExpense;
+
+        watcherBudgetGroup.style.display = isTopLevelExpense ? 'block' : 'none';
+        watcherTimingGroup.style.display = isTopLevelExpense ? 'block' : 'none';
+
+        watcherBudgetSelect.disabled = !isTopLevelExpense;
+        watcherTimingSelect.disabled = !isTopLevelExpense;
 
         if (hasParent) {
             fixednessSelect.value = '';
             prioritySelect.value = '';
         }
+
+        if (!isTopLevelExpense) {
+            watcherBudgetSelect.value = 'normal';
+            watcherTimingSelect.value = 'operational';
+        }
+
+        updateTimingField();
+    }
+
+    function updateTimingField() {
+        const timingRelevant = !watcherBudgetSelect.disabled && watcherBudgetSelect.value === 'normal';
+        watcherTimingSelect.disabled = !timingRelevant;
+        watcherTimingGroup.style.display = (!watcherBudgetSelect.disabled) ? 'block' : 'none';
+
+        if (!timingRelevant) {
+            watcherTimingSelect.value = 'operational';
+        }
     }
 
     parentSelect.addEventListener('change', updateFields);
     typeSelect.addEventListener('change', updateFields);
+    watcherBudgetSelect.addEventListener('change', updateTimingField);
+
     updateFields();
 });
 </script>
