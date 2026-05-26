@@ -27,10 +27,76 @@ function wqb_dashboard_url(): string
     return '/finance/public/dashboard.php';
 }
 
+
+function wqb_budget_mode_is_normal(array $row): bool
+{
+    return (($row['watcher_budget_mode'] ?? 'normal') === 'normal');
+}
+
+function wqb_timing_mode(array $row): string
+{
+    return (string)($row['watcher_timing_mode'] ?? 'operational');
+}
+
+function wqb_alert_type_rank(string $type): int
+{
+    return match ($type) {
+        'budget_timing_mismatch' => 1,
+        'budget_unrealistic' => 2,
+        'budget_burn_risk' => 3,
+        default => 99,
+    };
+}
+
+function wqb_alert_severity_rank(string $severity): int
+{
+    return match ($severity) {
+        'critical' => 1,
+        'warning' => 2,
+        'info' => 3,
+        default => 9,
+    };
+}
+
+function wqb_apply_alert_precedence(array $alerts): array
+{
+    $bestByCategory = [];
+
+    foreach ($alerts as $alert) {
+        $categoryId = (int)($alert['related_category_id'] ?? 0);
+        $key = $categoryId > 0 ? (string)$categoryId : (string)($alert['dedupe_key'] ?? uniqid('budget_', true));
+
+        if (!isset($bestByCategory[$key])) {
+            $bestByCategory[$key] = $alert;
+            continue;
+        }
+
+        $existing = $bestByCategory[$key];
+
+        $typeRankNew = wqb_alert_type_rank((string)$alert['alert_type']);
+        $typeRankExisting = wqb_alert_type_rank((string)$existing['alert_type']);
+
+        if ($typeRankNew < $typeRankExisting) {
+            $bestByCategory[$key] = $alert;
+            continue;
+        }
+
+        if ($typeRankNew === $typeRankExisting) {
+            $sevRankNew = wqb_alert_severity_rank((string)$alert['severity']);
+            $sevRankExisting = wqb_alert_severity_rank((string)$existing['severity']);
+            if ($sevRankNew < $sevRankExisting) {
+                $bestByCategory[$key] = $alert;
+            }
+        }
+    }
+
+    return array_values($bestByCategory);
+}
+
 function wqb_parent_categories(PDO $pdo): array
 {
     $stmt = $pdo->query("
-        SELECT id, name, priority, watcher_budget_mode
+        SELECT id, name, priority, watcher_budget_mode, watcher_timing_mode
         FROM categories
         WHERE type = 'expense'
           AND fixedness = 'variable'
@@ -45,6 +111,7 @@ function wqb_parent_categories(PDO $pdo): array
             'name' => (string)$row['name'],
             'priority' => (string)($row['priority'] ?? ''),
             'watcher_budget_mode' => (string)($row['watcher_budget_mode'] ?? 'normal'),
+            'watcher_timing_mode' => (string)($row['watcher_timing_mode'] ?? 'operational'),
         ];
     }
 
@@ -190,6 +257,7 @@ function wqb_context(PDO $pdo, ?DateTimeInterface $today = null): array
             'name' => $meta['name'],
             'priority' => $meta['priority'],
             'watcher_budget_mode' => $meta['watcher_budget_mode'],
+            'watcher_timing_mode' => $meta['watcher_timing_mode'],
             'budget' => (float)($budget[$catId] ?? 0.0),
             'actual_to_date' => (float)($actualToDate[$catId] ?? 0.0),
             'projected_full_month' => (float)($projectedFull[$catId] ?? 0.0),
@@ -297,7 +365,7 @@ function watcher_budget_detect_burn_risk(PDO $pdo, ?DateTimeInterface $today = n
     $alerts = [];
 
     foreach ($context['rows'] as $row) {
-        if (($row['watcher_budget_mode'] ?? 'normal') !== 'normal') {
+        if (!wqb_budget_mode_is_normal($row)) {
             continue;
         }
 
@@ -359,7 +427,7 @@ function watcher_budget_detect_unrealistic(PDO $pdo, ?DateTimeInterface $today =
     $alerts = [];
 
     foreach ($context['rows'] as $row) {
-        if (($row['watcher_budget_mode'] ?? 'normal') !== 'normal') {
+        if (!wqb_budget_mode_is_normal($row)) {
             continue;
         }
 
@@ -420,7 +488,11 @@ function watcher_budget_detect_timing_mismatch(PDO $pdo, ?DateTimeInterface $tod
     $alerts = [];
 
     foreach ($context['rows'] as $row) {
-        if (($row['watcher_budget_mode'] ?? 'normal') !== 'normal') {
+        if (!wqb_budget_mode_is_normal($row)) {
+            continue;
+        }
+
+        if (wqb_timing_mode($row) !== 'flexible') {
             continue;
         }
 

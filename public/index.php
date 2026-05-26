@@ -98,7 +98,7 @@ $balances = get_account_balances($pdo);
 $import_status_by_account = get_account_import_status($pdo);
 $missed = get_missed_predictions($pdo);
 $missed_state = get_missed_statements($pdo);
-$watcher_alerts = get_open_watcher_alerts($pdo, (int)app_config('watcher.index_alert_limit', 5));
+$watcher_alerts = get_open_watcher_alerts_for_index($pdo, (int)app_config('watcher.index_alert_limit', 5));
 
 // Job state for display
 $jobState = get_predict_instances_state();
@@ -195,6 +195,9 @@ if (($jobState['last_status'] ?? null) === 'failed') {
 <!-- 👀 Watcher Alerts -->
 <div class="mb-4">
     <h4>👀 Watcher Alerts</h4>
+    <p class="text-muted small mb-2">
+        Dashboard view shows the highest-priority open alert per category or account to reduce duplicate noise.
+    </p>
     <?php if (count($watcher_alerts) > 0): ?>
         <ul class="list-group">
             <?php foreach ($watcher_alerts as $alert): ?>
