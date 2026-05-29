@@ -41,11 +41,18 @@ if (!in_array($days, [30, 60, 90, 180], true)) {
 }
 
 $today = new DateTimeImmutable('today');
-$startDate = $today->modify('+1 day')->format('Y-m-d');
+$startDate = $today->format('Y-m-d');
 $endDate = $today->modify('+' . $days . ' days')->format('Y-m-d');
 
 $stream = cp_get_account_event_stream($pdo, $selectedAccountId, $startDate, $endDate);
-$currentBalance = se_get_account_balance_as_of($pdo, $selectedAccountId, $today->format('Y-m-d'));
+$currentBalance = (float)($stream['balance_before_start'] ?? 0.0);
+
+$projectedAfterToday = $currentBalance;
+foreach ($stream['events'] as $event) {
+    if (($event['event_date'] ?? '') === $today->format('Y-m-d')) {
+        $projectedAfterToday = (float)$event['balance_after'];
+    }
+}
 
 $minBalance = $currentBalance;
 $minBalanceDate = $today->format('Y-m-d');
@@ -61,12 +68,13 @@ foreach ($stream['events'] as $event) {
 
 <div class="alert alert-info">
     This is the BKL-028/BKL-030 canonical account-dated cash event view.
-    It shows <strong>actual account cash events, dated predicted account events, and flexible planned income events</strong>.
+    It shows <strong>actual account cash events, late unresolved predicted items, dated predicted account events, and flexible planned income events</strong>.
 </div>
 
 <div class="alert alert-warning">
+    Starting balance is treated as <strong>cleared as of last night</strong>, so today's uncleared predicted items still remain visible in the stream.
+    Late unresolved predicted items are carried onto <strong>today</strong> until they are fulfilled or resolved.
     Budget-only future items are <strong>not</strong> shown here unless they also exist as dated account-level planned events.
-    Flexible planned income events are shown here at their <strong>assumed date</strong> inside the configured window.
 </div>
 
 <?php if (($selectedAccount['type'] ?? '') === 'savings'): ?>
@@ -111,8 +119,12 @@ foreach ($stream['events'] as $event) {
     <div class="col-md-4">
         <div class="card">
             <div class="card-body">
-                <div class="text-muted small">Current Balance</div>
+                <div class="text-muted small">Cleared Balance as of Last Night</div>
                 <div class="fw-bold"><?= cpm_money($currentBalance) ?></div>
+                <div class="small text-muted">
+                    Projected after today's items:
+                    <?= cpm_money($projectedAfterToday) ?>
+                </div>
             </div>
         </div>
     </div>

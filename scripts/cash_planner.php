@@ -215,6 +215,128 @@ function cp_fetch_predicted_account_events(PDO $pdo, string $startDate, string $
     return $events;
 }
 
+function cp_fetch_late_predicted_account_events(PDO $pdo, string $effectiveDate, ?array $accountIds = null): array
+{
+    $sql = "
+        SELECT
+            pi.id AS predicted_instance_id,
+            pi.predicted_transaction_id,
+            pi.statement_id,
+            pi.scheduled_date,
+            pi.amount,
+            pi.description,
+            pi.from_account_id,
+            pi.to_account_id,
+            c.type AS category_type,
+            fa.name AS from_account_name,
+            fa.type AS from_account_type,
+            ta.name AS to_account_name,
+            ta.type AS to_account_type
+        FROM predicted_instances pi
+        JOIN categories c ON c.id = pi.category_id
+        LEFT JOIN accounts fa ON fa.id = pi.from_account_id
+        LEFT JOIN accounts ta ON ta.id = pi.to_account_id
+        WHERE pi.scheduled_date < ?
+          AND COALESCE(pi.fulfilled, 0) = 0
+          AND COALESCE(pi.resolution_status, 'open') = 'open'
+        ORDER BY pi.scheduled_date ASC, pi.id ASC
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$effectiveDate]);
+
+    $accountIdFilter = null;
+    if ($accountIds !== null && !empty($accountIds)) {
+        $accountIdFilter = array_map('intval', $accountIds);
+    }
+
+    $events = [];
+
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $categoryType = $row['category_type'];
+        $amount = (float)$row['amount'];
+        $lateLabel = 'Late predicted (was due ' . $row['scheduled_date'] . ')';
+
+        if ($categoryType === 'income' || $categoryType === 'expense') {
+            $accountId = $row['from_account_id'] !== null ? (int)$row['from_account_id'] : null;
+
+            if ($accountId === null) {
+                continue;
+            }
+            if ($accountIdFilter !== null && !in_array($accountId, $accountIdFilter, true)) {
+                continue;
+            }
+            if (!in_array($row['from_account_type'], ['current', 'savings', 'credit'], true)) {
+                continue;
+            }
+
+            $events[] = [
+                'event_date' => $effectiveDate,
+                'account_id' => $accountId,
+                'account_name' => $row['from_account_name'],
+                'account_type' => $row['from_account_type'],
+                'amount' => $amount,
+                'description' => $row['description'] ?? '',
+                'source' => 'predicted_late',
+                'source_label' => $lateLabel,
+                'event_type' => $categoryType === 'income' ? 'planned_income' : 'planned_expense',
+                'source_id' => (int)$row['predicted_instance_id'],
+                'predicted_transaction_id' => $row['predicted_transaction_id'] !== null ? (int)$row['predicted_transaction_id'] : null,
+                'statement_id' => $row['statement_id'] !== null ? (int)$row['statement_id'] : null,
+                'original_scheduled_date' => $row['scheduled_date'],
+            ];
+        } elseif ($categoryType === 'transfer') {
+            $transferAmount = abs($amount);
+
+            if ($row['from_account_id'] !== null) {
+                $accountId = (int)$row['from_account_id'];
+                if (($accountIdFilter === null || in_array($accountId, $accountIdFilter, true))
+                    && in_array($row['from_account_type'], ['current', 'savings', 'credit'], true)) {
+                    $events[] = [
+                        'event_date' => $effectiveDate,
+                        'account_id' => $accountId,
+                        'account_name' => $row['from_account_name'],
+                        'account_type' => $row['from_account_type'],
+                        'amount' => -$transferAmount,
+                        'description' => $row['description'] ?? '',
+                        'source' => 'predicted_late',
+                        'source_label' => $lateLabel,
+                        'event_type' => 'planned_transfer_out',
+                        'source_id' => (int)$row['predicted_instance_id'],
+                        'predicted_transaction_id' => $row['predicted_transaction_id'] !== null ? (int)$row['predicted_transaction_id'] : null,
+                        'statement_id' => $row['statement_id'] !== null ? (int)$row['statement_id'] : null,
+                        'original_scheduled_date' => $row['scheduled_date'],
+                    ];
+                }
+            }
+
+            if ($row['to_account_id'] !== null) {
+                $accountId = (int)$row['to_account_id'];
+                if (($accountIdFilter === null || in_array($accountId, $accountIdFilter, true))
+                    && in_array($row['to_account_type'], ['current', 'savings', 'credit'], true)) {
+                    $events[] = [
+                        'event_date' => $effectiveDate,
+                        'account_id' => $accountId,
+                        'account_name' => $row['to_account_name'],
+                        'account_type' => $row['to_account_type'],
+                        'amount' => $transferAmount,
+                        'description' => $row['description'] ?? '',
+                        'source' => 'predicted_late',
+                        'source_label' => $lateLabel,
+                        'event_type' => 'planned_transfer_in',
+                        'source_id' => (int)$row['predicted_instance_id'],
+                        'predicted_transaction_id' => $row['predicted_transaction_id'] !== null ? (int)$row['predicted_transaction_id'] : null,
+                        'statement_id' => $row['statement_id'] !== null ? (int)$row['statement_id'] : null,
+                        'original_scheduled_date' => $row['scheduled_date'],
+                    ];
+                }
+            }
+        }
+    }
+
+    return $events;
+}
+
 function cp_fetch_flexible_income_events(PDO $pdo, string $startDate, string $endDate, ?array $accountIds = null): array
 {
     $params = [$startDate, $endDate];
@@ -286,8 +408,19 @@ function cp_sort_events(array &$events): void
             return strcmp($a['event_date'], $b['event_date']);
         }
 
-        $sourceRankA = ($a['source'] === 'actual') ? 0 : 1;
-        $sourceRankB = ($b['source'] === 'actual') ? 0 : 1;
+        $sourceRank = function (array $event): int {
+            $source = (string)($event['source'] ?? '');
+            if ($source === 'actual') {
+                return 0;
+            }
+            if ($source === 'predicted_late') {
+                return 1;
+            }
+            return 2;
+        };
+
+        $sourceRankA = $sourceRank($a);
+        $sourceRankB = $sourceRank($b);
         if ($sourceRankA !== $sourceRankB) {
             return $sourceRankA <=> $sourceRankB;
         }
@@ -307,6 +440,7 @@ function cp_get_account_event_stream(PDO $pdo, int $accountId, string $startDate
 
     $events = array_merge(
         cp_fetch_actual_account_events($pdo, $startDate, $endDate, [$accountId]),
+        cp_fetch_late_predicted_account_events($pdo, $startDate, [$accountId]),
         cp_fetch_predicted_account_events($pdo, $startDate, $endDate, [$accountId]),
         cp_fetch_flexible_income_events($pdo, $startDate, $endDate, [$accountId])
     );
