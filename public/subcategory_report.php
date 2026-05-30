@@ -4,6 +4,24 @@ include '../layout/header.php';
 
 $pdo = get_db_connection();
 
+function sr_h(?string $value): string
+{
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function sr_money($value): string
+{
+    return '£' . number_format((float)$value, 2);
+}
+
+function sr_average(array $values): float
+{
+    if (count($values) === 0) {
+        return 0.0;
+    }
+    return round(array_sum($values) / count($values), 2);
+}
+
 // Get selected subcategory or fallback to a default
 $selected_subcategory = isset($_GET['subcategory_id']) ? intval($_GET['subcategory_id']) : 69;
 
@@ -113,12 +131,14 @@ $tx_stmt->execute([
     $end->format('Y-m-d'),
 ]);
 $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
-?>
 
-<h2>Subcategory Report: <?= htmlspecialchars($selected_meta['sub_name'] ?? 'Unknown') ?></h2>
+$fiscal_years = array_map('strval', array_keys($fiscal_totals));
+sort($fiscal_years);
+?>
+<h2>Subcategory Report: <?= sr_h($selected_meta['sub_name'] ?? 'Unknown') ?></h2>
 <?php if ($selected_meta): ?>
-    <p><a href="category_report.php?category_id=<?= (int)$selected_meta['parent_id'] ?>">Go to <?= htmlspecialchars($selected_meta['parent_name']) ?> →</a></p>
-    <p><a href="category_edit.php?id=<?= (int)$selected_meta['id'] ?>">Edit <?= htmlspecialchars($selected_meta['sub_name']) ?> →</a></p>
+    <p><a href="category_report.php?category_id=<?= (int)$selected_meta['parent_id'] ?>">Go to <?= sr_h($selected_meta['parent_name']) ?> →</a></p>
+    <p><a href="category_edit.php?id=<?= (int)$selected_meta['id'] ?>">Edit <?= sr_h($selected_meta['sub_name']) ?> →</a></p>
 <?php endif; ?>
 
 <form method="get">
@@ -131,13 +151,13 @@ $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
       if ($s['parent_type'] !== $last_type || $s['parent_name'] !== $last_parent):
         if (isset($last_type)) echo "</optgroup>";
         $title_type = ucfirst($s['parent_type']);
-        echo "<optgroup label='{$title_type} → {$s['parent_name']}'>";
+        echo "<optgroup label='{$title_type} → " . sr_h($s['parent_name']) . "'>";
         $last_type = $s['parent_type'];
         $last_parent = $s['parent_name'];
       endif;
     ?>
       <option value="<?= (int)$s['id'] ?>" <?= (int)$s['id'] === $selected_subcategory ? 'selected' : '' ?>>
-        <?= htmlspecialchars($s['sub_name']) ?>
+        <?= sr_h($s['sub_name']) ?>
       </option>
     <?php endforeach; ?>
     </optgroup>
@@ -153,16 +173,70 @@ $transactions = $tx_stmt->fetchAll(PDO::FETCH_ASSOC);
   </div>
 </div>
 
+<h3 class="mt-4">Annual Figures</h3>
+<div class="table-responsive mb-4">
+  <table class="table table-sm table-bordered align-middle">
+    <thead class="table-light">
+      <tr>
+        <?php foreach ($fiscal_years as $fy): ?>
+          <th class="text-end"><?= sr_h($fy) ?></th>
+        <?php endforeach; ?>
+        <th class="text-end">Average</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <?php
+          $fiscalValues = [];
+          foreach ($fiscal_years as $fy) {
+              $value = (float)($fiscal_totals[$fy] ?? 0.0);
+              $fiscalValues[] = $value;
+              echo '<td class="text-end">' . sr_money($value) . '</td>';
+          }
+        ?>
+        <td class="text-end fw-semibold"><?= sr_money(sr_average($fiscalValues)) ?></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>Past 6 Financial Months Figures</h3>
+<div class="table-responsive mb-4">
+  <table class="table table-sm table-bordered align-middle">
+    <thead class="table-light">
+      <tr>
+        <?php foreach ($months as $month): ?>
+          <th class="text-end"><?= sr_h($month) ?></th>
+        <?php endforeach; ?>
+        <th class="text-end">Average</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <?php
+          $monthlyValues = [];
+          foreach ($months as $month) {
+              $value = (float)($month_totals[$month] ?? 0.0);
+              $monthlyValues[] = $value;
+              echo '<td class="text-end">' . sr_money($value) . '</td>';
+          }
+        ?>
+        <td class="text-end fw-semibold"><?= sr_money(sr_average($monthlyValues)) ?></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
 <h3>Transactions (<?= $start->format('d M') ?>–<?= $end->format('d M Y') ?>)</h3>
 <table class="table table-striped table-sm align-middle">
   <tr><th>Date</th><th>Amount</th><th>Account</th><th>Description</th><th>Source</th><th></th></tr>
   <?php foreach ($transactions as $tx): ?>
     <tr>
-      <td><?= htmlspecialchars($tx['date']) ?></td>
-      <td>£<?= number_format((float)$tx['amount'], 2) ?></td>
-      <td><?= htmlspecialchars($tx['account']) ?></td>
-      <td><?= htmlspecialchars($tx['description']) ?></td>
-      <td><?= htmlspecialchars($tx['source']) ?></td>
+      <td><?= sr_h($tx['date']) ?></td>
+      <td><?= sr_money((float)$tx['amount']) ?></td>
+      <td><?= sr_h($tx['account']) ?></td>
+      <td><?= sr_h($tx['description']) ?></td>
+      <td><?= sr_h($tx['source']) ?></td>
       <td>
           <?= !empty($tx['id']) ? '<a href="transaction_edit.php?id=' . (int)$tx['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) . '" title="Edit Transaction">✏️</a>' : '' ?>
       </td>
