@@ -131,22 +131,15 @@ if (!empty($selected_categories)) {
     $params = array_merge($params, $selected_categories);
 }
 
-// Project / earmark filtering still works for actual lines only until the view is expanded further.
+// Project / earmark filtering is applied against ledger_lines so split rows
+// can be matched using split-level attribution with parent fallback from the view.
 if ($project_id !== null) {
-    $query .= " AND ll.transaction_id IN (
-        SELECT id
-        FROM transactions
-        WHERE project_id = ?
-    )";
+    $query .= " AND ll.project_id = ?";
     $params[] = $project_id;
 }
 
 if ($earmark_id !== null) {
-    $query .= " AND ll.transaction_id IN (
-        SELECT id
-        FROM transactions
-        WHERE earmark_id = ?
-    )";
+    $query .= " AND ll.earmark_id = ?";
     $params[] = $earmark_id;
 }
 

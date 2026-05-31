@@ -36,7 +36,12 @@ $statements = $conn->query("SELECT s.id, s.statement_date, s.account_id, a.name 
 $splits = [];
 if ($transaction['category_id'] == 197) {
     $stmt = $conn->prepare("
-        SELECT ts.category_id, ts.amount, c.name
+        SELECT
+            ts.category_id,
+            ts.amount,
+            ts.project_id,
+            ts.fund_source_id AS earmark_id,
+            c.name
         FROM transaction_splits ts
         JOIN categories c ON c.id = ts.category_id
         WHERE ts.transaction_id = ?
@@ -151,6 +156,8 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
             <tr>
                 <th>Category</th>
                 <th>Amount</th>
+                <th>Project/Trip</th>
+                <th>Fund (Earmark)</th>
                 <th></th>
             </tr>
         </thead>
@@ -179,6 +186,26 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
                     </select>
                 </td>
                 <td><input type="number" step="0.01" name="split_amounts[]" value="<?= $s['amount'] ?>" required></td>
+                <td>
+                    <select name="split_project_ids[]">
+                        <option value="">-- None --</option>
+                        <?php foreach ($projects as $p): ?>
+                            <option value="<?= $p['id'] ?>" <?= ((string)($s['project_id'] ?? '') === (string)$p['id']) ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($p['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td>
+                    <select name="split_earmark_ids[]">
+                        <option value="">-- None --</option>
+                        <?php foreach ($funds as $f): ?>
+                            <option value="<?= $f['id'] ?>" <?= ((string)($s['earmark_id'] ?? '') === (string)$f['id']) ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($f['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
                 <td><button type="button" class="remove-split">−</button></td>
             </tr>
         <?php endforeach; else: ?>
@@ -204,11 +231,34 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
                     </select>
                 </td>
                 <td><input type="number" step="0.01" name="split_amounts[]" required></td>
+                <td>
+                    <select name="split_project_ids[]">
+                        <option value="">-- None --</option>
+                        <?php foreach ($projects as $p): ?>
+                            <option value="<?= $p['id'] ?>">
+                                <?= htmlspecialchars($p['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td>
+                    <select name="split_earmark_ids[]">
+                        <option value="">-- None --</option>
+                        <?php foreach ($funds as $f): ?>
+                            <option value="<?= $f['id'] ?>">
+                                <?= htmlspecialchars($f['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
                 <td><button type="button" class="remove-split">−</button></td>
             </tr>
         <?php endif; ?>
         </tbody>
     </table>
+    <p style="margin-top: 8px; color: #666;">
+        Leave split Project/Trip or Fund blank to let reporting fall back to the parent transaction's project or earmark.
+    </p>
     <button type="button" id="add-split">+ Add Split</button>
     <p id="split-warning" style="color: red; display: none;">⚠️ Split total must match <?= number_format($transaction['amount'], 2) ?></p>
 </div>
@@ -264,8 +314,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const row = table.querySelector('tr').cloneNode(true);
 
         // Clear values
-        row.querySelector('input').value = '';
+        row.querySelector('input[name="split_amounts[]"]').value = '';
         row.querySelectorAll('input, select').forEach(el => el.disabled = false);
+        row.querySelectorAll('select[name="split_project_ids[]"], select[name="split_earmark_ids[]"]').forEach(el => {
+            el.value = '';
+        });
 
         table.appendChild(row);
         bindRemoveButtons();

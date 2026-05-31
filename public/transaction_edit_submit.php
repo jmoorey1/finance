@@ -49,17 +49,30 @@ try {
 
         $splitCats = $_POST['split_categories'] ?? [];
         $splitAmounts = $_POST['split_amounts'] ?? [];
+        $splitProjectIds = $_POST['split_project_ids'] ?? [];
+        $splitEarmarkIds = $_POST['split_earmark_ids'] ?? [];
 
-        if (count($splitCats) !== count($splitAmounts)) {
-            throw new Exception("Mismatch in split category and amount counts.");
+        $splitCount = count($splitCats);
+        if (
+            $splitCount !== count($splitAmounts) ||
+            $splitCount !== count($splitProjectIds) ||
+            $splitCount !== count($splitEarmarkIds)
+        ) {
+            throw new Exception("Mismatch in split field counts.");
         }
 
         $total = 0;
-        for ($i = 0; $i < count($splitCats); $i++) {
+        for ($i = 0; $i < $splitCount; $i++) {
             $catId = (int)$splitCats[$i];
             $amt = round((float)$splitAmounts[$i], 2);
-            $conn->prepare("INSERT INTO transaction_splits (transaction_id, category_id, amount) VALUES (?, ?, ?)")
-                ->execute([$id, $catId, $amt]);
+            $projectId = ($splitProjectIds[$i] ?? '') !== '' ? (int)$splitProjectIds[$i] : null;
+            $earmarkId = ($splitEarmarkIds[$i] ?? '') !== '' ? (int)$splitEarmarkIds[$i] : null;
+
+            $conn->prepare("
+                INSERT INTO transaction_splits (transaction_id, category_id, project_id, fund_source_id, amount)
+                VALUES (?, ?, ?, ?, ?)
+            ")->execute([$id, $catId, $projectId, $earmarkId, $amt]);
+
             $total += $amt;
         }
 
