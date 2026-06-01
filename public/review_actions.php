@@ -553,6 +553,57 @@ switch ($action) {
         if (!$staging) {
             die("❌ Staging transaction not found.");
         }
+
+        $resolve_account_type_or_fail = function (int $account_id) use ($conn): string {
+            $stmt = $conn->prepare("
+                SELECT type
+                FROM accounts
+                WHERE id = ?
+                LIMIT 1
+            ");
+            $stmt->execute([$account_id]);
+            $account_type = $stmt->fetchColumn();
+
+            if ($account_type === false) {
+                throw new RuntimeException('Staging transaction account does not exist.');
+            }
+
+            return (string)$account_type;
+        };
+
+        $transaction_type_for_amount = function (string $account_type, float $amount): string {
+            if (abs($amount) < 0.01) {
+                throw new RuntimeException('Transaction amount cannot be zero.');
+            }
+
+            return match ($account_type) {
+                'credit' => ($amount > 0 ? 'credit' : 'charge'),
+                default => ($amount > 0 ? 'deposit' : 'withdrawal'),
+            };
+        };
+
+        $resolve_income_expense_category_or_fail = function (int $category_id) use ($conn): int {
+            if ($category_id <= 0) {
+                throw new RuntimeException('Category is required.');
+            }
+
+            $stmt = $conn->prepare("
+                SELECT id
+                FROM categories
+                WHERE id = ?
+                  AND type IN ('income', 'expense')
+                LIMIT 1
+            ");
+            $stmt->execute([$category_id]);
+            $resolved_category_id = $stmt->fetchColumn();
+
+            if ($resolved_category_id === false) {
+                throw new RuntimeException('Selected category must be an income or expense category.');
+            }
+
+            return (int)$resolved_category_id;
+        };
+
         // Transfer Pairing or Placeholder
         if ($category_id === -1) {
             $transfer_target = (string) ($_POST['transfer_target'] ?? '');
@@ -791,22 +842,39 @@ switch ($action) {
 
         // REGULAR categorisation
         if ($category_id !== 197) {
-            $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
+            try {
+                $account_type = $resolve_account_type_or_fail((int)$staging['account_id']);
+                $resolved_category_id = $resolve_income_expense_category_or_fail($category_id);
+                $amount = round((float)$staging['amount'], 2);
+                $transaction_type = $transaction_type_for_amount($account_type, $amount);
+                $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
 
-            $insert = $conn->prepare("
-                INSERT INTO transactions (account_id, date, description, amount, original_ref, category_id, payee_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ");
-            $insert->execute([
-                $staging['account_id'],
-                $staging['date'],
-                $staging['description'],
-                $staging['amount'],
-                substr($staging['original_memo'], 0, 100),
-                $category_id,
-                $resolved_payee_id
-            ]);
-            $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+                $conn->beginTransaction();
+
+                $insert = $conn->prepare("
+                    INSERT INTO transactions (account_id, date, description, amount, type, original_ref, category_id, payee_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $insert->execute([
+                    $staging['account_id'],
+                    $staging['date'],
+                    $staging['description'],
+                    $amount,
+                    $transaction_type,
+                    substr((string)($staging['original_memo'] ?? ''), 0, 100),
+                    $resolved_category_id,
+                    $resolved_payee_id
+                ]);
+                $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+
+                $conn->commit();
+            } catch (Throwable $e) {
+                if ($conn->inTransaction()) {
+                    $conn->rollBack();
+                }
+                die("❌ Categorisation failed: " . $e->getMessage());
+            }
+
             break;
         }
 
@@ -814,60 +882,92 @@ switch ($action) {
         $split_categories = $_POST['split_categories'] ?? [];
         $split_amounts = $_POST['split_amounts'] ?? [];
 
+        if (!is_array($split_categories) || !is_array($split_amounts)) {
+            die("❌ Split categories and amounts are required.");
+        }
+
         if (count($split_categories) !== count($split_amounts)) {
             die("❌ Mismatch between split categories and amounts.");
         }
 
-        $total = 0;
-        $splits = [];
-        for ($i = 0; $i < count($split_categories); $i++) {
-            $cat = (int) $split_categories[$i];
-            $amt = (float) $split_amounts[$i];
-            $total += $amt;
-            $splits[] = ['category_id' => $cat, 'amount' => $amt];
+        if (count($split_categories) === 0) {
+            die("❌ At least one split line is required.");
         }
 
-        if (abs($total - $staging['amount']) > 0.01) {
-            die("❌ Split total ($total) does not match transaction amount ({$staging['amount']}).");
-        }
+        try {
+            $account_type = $resolve_account_type_or_fail((int)$staging['account_id']);
+            $parent_amount = round((float)$staging['amount'], 2);
+            $transaction_type = $transaction_type_for_amount($account_type, $parent_amount);
+            $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
 
-        // Insert parent transaction (with category_id = 197 for split)
-        $conn->beginTransaction();
+            $split_parent_stmt = $conn->prepare("SELECT id FROM categories WHERE id = ? LIMIT 1");
+            $split_parent_stmt->execute([197]);
+            if ($split_parent_stmt->fetchColumn() === false) {
+                throw new RuntimeException('Split parent category is missing.');
+            }
 
-        $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
+            $total = 0.0;
+            $splits = [];
+            for ($i = 0; $i < count($split_categories); $i++) {
+                $cat = $resolve_income_expense_category_or_fail((int)$split_categories[$i]);
+                $raw_amount = trim((string)$split_amounts[$i]);
 
-        $insert = $conn->prepare("
-            INSERT INTO transactions (account_id, date, description, amount, original_ref, category_id, payee_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ");
-        $insert->execute([
-            $staging['account_id'],
-            $staging['date'],
-            $staging['description'],
-            $staging['amount'],
-            substr($staging['original_memo'], 0, 100),
-            197,
-            $resolved_payee_id
-        ]);
-        $transaction_id = $conn->lastInsertId();
+                if ($raw_amount === '' || !is_numeric($raw_amount)) {
+                    throw new RuntimeException('Each split amount must be numeric.');
+                }
 
-        // Insert split components
-        $split_stmt = $conn->prepare("
-            INSERT INTO transaction_splits (transaction_id, category_id, amount)
-            VALUES (?, ?, ?)
-        ");
+                $amt = round((float)$raw_amount, 2);
+                if (abs($amt) < 0.01) {
+                    throw new RuntimeException('Split amounts cannot be zero.');
+                }
 
-        foreach ($splits as $s) {
-            $split_stmt->execute([
-                $transaction_id,
-                $s['category_id'],
-                $s['amount']
+                $total += $amt;
+                $splits[] = ['category_id' => $cat, 'amount' => $amt];
+            }
+
+            if (abs(round($total, 2) - $parent_amount) >= 0.01) {
+                throw new RuntimeException("Split total ($total) does not match transaction amount ({$staging['amount']}).");
+            }
+
+            $conn->beginTransaction();
+
+            $insert = $conn->prepare("
+                INSERT INTO transactions (account_id, date, description, amount, type, original_ref, category_id, payee_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $insert->execute([
+                $staging['account_id'],
+                $staging['date'],
+                $staging['description'],
+                $parent_amount,
+                $transaction_type,
+                substr((string)($staging['original_memo'] ?? ''), 0, 100),
+                197,
+                $resolved_payee_id
             ]);
-        }
+            $transaction_id = (int)$conn->lastInsertId();
 
-        // Cleanup staging
-        $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
-        $conn->commit();
+            $split_stmt = $conn->prepare("
+                INSERT INTO transaction_splits (transaction_id, category_id, amount)
+                VALUES (?, ?, ?)
+            ");
+
+            foreach ($splits as $s) {
+                $split_stmt->execute([
+                    $transaction_id,
+                    $s['category_id'],
+                    $s['amount']
+                ]);
+            }
+
+            $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+            $conn->commit();
+        } catch (Throwable $e) {
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
+            die("❌ Split categorisation failed: " . $e->getMessage());
+        }
         break;
 
     // ----------------------------------------
