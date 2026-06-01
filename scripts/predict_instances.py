@@ -96,6 +96,46 @@ def compute_monthly_anchor_date(p, year, month):
     return dt.date()
 
 
+def next_weekday_on_or_after(start_date, weekday):
+    days_ahead = (int(weekday) - start_date.weekday()) % 7
+    return start_date + timedelta(days=days_ahead)
+
+
+def get_last_scheduled_instance_date(cursor, predicted_transaction_id, before_date):
+    cursor.execute("""
+        SELECT MAX(scheduled_date) AS last_date
+        FROM predicted_instances
+        WHERE predicted_transaction_id = %s
+          AND scheduled_date < %s
+    """, (predicted_transaction_id, before_date))
+    row = cursor.fetchone()
+    return row['last_date'] if row else None
+
+
+def schedule_weekly_or_fortnightly_instances(cursor, p, today, end_date, frequency, last_actual_date):
+    weekday = p.get('weekday')
+    if weekday is None:
+        return
+
+    step = timedelta(days=14 if frequency == 'fortnightly' else 7)
+
+    if frequency == 'fortnightly':
+        phase_date = last_actual_date or get_last_scheduled_instance_date(cursor, p['id'], today)
+        if phase_date is not None:
+            next_date = next_weekday_on_or_after(phase_date + step, weekday)
+        else:
+            next_date = next_weekday_on_or_after(today, weekday)
+    else:
+        next_date = next_weekday_on_or_after(today, weekday)
+
+    while next_date < today:
+        next_date += step
+
+    while next_date <= end_date:
+        schedule_instance(cursor, p, next_date)
+        next_date += step
+
+
 def actual_transfer_exists_by_category(cursor, from_account_id, category_id, scheduled_date):
     """
     Used for repayments (no predicted_transaction_id): if a transfer already happened on the paying account
@@ -168,17 +208,10 @@ def predict_fixed_transactions(cursor, today, end_date):
 
     for p in predictions:
         interval = int(p.get('repeat_interval') or 1)
-        anchor_type = p['anchor_type']
-        frequency = (p.get('frequency') or 'monthly')
+        anchor_type = p.get('anchor_type')
+        frequency = (p.get('frequency') or ('weekly' if anchor_type == 'weekly' else 'monthly'))
 
         last_actual_date = get_last_actual_date(cursor, p['id'])
-
-        if anchor_type == 'weekly':
-            for i in range((end_date - today).days + 1):
-                day = today + timedelta(days=i)
-                if day.weekday() == p['weekday']:
-                    schedule_instance(cursor, p, day)
-            continue
 
         if frequency == 'custom' and interval:
             step = timedelta(days=7 * interval)
@@ -195,22 +228,11 @@ def predict_fixed_transactions(cursor, today, end_date):
                 next_date += step
             continue
 
-        if frequency in ('weekly', 'fortnightly'):
-            step_days = 7 if frequency == 'weekly' else 14
-            step = timedelta(days=step_days)
-
-            if last_actual_date is not None:
-                next_date = last_actual_date + step
-            else:
-                seed = compute_monthly_anchor_date(p, today.year, today.month)
-                next_date = seed if seed is not None else today
-
-            while next_date < today:
-                next_date += step
-
-            while next_date <= end_date:
-                schedule_instance(cursor, p, next_date)
-                next_date += step
+        if frequency in ('weekly', 'fortnightly') or anchor_type == 'weekly':
+            effective_frequency = frequency if frequency in ('weekly', 'fortnightly') else 'weekly'
+            schedule_weekly_or_fortnightly_instances(
+                cursor, p, today, end_date, effective_frequency, last_actual_date
+            )
             continue
 
         month_step = max(1, interval)
