@@ -1,0 +1,5 @@
+Status,Transaction Date,Billing Amount,Debit or Credit,Merchant,Merchant City,Merchant State,Merchant Postcode,Card Used
+BILLED,2026-05-01,12.34,DBIT,Cafe, Example,London,,SW1A 1AA,Card 1234
+BILLED,2026-05-03,25.00,CRDT,Payroll Refund,London,,EC1A 1BB,Card 1234
+PENDING,2026-05-04,7.99,DBIT,Pending Shop,London,,N1 1AA,Card 1234
+BILLED,2026-05-05,not-a-number,DBIT,Broken Amount,London,,E1 1AA,Card 1234

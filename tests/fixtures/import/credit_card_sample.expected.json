@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "fixture": "credit_card_sample.csv",
+  "account_id": 99,
+  "expected_summary": {
+    "rows_parsed": 2,
+    "rows_repaired": 1,
+    "rows_malformed": 1,
+    "rows_non_billed": 1
+  },
+  "expected_rows": [
+    {
+      "account_id": 99,
+      "date": "2026-05-01",
+      "description": "Cafe, Example",
+      "amount": "-12.34"
+    },
+    {
+      "account_id": 99,
+      "date": "2026-05-03",
+      "description": "Payroll Refund",
+      "amount": "25.00"
+    }
+  ],
+  "source_assertions": [
+    {
+      "file": "scripts/parse_csv.py",
+      "contains": "IMPORT_SUMMARY_JSON:"
+    },
+    {
+      "file": "scripts/parse_csv.py",
+      "contains": "\"rows_repaired\": repaired_rows"
+    },
+    {
+      "file": "scripts/parse_csv.py",
+      "contains": "if row.get(\"Status\", \"\").upper() != \"BILLED\":"
+    },
+    {
+      "file": "scripts/parse_csv.py",
+      "contains": "extra_cols = len(row_values) - expected_len"
+    },
+    {
+      "file": "scripts/parse_csv.py",
+      "contains": "potential_match_id = find_potential_duplicate"
+    }
+  ]
+}
