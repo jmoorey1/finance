@@ -94,7 +94,7 @@ function parse_credit_card_fixture(string $path, int $accountId): array
             continue;
         }
 
-        $rowValues = array_map(static fn($value): string => trim((string)$value), $rawRow);
+        $rowValues = array_map(static fn($value): string => (string)$value, $rawRow);
 
         if (count($rowValues) > $expectedLength) {
             if ($merchantIndex === false) {
@@ -110,6 +110,8 @@ function parse_credit_card_fixture(string $path, int $accountId): array
             );
             $rowsRepaired++;
         }
+
+        $rowValues = array_map(static fn($value): string => trim((string)$value), $rowValues);
 
         if (count($rowValues) !== $expectedLength) {
             $rowsMalformed++;
