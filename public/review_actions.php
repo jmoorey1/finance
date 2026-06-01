@@ -395,30 +395,133 @@ switch ($action) {
     // ✅ CONFIRM: This staging entry is a duplicate
     // ----------------------------------------
     case 'confirm_duplicate':
-        $matched_id = (int) ($_POST['matched_transaction_id'] ?? 0);
+        $posted_matched_id = (int) ($_POST['matched_transaction_id'] ?? 0);
 
-        $dupStmt = $conn->prepare("SELECT date, description FROM staging_transactions WHERE id = ? LIMIT 1");
-        $dupStmt->execute([$staging_id]);
-        $dupRow = $dupStmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$dupRow) {
-            die("❌ Staging transaction not found.");
+        if ($posted_matched_id <= 0) {
+            die("❌ Missing matched transaction.");
         }
 
-        $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($dupRow['description'] ?? ''));
+        $canonical_text = function (?string $value): string {
+            $text = strtolower(trim((string)$value));
+            $text = preg_replace('/[^a-z0-9]+/', ' ', $text) ?? '';
+            return trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        };
 
-        $conn->prepare("
-            UPDATE transactions
-            SET date = ?, description = ?, payee_id = ?
-            WHERE id = ?
-        ")->execute([
-            $dupRow['date'],
-            $dupRow['description'],
-            $resolved_payee_id,
-            $matched_id
-        ]);
+        $descriptions_similar = function (?string $first, ?string $second) use ($canonical_text): bool {
+            $canonical_first = $canonical_text($first);
+            $canonical_second = $canonical_text($second);
 
-        $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+            if ($canonical_first === '' || $canonical_second === '') {
+                return false;
+            }
+
+            if ($canonical_first === $canonical_second) {
+                return true;
+            }
+
+            $minimum_prefix_length = 8;
+            if (
+                strlen($canonical_first) >= $minimum_prefix_length &&
+                strlen($canonical_second) >= $minimum_prefix_length &&
+                substr($canonical_first, 0, $minimum_prefix_length) === substr($canonical_second, 0, $minimum_prefix_length)
+            ) {
+                return true;
+            }
+
+            if (strlen($canonical_first) <= strlen($canonical_second)) {
+                $shorter = $canonical_first;
+                $longer = $canonical_second;
+            } else {
+                $shorter = $canonical_second;
+                $longer = $canonical_first;
+            }
+
+            return strlen($shorter) >= 8 && str_contains($longer, $shorter);
+        };
+
+        try {
+            $conn->beginTransaction();
+
+            $dupStmt = $conn->prepare("
+                SELECT id, account_id, date, description, amount, status, matched_transaction_id
+                FROM staging_transactions
+                WHERE id = ?
+                FOR UPDATE
+            ");
+            $dupStmt->execute([$staging_id]);
+            $dupRow = $dupStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$dupRow) {
+                throw new RuntimeException('Staging transaction not found.');
+            }
+
+            if (($dupRow['status'] ?? '') !== 'potential_duplicate') {
+                throw new RuntimeException('Staging transaction is not marked as a potential duplicate.');
+            }
+
+            $stored_matched_id = (int)($dupRow['matched_transaction_id'] ?? 0);
+            if ($stored_matched_id <= 0) {
+                throw new RuntimeException('Staging transaction has no stored duplicate match.');
+            }
+
+            if ($posted_matched_id !== $stored_matched_id) {
+                throw new RuntimeException('Posted duplicate match does not match the stored review candidate.');
+            }
+
+            $matchedStmt = $conn->prepare("
+                SELECT id, account_id, date, description, amount
+                FROM transactions
+                WHERE id = ?
+                FOR UPDATE
+            ");
+            $matchedStmt->execute([$stored_matched_id]);
+            $matchedRow = $matchedStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$matchedRow) {
+                throw new RuntimeException('Matched transaction not found.');
+            }
+
+            if ((int)$matchedRow['account_id'] !== (int)$dupRow['account_id']) {
+                throw new RuntimeException('Matched transaction account does not match staged transaction account.');
+            }
+
+            if (abs((float)$matchedRow['amount'] - (float)$dupRow['amount']) >= 0.01) {
+                throw new RuntimeException('Matched transaction amount does not match staged transaction amount.');
+            }
+
+            $staging_date = new DateTimeImmutable((string)$dupRow['date']);
+            $matched_date = new DateTimeImmutable((string)$matchedRow['date']);
+            $days_apart = $staging_date->diff($matched_date)->days;
+            if ($days_apart === false || $days_apart > 3) {
+                throw new RuntimeException('Matched transaction date is outside the duplicate review window.');
+            }
+
+            if (!$descriptions_similar((string)($dupRow['description'] ?? ''), (string)($matchedRow['description'] ?? ''))) {
+                throw new RuntimeException('Matched transaction description is no longer similar to the staged transaction.');
+            }
+
+            $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($dupRow['description'] ?? ''));
+
+            $conn->prepare("
+                UPDATE transactions
+                SET date = ?, description = ?, payee_id = ?
+                WHERE id = ?
+            ")->execute([
+                $dupRow['date'],
+                $dupRow['description'],
+                $resolved_payee_id,
+                $stored_matched_id
+            ]);
+
+            $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+            $conn->commit();
+        } catch (Throwable $e) {
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
+            die("❌ Duplicate confirmation failed: " . $e->getMessage());
+        }
+
         break;
 
     // ----------------------------------------
