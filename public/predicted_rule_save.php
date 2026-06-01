@@ -149,7 +149,9 @@ if ($frequency === 'monthly') {
     $isBusinessDay = 0;
     $monthlyAnchorType = 'day_of_month';
 } else { // custom
-    $anchorType = 'weekly';
+    // Custom rules are interval-based; keep date-anchor fields empty so they
+    // cannot be mistaken for weekly/monthly rules by the generator.
+    $anchorType = 'day_of_month';
     $dayOfMonth = null;
     $weekday = null;
     $nthWeekday = null;
