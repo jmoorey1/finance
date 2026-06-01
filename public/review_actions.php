@@ -128,7 +128,7 @@ switch ($action) {
                 UPDATE predicted_instances
                 SET fulfilled = 1,
                     confirmed = 1,
-                    resolution_status = 'open,
+                    resolution_status = 'open',
                     resolved_at = NULL,
                     resolution_note = NULL,
                     fulfilled_at = NOW(),
