@@ -404,6 +404,12 @@ switch ($action) {
             if (!$staging) die("❌ Staging transaction not found.");
 
             $conn->beginTransaction();
+            $fail_transfer = function (string $message) use ($conn): void {
+                if ($conn->inTransaction()) {
+                    $conn->rollBack();
+                }
+                die("❌ " . $message);
+            };
 
             // 1️⃣ Create transfer group
             $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Manual transfer match')")->execute();
@@ -447,7 +453,7 @@ switch ($action) {
                 $stmt = $conn->prepare("SELECT * FROM staging_transactions WHERE id = ?");
                 $stmt->execute([$counter_id]);
                 $counter = $stmt->fetch(PDO::FETCH_ASSOC);
-                if (!$counter) die("❌ Counterparty staging row not found.");
+                if (!$counter) $fail_transfer("Counterparty staging row not found.");
 
                 // Insert second transaction
                 $second_category = resolve_transfer_category($conn, $counter['account_id'], $counter['amount'], $staging['account_id']);
@@ -473,26 +479,83 @@ switch ($action) {
             } elseif (str_starts_with($transfer_target, 'existing_')) {
                 $existing_id = (int) str_replace('existing_', '', $transfer_target);
 
-                $stmt = $conn->prepare("SELECT * FROM transactions WHERE id = ?");
+                $stmt = $conn->prepare("
+                    SELECT *
+                    FROM transactions
+                    WHERE id = ?
+                      AND description = 'PLACEHOLDER'
+                      AND transfer_group_id IS NOT NULL
+                    FOR UPDATE
+                ");
                 $stmt->execute([$existing_id]);
                 $existing = $stmt->fetch(PDO::FETCH_ASSOC);
-                if (!$existing) die("❌ Placeholder transaction not found.");
+                if (!$existing) $fail_transfer("Placeholder transaction not found.");
 
-                // Link existing to group
-                $conn->prepare("UPDATE transactions SET transfer_group_id = ? WHERE id = ?")
-                     ->execute([$transfer_group_id, $existing_id]);
+                if ((int)$existing['account_id'] !== (int)$staging['account_id']) {
+                    $fail_transfer("Selected placeholder account does not match uploaded transaction account.");
+                }
 
-                // Delete the staging row
+                if (abs((float)$existing['amount'] - (float)$staging['amount']) > 0.01) {
+                    $fail_transfer("Selected placeholder amount does not match uploaded transaction amount.");
+                }
+
+                $existing_group_id = (int)$existing['transfer_group_id'];
+                $counter_stmt = $conn->prepare("
+                    SELECT *
+                    FROM transactions
+                    WHERE transfer_group_id = ?
+                      AND id != ?
+                    ORDER BY id ASC
+                ");
+                $counter_stmt->execute([$existing_group_id, $existing_id]);
+                $counterparties = $counter_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                if (count($counterparties) !== 1) {
+                    $fail_transfer("Placeholder transfer group must contain exactly one counterparty transaction.");
+                }
+
+                $counterparty = $counterparties[0];
+                $first_cat = resolve_transfer_category(
+                    $conn,
+                    (int)$staging['account_id'],
+                    (float)$staging['amount'],
+                    (int)$counterparty['account_id']
+                );
+                $counterparty_cat = resolve_transfer_category(
+                    $conn,
+                    (int)$counterparty['account_id'],
+                    (float)$counterparty['amount'],
+                    (int)$staging['account_id']
+                );
+
+                if ($first_cat === null || $counterparty_cat === null) {
+                    $fail_transfer("Unable to resolve transfer categories for placeholder match.");
+                }
+
+                // Move the uploaded transaction into the placeholder's existing group,
+                // then remove the placeholder. This preserves the original counterparty
+                // transaction instead of orphaning it in the old group.
+                $conn->prepare("
+                    UPDATE transactions
+                    SET transfer_group_id = ?, category_id = ?
+                    WHERE id = ?
+                ")->execute([$existing_group_id, $first_cat, $first_txn_id]);
+
+                $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")
+                    ->execute([$counterparty_cat, (int)$counterparty['id']]);
+
+                $conn->prepare("DELETE FROM transactions WHERE id = ? AND description = 'PLACEHOLDER'")
+                    ->execute([$existing_id]);
+
+                $conn->prepare("DELETE FROM transfer_groups WHERE id = ?")
+                    ->execute([$transfer_group_id]);
+
                 $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
-
-                // Update first category now that we know the target account
-                $first_cat = resolve_transfer_category($conn, $staging['account_id'], $staging['amount'], $existing['account_id']);
-                $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")->execute([$first_cat, $first_txn_id]);
 
             } elseif ($transfer_target === 'one_sided') {
                 // Get the opposite account from user
                 $linked_account_id = (int) ($_POST['linked_account_id'] ?? 0);
-                if (!$linked_account_id) die("❌ Missing linked account for one-sided transfer.");
+                if (!$linked_account_id) $fail_transfer("Missing linked account for one-sided transfer.");
 
                 $placeholder_amt = -1 * $staging['amount'];
                 $placeholder_cat = resolve_transfer_category($conn, $linked_account_id, $placeholder_amt, $staging['account_id']);
