@@ -179,52 +179,60 @@
   ],
   "source_assertions": [
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Staging transaction is not marked as a potential duplicate."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Posted duplicate match does not match the stored review candidate."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Matched transaction date is outside the duplicate review window."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Selected category must be an income or expense category."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Transaction amount cannot be zero."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Split categories and amounts are required."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Split total ("
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Transfer sides must use different accounts."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Selected placeholder account does not match uploaded transaction account."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Uploaded account does not match predicted transfer."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "Partial predicted transfer must contain exactly one placeholder."
     },
     {
-      "file": "public/review_actions.php",
+      "file": "public/review_actions_handler.php",
       "contains": "INSERT INTO transactions (account_id, date, description, amount, type, original_ref, category_id, payee_id)"
+    },
+    {
+      "file": "public/review_actions.php",
+      "contains": "review_action_set_flash('error', $output)"
+    },
+    {
+      "file": "public/review.php",
+      "contains": "review_page_flash_html($reviewFlash)"
     }
   ]
 }
