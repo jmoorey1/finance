@@ -2,6 +2,50 @@
 require_once '../config/db.php';
 $conn = get_db_connection();
 
+function safe_transaction_edit_redirect(?string $rawRedirect): string
+{
+    $default = 'ledger.php';
+    $rawRedirect = trim((string)$rawRedirect);
+
+    if ($rawRedirect === '' || str_contains($rawRedirect, "\r") || str_contains($rawRedirect, "\n") || str_contains($rawRedirect, "\0")) {
+        return $default;
+    }
+
+    $parts = parse_url($rawRedirect);
+    if ($parts === false || isset($parts['scheme']) || isset($parts['host'])) {
+        return $default;
+    }
+
+    $path = (string)($parts['path'] ?? '');
+    if ($path === '') {
+        return $default;
+    }
+
+    $allowedPages = [
+        'ledger.php',
+        'category_report.php',
+        'subcategory_report.php',
+        'job_expense_report.php',
+    ];
+
+    $page = basename($path);
+    if (!in_array($page, $allowedPages, true)) {
+        return $default;
+    }
+
+    $allowedPaths = array_map(
+        fn(string $allowedPage): string => '/finance/public/' . $allowedPage,
+        $allowedPages
+    );
+
+    if ($path !== $page && !in_array($path, $allowedPaths, true)) {
+        return $default;
+    }
+
+    $query = isset($parts['query']) && $parts['query'] !== '' ? '?' . $parts['query'] : '';
+    return $path . $query;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['id'])) {
     die('Invalid request.');
 }
@@ -87,18 +131,14 @@ try {
     }
 
     $conn->commit();
-	if (!isset($_POST['redirect']) || strpos($_POST['redirect'], '/') !== 0) {
-		$redirect = 'ledger.php';
-	} else {
-		$redirect = $_POST['redirect'];
-	}
-	header("Location: $redirect");
+    $redirect = safe_transaction_edit_redirect($_POST['redirect'] ?? null);
+    header("Location: $redirect");
     exit;
 } catch (Exception $e) {
     $conn->rollBack();
-	include '../layout/header.php';
+    include '../layout/header.php';
     echo "<p>Error updating transaction: " . htmlspecialchars($e->getMessage()) . "</p>";
     echo "<p><a href='transaction_edit.php?id=$id'>Go Back</a></p>";
-	include '../layout/footer.php';
+    include '../layout/footer.php';
 }
 ?>
