@@ -1,6 +1,6 @@
 <?php
 /**
- * Home Finances System — Migration Helpers (BKL-021)
+ * Home Finances System - Migration Helpers (BKL-021)
  *
  * Baseline approach:
  * - Existing live DB is baselined once
@@ -17,6 +17,46 @@ function hf_migrations_dir(): string
 function hf_migration_table_name(): string
 {
     return 'schema_migrations';
+}
+
+function hf_acknowledged_legacy_migrations(): array
+{
+    return [
+        '20260415_000000' => 'Initial live schema baseline recorded before migration files were committed.',
+        '20260417_100000' => 'Legacy live schema change recorded before migration files were committed.',
+        '20260418_100000' => 'Legacy live schema change recorded before migration files were committed.',
+    ];
+}
+
+function hf_is_acknowledged_legacy_migration(string $version): bool
+{
+    return array_key_exists($version, hf_acknowledged_legacy_migrations());
+}
+
+function hf_acknowledged_legacy_applied_migrations(PDO $pdo): array
+{
+    $applied = hf_read_applied_migrations($pdo);
+    $files = hf_list_migration_files();
+
+    $fileVersions = [];
+    foreach ($files as $file) {
+        $fileVersions[$file['version']] = true;
+    }
+
+    $legacy = [];
+    foreach ($applied as $version => $row) {
+        if (!hf_is_acknowledged_legacy_migration($version) || isset($fileVersions[$version])) {
+            continue;
+        }
+
+        $legacy[$version] = [
+            'version' => $version,
+            'filename' => $row['filename'],
+            'reason' => hf_acknowledged_legacy_migrations()[$version],
+        ];
+    }
+
+    return $legacy;
 }
 
 function hf_migration_table_exists(PDO $pdo): bool
@@ -44,7 +84,7 @@ function hf_ensure_migration_table(PDO $pdo): void
 
 function hf_parse_migration_filename(string $filename): ?array
 {
-    if (!preg_match('/^(\\d{8}_\\d{6})_([a-z0-9_]+)\\.sql$/', $filename, $m)) {
+    if (!preg_match('/^(\d{8}_\d{6})_([a-z0-9_]+)\.sql$/', $filename, $m)) {
         return null;
     }
 
@@ -144,6 +184,10 @@ function hf_detect_applied_migration_drift(PDO $pdo): array
     $problems = [];
     foreach ($applied as $version => $row) {
         if (!isset($byVersion[$version])) {
+            if (hf_is_acknowledged_legacy_migration($version)) {
+                continue;
+            }
+
             $problems[] = [
                 'version' => $version,
                 'type'    => 'missing_file',
@@ -198,7 +242,7 @@ function hf_get_pending_migrations(PDO $pdo): array
 
 function hf_split_sql_statements(string $sql): array
 {
-    $sql = preg_replace('/^\\xEF\\xBB\\xBF/', '', $sql);
+    $sql = preg_replace('/^\xEF\xBB\xBF/', '', $sql);
     $len = strlen($sql);
 
     $statements = [];
