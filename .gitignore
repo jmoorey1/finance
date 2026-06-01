@@ -1,13 +1,21 @@
+# Runtime uploads and source bank files
 /uploads/*
-!/.gitkeep
-*/config/db.php
+!/uploads/.gitkeep
 *.ofx
 *.csv
-*.log
-.env
-*/__pycache__/*
-/migrations/*
-*/logs/predict_instances_state.json
 
-!/uploads/.gitkeep
+# Local environment and machine-specific configuration
+.env
 config/config.php
+*/config/db.php
+
+# Runtime logs and job state
+/logs/*
+!/logs/.gitkeep
+*.log
+
+# Python cache files
+__pycache__/
+*/__pycache__/*
+
+# Migration files are source-controlled. Do not ignore /migrations/*.sql.
