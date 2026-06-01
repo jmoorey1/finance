@@ -15,7 +15,7 @@ function hf_usage(): void
     echo "  php scripts/admin/migrate.php migrate\n";
     echo "\nExamples:\n";
     echo "  php scripts/admin/migrate.php status\n";
-    echo "  php scripts/admin/migrate.php baseline 20260415_000000_baseline_current_schema.sql\n";
+    echo "  php scripts/admin/migrate.php baseline <existing_baseline_file.sql>\n";
     echo "  php scripts/admin/migrate.php migrate\n";
 }
 
@@ -40,8 +40,8 @@ function hf_print_status(PDO $pdo): int
 
     if (!$tableExists && hf_db_has_non_migration_tables($pdo)) {
         echo "\nWARNING: Database has existing tables but has not yet been baselined.\n";
-        echo "Run:\n";
-        echo "  php scripts/admin/migrate.php baseline 20260415_000000_baseline_current_schema.sql\n";
+        echo "Create or restore a baseline migration file, then run:\n";
+        echo "  php scripts/admin/migrate.php baseline <migration_filename.sql>\n";
     }
 
     if (!empty($legacy)) {
@@ -121,8 +121,8 @@ function hf_run_migrate(PDO $pdo): int
     $applied = hf_read_applied_migrations($pdo);
 
     if (empty($applied) && hf_db_has_non_migration_tables($pdo)) {
-        fwrite(STDERR, "Database is not baselined. Run:\n");
-        fwrite(STDERR, "  php scripts/admin/migrate.php baseline 20260415_000000_baseline_current_schema.sql\n");
+        fwrite(STDERR, "Database is not baselined. Create or restore a baseline migration file, then run:\n");
+        fwrite(STDERR, "  php scripts/admin/migrate.php baseline <migration_filename.sql>\n");
         return 1;
     }
 
