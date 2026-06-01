@@ -39,10 +39,10 @@ scripts/admin/export_schema.sh
 
 ## Existing Live Database Setup
 
-For a database that already has application tables, create or identify a baseline migration and record it once:
+For a database that already has application tables, create or restore a baseline migration file in `/migrations`, then record it once:
 
 ```bash
-php scripts/admin/migrate.php baseline 20260415_000000_baseline_current_schema.sql
+php scripts/admin/migrate.php baseline <migration_filename.sql>
 ```
 
 Do not edit migration files after they have been applied. Add a new migration instead.
