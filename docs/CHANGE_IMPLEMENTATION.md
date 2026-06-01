@@ -154,7 +154,7 @@ This repo now includes a lightweight DB-free regression fixture pack for the Rev
 Run the fixture checks from the application root when the change touches:
 
 - Review workflow logic
-n- import parsing or upload handling
+- import parsing or upload handling
 - duplicate confirmation or categorisation guardrails
 - predicted transfer fulfilment guardrails
 - any area covered by the current fixture pack
