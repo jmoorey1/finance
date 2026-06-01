@@ -452,195 +452,237 @@ switch ($action) {
         }
         // Transfer Pairing or Placeholder
         if ($category_id === -1) {
-            $transfer_target = $_POST['transfer_target'] ?? '';
-            if (!$transfer_target) {
+            $transfer_target = (string) ($_POST['transfer_target'] ?? '');
+            if ($transfer_target === '') {
                 die("❌ Missing transfer target.");
             }
 
-            // Get original staging transaction
-            $stmt = $conn->prepare("SELECT * FROM staging_transactions WHERE id = ?");
-            $stmt->execute([$staging_id]);
-            $staging = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!$staging) die("❌ Staging transaction not found.");
+            try {
+                $conn->beginTransaction();
 
-            $conn->beginTransaction();
-            $fail_transfer = function (string $message) use ($conn): void {
+                $resolve_transfer_category = function (int $txn_account_id, float $amount, int $linked_account_id) use ($conn): ?int {
+                    $direction = $amount < 0 ? 'Transfer To :' : 'Transfer From :';
+                    $stmt = $conn->prepare("
+                        SELECT id
+                        FROM categories
+                        WHERE type = 'transfer'
+                          AND linked_account_id = ?
+                          AND name LIKE ?
+                        LIMIT 1
+                    ");
+                    $stmt->execute([$linked_account_id, $direction . '%']);
+                    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                    return isset($result['id']) ? (int)$result['id'] : null;
+                };
+
+                $resolve_transfer_category_or_fail = function (int $txn_account_id, float $amount, int $linked_account_id) use ($resolve_transfer_category): int {
+                    $category_id = $resolve_transfer_category($txn_account_id, $amount, $linked_account_id);
+                    if ($category_id === null) {
+                        throw new RuntimeException('Unable to resolve transfer category.');
+                    }
+                    return $category_id;
+                };
+
+                $assert_transfer_pair = function (array $first, array $second): void {
+                    if ((int)$first['account_id'] === (int)$second['account_id']) {
+                        throw new RuntimeException('Transfer sides must use different accounts.');
+                    }
+
+                    if (abs((float)$first['amount'] + (float)$second['amount']) > 0.01) {
+                        throw new RuntimeException('Transfer sides must balance to zero.');
+                    }
+                };
+
+                if (str_starts_with($transfer_target, 'staging_')) {
+                    $counter_id = (int) str_replace('staging_', '', $transfer_target);
+                    if ($counter_id <= 0 || $counter_id === $staging_id) {
+                        throw new RuntimeException('Invalid counterparty staging row.');
+                    }
+
+                    $stmt = $conn->prepare("SELECT * FROM staging_transactions WHERE id = ?");
+                    $stmt->execute([$counter_id]);
+                    $counter = $stmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$counter) {
+                        throw new RuntimeException('Counterparty staging row not found.');
+                    }
+
+                    $assert_transfer_pair($staging, $counter);
+                    $first_cat = $resolve_transfer_category_or_fail(
+                        (int)$staging['account_id'],
+                        (float)$staging['amount'],
+                        (int)$counter['account_id']
+                    );
+                    $second_cat = $resolve_transfer_category_or_fail(
+                        (int)$counter['account_id'],
+                        (float)$counter['amount'],
+                        (int)$staging['account_id']
+                    );
+
+                    $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Manual transfer match')")->execute();
+                    $transfer_group_id = (int)$conn->lastInsertId();
+
+                    $conn->prepare("
+                        INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                    ")->execute([
+                        $staging['account_id'],
+                        $staging['date'],
+                        $staging['description'],
+                        $staging['amount'],
+                        $first_cat,
+                        $transfer_group_id
+                    ]);
+
+                    $conn->prepare("
+                        INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                    ")->execute([
+                        $counter['account_id'],
+                        $counter['date'],
+                        $counter['description'],
+                        $counter['amount'],
+                        $second_cat,
+                        $transfer_group_id
+                    ]);
+
+                    $conn->prepare("DELETE FROM staging_transactions WHERE id IN (?, ?)")->execute([$staging_id, $counter_id]);
+                } elseif (str_starts_with($transfer_target, 'existing_')) {
+                    $existing_id = (int) str_replace('existing_', '', $transfer_target);
+                    if ($existing_id <= 0) {
+                        throw new RuntimeException('Invalid placeholder transaction.');
+                    }
+
+                    $stmt = $conn->prepare("
+                        SELECT *
+                        FROM transactions
+                        WHERE id = ?
+                          AND description = 'PLACEHOLDER'
+                          AND transfer_group_id IS NOT NULL
+                        FOR UPDATE
+                    ");
+                    $stmt->execute([$existing_id]);
+                    $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$existing) {
+                        throw new RuntimeException('Placeholder transaction not found.');
+                    }
+
+                    if ((int)$existing['account_id'] !== (int)$staging['account_id']) {
+                        throw new RuntimeException('Selected placeholder account does not match uploaded transaction account.');
+                    }
+
+                    if (abs((float)$existing['amount'] - (float)$staging['amount']) > 0.01) {
+                        throw new RuntimeException('Selected placeholder amount does not match uploaded transaction amount.');
+                    }
+
+                    $existing_group_id = (int)$existing['transfer_group_id'];
+                    $counter_stmt = $conn->prepare("
+                        SELECT *
+                        FROM transactions
+                        WHERE transfer_group_id = ?
+                          AND id != ?
+                        ORDER BY id ASC
+                    ");
+                    $counter_stmt->execute([$existing_group_id, $existing_id]);
+                    $counterparties = $counter_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                    if (count($counterparties) !== 1) {
+                        throw new RuntimeException('Placeholder transfer group must contain exactly one counterparty transaction.');
+                    }
+
+                    $counterparty = $counterparties[0];
+                    $assert_transfer_pair($staging, $counterparty);
+
+                    $first_cat = $resolve_transfer_category_or_fail(
+                        (int)$staging['account_id'],
+                        (float)$staging['amount'],
+                        (int)$counterparty['account_id']
+                    );
+                    $counterparty_cat = $resolve_transfer_category_or_fail(
+                        (int)$counterparty['account_id'],
+                        (float)$counterparty['amount'],
+                        (int)$staging['account_id']
+                    );
+
+                    $conn->prepare("
+                        INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                    ")->execute([
+                        $staging['account_id'],
+                        $staging['date'],
+                        $staging['description'],
+                        $staging['amount'],
+                        $first_cat,
+                        $existing_group_id
+                    ]);
+
+                    $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")
+                        ->execute([$counterparty_cat, (int)$counterparty['id']]);
+
+                    $conn->prepare("DELETE FROM transactions WHERE id = ? AND description = 'PLACEHOLDER'")
+                        ->execute([$existing_id]);
+
+                    $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+                } elseif ($transfer_target === 'one_sided') {
+                    $linked_account_id = (int) ($_POST['linked_account_id'] ?? 0);
+                    if ($linked_account_id <= 0) {
+                        throw new RuntimeException('Missing linked account for one-sided transfer.');
+                    }
+
+                    if ($linked_account_id === (int)$staging['account_id']) {
+                        throw new RuntimeException('One-sided transfer target must be a different account.');
+                    }
+
+                    $placeholder_amt = -1 * (float)$staging['amount'];
+                    $first_cat = $resolve_transfer_category_or_fail(
+                        (int)$staging['account_id'],
+                        (float)$staging['amount'],
+                        $linked_account_id
+                    );
+                    $placeholder_cat = $resolve_transfer_category_or_fail(
+                        $linked_account_id,
+                        $placeholder_amt,
+                        (int)$staging['account_id']
+                    );
+
+                    $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Manual transfer match')")->execute();
+                    $transfer_group_id = (int)$conn->lastInsertId();
+
+                    $conn->prepare("
+                        INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                    ")->execute([
+                        $staging['account_id'],
+                        $staging['date'],
+                        $staging['description'],
+                        $staging['amount'],
+                        $first_cat,
+                        $transfer_group_id
+                    ]);
+
+                    $conn->prepare("
+                        INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
+                        VALUES (?, ?, 'PLACEHOLDER', ?, 'transfer', ?, ?)
+                    ")->execute([
+                        $linked_account_id,
+                        $staging['date'],
+                        $placeholder_amt,
+                        $placeholder_cat,
+                        $transfer_group_id
+                    ]);
+
+                    $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
+                } else {
+                    throw new RuntimeException('Invalid transfer target.');
+                }
+
+                $conn->commit();
+            } catch (Throwable $e) {
                 if ($conn->inTransaction()) {
                     $conn->rollBack();
                 }
-                die("❌ " . $message);
-            };
-
-            // 1️⃣ Create transfer group
-            $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Manual transfer match')")->execute();
-            $transfer_group_id = $conn->lastInsertId();
-
-            // Helper to determine type and category
-            function resolve_transfer_category(PDO $conn, int $from_account, float $amount, int $linked_account): ?int {
-                $direction = $amount < 0 ? 'Transfer To :' : 'Transfer From :';
-                $stmt = $conn->prepare("
-                    SELECT id FROM categories
-                    WHERE type = 'transfer'
-                      AND linked_account_id = ?
-                      AND name LIKE ?
-                    LIMIT 1
-                ");
-                $stmt->execute([$linked_account, "$direction%"]);
-                $result = $stmt->fetch(PDO::FETCH_ASSOC);
-                return $result['id'] ?? null;
+                die("❌ Transfer failed: " . $e->getMessage());
             }
 
-            // 2️⃣ Insert the first (real) transaction
-            $first_category = resolve_transfer_category($conn, $staging['account_id'], $staging['amount'], 0); // 0 = temp
-            $first_txn = $conn->prepare("
-                INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                VALUES (?, ?, ?, ?, 'transfer', ?, ?)
-            ");
-            $first_txn->execute([
-                $staging['account_id'],
-                $staging['date'],
-                $staging['description'],
-                $staging['amount'],
-                null, // We'll update category below once we know counterparty
-                $transfer_group_id
-            ]);
-            $first_txn_id = $conn->lastInsertId();
-
-            // If it's a pair match
-            if (str_starts_with($transfer_target, 'staging_')) {
-                $counter_id = (int) str_replace('staging_', '', $transfer_target);
-
-                $stmt = $conn->prepare("SELECT * FROM staging_transactions WHERE id = ?");
-                $stmt->execute([$counter_id]);
-                $counter = $stmt->fetch(PDO::FETCH_ASSOC);
-                if (!$counter) $fail_transfer("Counterparty staging row not found.");
-
-                // Insert second transaction
-                $second_category = resolve_transfer_category($conn, $counter['account_id'], $counter['amount'], $staging['account_id']);
-                $conn->prepare("
-                    INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                    VALUES (?, ?, ?, ?, 'transfer', ?, ?)
-                ")->execute([
-                    $counter['account_id'],
-                    $counter['date'],
-                    $counter['description'],
-                    $counter['amount'],
-                    $second_category,
-                    $transfer_group_id
-                ]);
-
-                // Clean up both staging rows
-                $conn->prepare("DELETE FROM staging_transactions WHERE id IN (?, ?)")->execute([$staging_id, $counter_id]);
-
-                // Now update category of the first transaction
-                $first_cat = resolve_transfer_category($conn, $staging['account_id'], $staging['amount'], $counter['account_id']);
-                $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")->execute([$first_cat, $first_txn_id]);
-
-            } elseif (str_starts_with($transfer_target, 'existing_')) {
-                $existing_id = (int) str_replace('existing_', '', $transfer_target);
-
-                $stmt = $conn->prepare("
-                    SELECT *
-                    FROM transactions
-                    WHERE id = ?
-                      AND description = 'PLACEHOLDER'
-                      AND transfer_group_id IS NOT NULL
-                    FOR UPDATE
-                ");
-                $stmt->execute([$existing_id]);
-                $existing = $stmt->fetch(PDO::FETCH_ASSOC);
-                if (!$existing) $fail_transfer("Placeholder transaction not found.");
-
-                if ((int)$existing['account_id'] !== (int)$staging['account_id']) {
-                    $fail_transfer("Selected placeholder account does not match uploaded transaction account.");
-                }
-
-                if (abs((float)$existing['amount'] - (float)$staging['amount']) > 0.01) {
-                    $fail_transfer("Selected placeholder amount does not match uploaded transaction amount.");
-                }
-
-                $existing_group_id = (int)$existing['transfer_group_id'];
-                $counter_stmt = $conn->prepare("
-                    SELECT *
-                    FROM transactions
-                    WHERE transfer_group_id = ?
-                      AND id != ?
-                    ORDER BY id ASC
-                ");
-                $counter_stmt->execute([$existing_group_id, $existing_id]);
-                $counterparties = $counter_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-                if (count($counterparties) !== 1) {
-                    $fail_transfer("Placeholder transfer group must contain exactly one counterparty transaction.");
-                }
-
-                $counterparty = $counterparties[0];
-                $first_cat = resolve_transfer_category(
-                    $conn,
-                    (int)$staging['account_id'],
-                    (float)$staging['amount'],
-                    (int)$counterparty['account_id']
-                );
-                $counterparty_cat = resolve_transfer_category(
-                    $conn,
-                    (int)$counterparty['account_id'],
-                    (float)$counterparty['amount'],
-                    (int)$staging['account_id']
-                );
-
-                if ($first_cat === null || $counterparty_cat === null) {
-                    $fail_transfer("Unable to resolve transfer categories for placeholder match.");
-                }
-
-                // Move the uploaded transaction into the placeholder's existing group,
-                // then remove the placeholder. This preserves the original counterparty
-                // transaction instead of orphaning it in the old group.
-                $conn->prepare("
-                    UPDATE transactions
-                    SET transfer_group_id = ?, category_id = ?
-                    WHERE id = ?
-                ")->execute([$existing_group_id, $first_cat, $first_txn_id]);
-
-                $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")
-                    ->execute([$counterparty_cat, (int)$counterparty['id']]);
-
-                $conn->prepare("DELETE FROM transactions WHERE id = ? AND description = 'PLACEHOLDER'")
-                    ->execute([$existing_id]);
-
-                $conn->prepare("DELETE FROM transfer_groups WHERE id = ?")
-                    ->execute([$transfer_group_id]);
-
-                $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
-
-            } elseif ($transfer_target === 'one_sided') {
-                // Get the opposite account from user
-                $linked_account_id = (int) ($_POST['linked_account_id'] ?? 0);
-                if (!$linked_account_id) $fail_transfer("Missing linked account for one-sided transfer.");
-
-                $placeholder_amt = -1 * $staging['amount'];
-                $placeholder_cat = resolve_transfer_category($conn, $linked_account_id, $placeholder_amt, $staging['account_id']);
-
-                $conn->prepare("
-                    INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                    VALUES (?, ?, ?, ?, 'transfer', ?, ?)
-                ")->execute([
-                    $linked_account_id,
-                    $staging['date'],
-                    'PLACEHOLDER',
-                    $placeholder_amt,
-                    $placeholder_cat,
-                    $transfer_group_id
-                ]);
-
-                // Delete staging
-                $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
-
-                // Update real txn category now that we know target
-                $first_cat = resolve_transfer_category($conn, $staging['account_id'], $staging['amount'], $linked_account_id);
-                $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")->execute([$first_cat, $first_txn_id]);
-            }
-
-            $conn->commit();
             break;
         }
 
