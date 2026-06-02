@@ -47,7 +47,7 @@ CREATE TABLE `accounts` (
   PRIMARY KEY (`id`),
   KEY `fk_accounts_paid_from` (`paid_from`),
   CONSTRAINT `fk_accounts_paid_from` FOREIGN KEY (`paid_from`) REFERENCES `accounts` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=32 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `budgets`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -61,7 +61,7 @@ CREATE TABLE `budgets` (
   UNIQUE KEY `category_id` (`category_id`,`month_start`),
   KEY `idx_budgets_month_start` (`month_start`),
   CONSTRAINT `budgets_ibfk_1` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=27099 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `categories`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -82,7 +82,7 @@ CREATE TABLE `categories` (
   KEY `fk_category_linked_account` (`linked_account_id`),
   CONSTRAINT `categories_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `fk_category_linked_account` FOREIGN KEY (`linked_account_id`) REFERENCES `accounts` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=317 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `earmarks`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -92,7 +92,7 @@ CREATE TABLE `earmarks` (
   `name` varchar(100) NOT NULL,
   `description` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `email_runs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -114,7 +114,7 @@ CREATE TABLE `email_runs` (
   PRIMARY KEY (`id`),
   KEY `idx_email_runs_job_started` (`job_name`,`started_at`),
   KEY `idx_email_runs_status_started` (`status`,`started_at`)
-) ENGINE=InnoDB AUTO_INCREMENT=19 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `forecast_timeline_view`;
 /*!50001 DROP VIEW IF EXISTS `forecast_timeline_view`*/;
@@ -138,7 +138,7 @@ CREATE TABLE `import_run_accounts` (
   KEY `idx_import_run_accounts_account` (`account_id`,`created_at`),
   CONSTRAINT `fk_import_run_accounts_account` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_import_run_accounts_run` FOREIGN KEY (`import_run_id`) REFERENCES `import_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=70 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `import_runs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -167,7 +167,7 @@ CREATE TABLE `import_runs` (
   KEY `idx_import_runs_status_created` (`status`,`created_at`),
   KEY `idx_import_runs_requested_account` (`requested_account_id`),
   CONSTRAINT `fk_import_runs_requested_account` FOREIGN KEY (`requested_account_id`) REFERENCES `accounts` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=33 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `ledger_lines`;
 /*!50001 DROP VIEW IF EXISTS `ledger_lines`*/;
@@ -213,7 +213,7 @@ CREATE TABLE `ofx_account_map` (
   UNIQUE KEY `unique_ofx_account` (`bank_id`,`acct_id`),
   KEY `account_id` (`account_id`),
   CONSTRAINT `ofx_account_map_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payee_patterns`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -227,7 +227,7 @@ CREATE TABLE `payee_patterns` (
   UNIQUE KEY `payee_id` (`payee_id`,`match_pattern`),
   KEY `idx_payee_patterns_priority` (`priority`,`payee_id`),
   CONSTRAINT `payee_patterns_ibfk_1` FOREIGN KEY (`payee_id`) REFERENCES `payees` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=110 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payees`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -237,7 +237,7 @@ CREATE TABLE `payees` (
   `name` varchar(100) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=84 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `planned_income_events`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -261,7 +261,7 @@ CREATE TABLE `planned_income_events` (
   KEY `idx_planned_income_events_active_window` (`active`,`window_start`,`window_end`),
   KEY `idx_planned_income_events_account_window` (`account_id`,`window_start`,`window_end`),
   KEY `idx_planned_income_events_category` (`category_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_instances`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -301,7 +301,7 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_to_sched_state` (`to_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=97814 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `predicted_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -333,7 +333,7 @@ CREATE TABLE `predicted_transactions` (
   CONSTRAINT `predicted_transactions_ibfk_1` FOREIGN KEY (`from_account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `predicted_transactions_ibfk_2` FOREIGN KEY (`to_account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `predicted_transactions_ibfk_3` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `projects`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -343,7 +343,7 @@ CREATE TABLE `projects` (
   `name` varchar(100) NOT NULL,
   `description` text,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=37 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `schema_migrations`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -358,7 +358,7 @@ CREATE TABLE `schema_migrations` (
   `execution_ms` int unsigned DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_schema_migrations_version` (`version`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `staging_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -387,7 +387,7 @@ CREATE TABLE `staging_transactions` (
   CONSTRAINT `staging_transactions_ibfk_2` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `staging_transactions_ibfk_3` FOREIGN KEY (`matched_transaction_id`) REFERENCES `transactions` (`id`),
   CONSTRAINT `staging_transactions_ibfk_4` FOREIGN KEY (`predicted_instance_id`) REFERENCES `predicted_instances` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=9559 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `statements`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -405,7 +405,7 @@ CREATE TABLE `statements` (
   PRIMARY KEY (`id`),
   KEY `idx_statements_account_statement_date` (`account_id`,`statement_date`),
   CONSTRAINT `statements_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=133 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `transaction_splits`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -429,7 +429,7 @@ CREATE TABLE `transaction_splits` (
   CONSTRAINT `transaction_splits_ibfk_2` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `transaction_splits_ibfk_3` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`),
   CONSTRAINT `transaction_splits_ibfk_4` FOREIGN KEY (`fund_source_id`) REFERENCES `earmarks` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=763 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -465,7 +465,7 @@ CREATE TABLE `transactions` (
   CONSTRAINT `fk_transactions_category` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`),
   CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `transactions_ibfk_2` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=17863 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `transfer_groups`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -475,7 +475,7 @@ CREATE TABLE `transfer_groups` (
   `description` varchar(255) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1194 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `watcher_alerts`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -504,7 +504,7 @@ CREATE TABLE `watcher_alerts` (
   KEY `idx_watcher_alerts_type_status` (`alert_type`,`status`),
   KEY `idx_watcher_alerts_last_detected` (`last_detected_at`),
   KEY `idx_watcher_alerts_related_account` (`related_account_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=33 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50001 DROP VIEW IF EXISTS `account_balances_as_of_last_night`*/;
 /*!50001 SET @saved_cs_client          = @@character_set_client */;
@@ -528,7 +528,7 @@ CREATE TABLE `watcher_alerts` (
 /*!50001 SET collation_connection      = utf8mb4_0900_ai_ci */;
 /*!50001 CREATE ALGORITHM=UNDEFINED */
 /*!50013 DEFINER=`john`@`localhost` SQL SECURITY DEFINER */
-/*!50001 VIEW `forecast_timeline_view` AS select `t`.`account_id` AS `account_id`,`t`.`date` AS `date`,(sum(`t`.`amount`) OVER (PARTITION BY `t`.`account_id` ORDER BY `t`.`date` )  + `a`.`starting_balance`) AS `running_balance` from ((select `transactions`.`account_id` AS `account_id`,`transactions`.`date` AS `date`,`transactions`.`amount` AS `amount` from `transactions` where (`transactions`.`date` <= curdate()) union all select `predicted_instances`.`from_account_id` AS `from_account_id`,`predicted_instances`.`scheduled_date` AS `scheduled_date`,-(`predicted_instances`.`amount`) AS `-amount` from `predicted_instances` where (`predicted_instances`.`scheduled_date` > curdate()) union all select `predicted_instances`.`to_account_id` AS `to_account_id`,`predicted_instances`.`scheduled_date` AS `scheduled_date`,`predicted_instances`.`amount` AS `amount` from `predicted_instances` where (`predicted_instances`.`scheduled_date` > curdate())) `t` join `accounts` `a` on((`a`.`id` = `t`.`account_id`))) where ((`a`.`active` = 1) and (`a`.`type` = 'current')) */;
+/*!50001 VIEW `forecast_timeline_view` AS select `events`.`account_id` AS `account_id`,`events`.`event_date` AS `date`,round((`a`.`starting_balance` + sum(`events`.`amount`) OVER (PARTITION BY `events`.`account_id` ORDER BY `events`.`event_date`,`events`.`sort_order`,`events`.`source_id` ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ),2) AS `running_balance` from ((select `t`.`account_id` AS `account_id`,`t`.`date` AS `event_date`,`t`.`amount` AS `amount`,0 AS `sort_order`,`t`.`id` AS `source_id` from `transactions` `t` where (`t`.`date` <= curdate()) union all select `pi`.`from_account_id` AS `account_id`,`pi`.`scheduled_date` AS `event_date`,`pi`.`amount` AS `amount`,1 AS `sort_order`,`pi`.`id` AS `source_id` from (`predicted_instances` `pi` join `categories` `c` on((`c`.`id` = `pi`.`category_id`))) where ((`pi`.`scheduled_date` > curdate()) and (`pi`.`amount` is not null) and (`c`.`type` in ('income','expense')) and (coalesce(`pi`.`fulfilled`,0) = 0) and (coalesce(`pi`.`resolution_status`,'open') = 'open')) union all select `pi`.`from_account_id` AS `account_id`,`pi`.`scheduled_date` AS `event_date`,-(abs(`pi`.`amount`)) AS `amount`,2 AS `sort_order`,`pi`.`id` AS `source_id` from (`predicted_instances` `pi` join `categories` `c` on((`c`.`id` = `pi`.`category_id`))) where ((`pi`.`scheduled_date` > curdate()) and (`pi`.`amount` is not null) and (`pi`.`from_account_id` is not null) and (`c`.`type` = 'transfer') and (coalesce(`pi`.`fulfilled`,0) = 0) and (coalesce(`pi`.`resolution_status`,'open') = 'open')) union all select `pi`.`to_account_id` AS `account_id`,`pi`.`scheduled_date` AS `event_date`,abs(`pi`.`amount`) AS `amount`,3 AS `sort_order`,`pi`.`id` AS `source_id` from (`predicted_instances` `pi` join `categories` `c` on((`c`.`id` = `pi`.`category_id`))) where ((`pi`.`scheduled_date` > curdate()) and (`pi`.`amount` is not null) and (`pi`.`to_account_id` is not null) and (`c`.`type` = 'transfer') and (coalesce(`pi`.`fulfilled`,0) = 0) and (coalesce(`pi`.`resolution_status`,'open') = 'open'))) `events` join `accounts` `a` on((`a`.`id` = `events`.`account_id`))) where ((`a`.`active` = 1) and (`a`.`type` = 'current')) */;
 /*!50001 SET character_set_client      = @saved_cs_client */;
 /*!50001 SET character_set_results     = @saved_cs_results */;
 /*!50001 SET collation_connection      = @saved_col_connection */;
