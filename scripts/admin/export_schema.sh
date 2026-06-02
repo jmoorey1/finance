@@ -25,6 +25,12 @@ if [[ -z "${DB_PASS}" ]]; then
   exit 1
 fi
 
+TMP_SQL="$(mktemp)"
+cleanup() {
+  rm -f "${TMP_SQL}"
+}
+trap cleanup EXIT
+
 MYSQL_PWD="${DB_PASS}" mysqldump \
   --host="${DB_HOST}" \
   --user="${DB_USER}" \
@@ -32,8 +38,28 @@ MYSQL_PWD="${DB_PASS}" mysqldump \
   --no-data \
   --skip-comments \
   --single-transaction \
-  "${DB_NAME}" > "${OUT_SQL}"
+  "${DB_NAME}" > "${TMP_SQL}"
 
 unset MYSQL_PWD
 
-echo "Exported schema to: ${OUT_SQL}"
+# Keep schema.sql deterministic and portable:
+# - remove table-level AUTO_INCREMENT counters, which are live-data artefacts
+# - remove machine/user-specific DEFINER clauses from dumped views
+#
+# Important: this does not remove column-level AUTO_INCREMENT definitions.
+perl -0pi -e 's/ AUTO_INCREMENT=\d+//g' "${TMP_SQL}"
+perl -0pi -e 's{/\*!\d{5}\s+DEFINER=`[^`]+`@`[^`]+`\s+SQL SECURITY DEFINER\s+\*/\n?}{}g' "${TMP_SQL}"
+
+if grep -qE ' AUTO_INCREMENT=[0-9]+' "${TMP_SQL}"; then
+  echo "ERROR: schema export still contains table-level AUTO_INCREMENT values."
+  exit 1
+fi
+
+if grep -qE 'DEFINER=`[^`]+`@`[^`]+' "${TMP_SQL}"; then
+  echo "ERROR: schema export still contains environment-specific DEFINER clauses."
+  exit 1
+fi
+
+mv "${TMP_SQL}" "${OUT_SQL}"
+
+echo "Exported normalised schema to: ${OUT_SQL}"
