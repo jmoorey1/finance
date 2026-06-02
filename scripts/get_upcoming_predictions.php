@@ -12,14 +12,14 @@ function get_upcoming_predictions(PDO $db, $limit_days = 10) {
             p.to_account_id,
             a1.name AS from_account,
             a2.name AS to_account,
-            c.type AS category_type,
+            COALESCE(p.prediction_type, c.type) AS category_type,
             c.name AS category_name
         FROM predicted_instances p
         LEFT JOIN accounts a1 ON p.from_account_id = a1.id
         LEFT JOIN accounts a2 ON p.to_account_id = a2.id
         LEFT JOIN payee_patterns pp ON p.description LIKE pp.match_pattern
         LEFT JOIN payees pay ON pp.payee_id = pay.id
-        INNER JOIN categories c ON p.category_id = c.id
+        LEFT JOIN categories c ON p.category_id = c.id
         WHERE p.scheduled_date BETWEEN ? AND DATE_ADD(?, INTERVAL ? DAY)
           AND COALESCE(p.fulfilled, 0) = 0
           AND COALESCE(p.resolution_status, 'open') = 'open'

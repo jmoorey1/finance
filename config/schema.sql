@@ -274,6 +274,7 @@ CREATE TABLE `predicted_instances` (
   `from_account_id` int NOT NULL,
   `to_account_id` int DEFAULT NULL,
   `category_id` int NOT NULL,
+  `prediction_type` enum('income','expense','transfer') NOT NULL DEFAULT 'expense',
   `fulfilled` tinyint(1) DEFAULT '0',
   `fulfilled_at` datetime DEFAULT NULL,
   `fulfilled_by_transaction_id` int DEFAULT NULL,
@@ -299,6 +300,7 @@ CREATE TABLE `predicted_instances` (
   KEY `idx_predicted_instances_resolution` (`resolution_status`,`fulfilled`,`scheduled_date`),
   KEY `idx_predicted_instances_from_sched_state` (`from_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
   KEY `idx_predicted_instances_to_sched_state` (`to_account_id`,`scheduled_date`,`fulfilled`,`resolution_status`),
+  KEY `idx_predicted_instances_prediction_type_state` (`prediction_type`,`fulfilled`,`resolution_status`,`scheduled_date`),
   CONSTRAINT `fk_predicted_instances_statement` FOREIGN KEY (`statement_id`) REFERENCES `statements` (`id`) ON DELETE SET NULL,
   CONSTRAINT `predicted_instances_ibfk_1` FOREIGN KEY (`predicted_transaction_id`) REFERENCES `predicted_transactions` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -312,6 +314,7 @@ CREATE TABLE `predicted_transactions` (
   `from_account_id` int NOT NULL,
   `to_account_id` int DEFAULT NULL,
   `category_id` int NOT NULL,
+  `prediction_type` enum('income','expense','transfer') NOT NULL DEFAULT 'expense',
   `amount` decimal(10,2) DEFAULT NULL,
   `variable` tinyint(1) DEFAULT '0',
   `average_over_last` int DEFAULT NULL,
@@ -330,6 +333,7 @@ CREATE TABLE `predicted_transactions` (
   KEY `to_account_id` (`to_account_id`),
   KEY `category_id` (`category_id`),
   KEY `predicted_transactions_ibfk_1` (`from_account_id`),
+  KEY `idx_predicted_transactions_prediction_type` (`prediction_type`),
   CONSTRAINT `predicted_transactions_ibfk_1` FOREIGN KEY (`from_account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `predicted_transactions_ibfk_2` FOREIGN KEY (`to_account_id`) REFERENCES `accounts` (`id`),
   CONSTRAINT `predicted_transactions_ibfk_3` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`)

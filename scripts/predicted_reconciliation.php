@@ -5,14 +5,14 @@ function pr_load_predicted_instance(PDO $pdo, int $id): ?array
     $stmt = $pdo->prepare("
         SELECT
             pi.*,
-            c.type AS category_type,
+            COALESCE(pi.prediction_type, c.type) AS category_type,
             c.name AS category_name,
             fa.name AS from_account_name,
             fa.type AS from_account_type,
             ta.name AS to_account_name,
             ta.type AS to_account_type
         FROM predicted_instances pi
-        JOIN categories c ON c.id = pi.category_id
+        LEFT JOIN categories c ON c.id = pi.category_id
         JOIN accounts fa ON fa.id = pi.from_account_id
         LEFT JOIN accounts ta ON ta.id = pi.to_account_id
         WHERE pi.id = ?
@@ -30,12 +30,12 @@ function pr_validate_reconcilable(array $instance): bool
 
 function pr_is_regular(array $instance): bool
 {
-    return ($instance['category_type'] ?? '') !== 'transfer';
+    return (($instance['prediction_type'] ?? $instance['category_type'] ?? '') !== 'transfer');
 }
 
 function pr_is_transfer(array $instance): bool
 {
-    return ($instance['category_type'] ?? '') === 'transfer';
+    return (($instance['prediction_type'] ?? $instance['category_type'] ?? '') === 'transfer');
 }
 
 function pr_is_txn_linked_elsewhere(PDO $pdo, int $transactionId, int $currentPredictionId): bool

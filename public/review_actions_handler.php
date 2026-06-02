@@ -25,6 +25,7 @@ switch ($action) {
                 p.id AS predicted_instance_id,
                 p.predicted_transaction_id,
                 p.category_id AS instance_category_id,
+                p.prediction_type,
                 p.amount AS predicted_amount,
                 p.from_account_id,
                 p.to_account_id,
@@ -51,7 +52,7 @@ switch ($action) {
         $cat_stmt = $conn->prepare("SELECT type FROM categories WHERE id = ? LIMIT 1");
         $cat_stmt->execute([(int) $row['instance_category_id']]);
         $cat_row = $cat_stmt->fetch(PDO::FETCH_ASSOC);
-        $category_type = $cat_row['type'] ?? '';
+        $category_type = (string)($row['prediction_type'] ?? ($cat_row['type'] ?? ''));
 
         $expected_transfer_amount_for_account = function (int $txn_account_id, int $from_account, int $to_account, float $predicted_amount): ?float {
             $amount = abs($predicted_amount);

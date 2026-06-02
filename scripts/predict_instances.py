@@ -136,20 +136,23 @@ def schedule_weekly_or_fortnightly_instances(cursor, p, today, end_date, frequen
         next_date += step
 
 
-def actual_transfer_exists_by_category(cursor, from_account_id, category_id, scheduled_date):
+def actual_transfer_exists_by_metadata(cursor, from_account_id, to_account_id, scheduled_date):
     """
-    Used for repayments (no predicted_transaction_id): if a transfer already happened on the paying account
-    using the specific Transfer To category near the scheduled date, don't recreate the prediction.
+    For repayments without predicted_transaction_id, use transfer group metadata
+    rather than legacy transfer categories to detect whether the transfer already
+    happened near the scheduled payment date.
     """
     cursor.execute("""
         SELECT 1
-        FROM transactions
-        WHERE account_id = %s
-          AND category_id = %s
-          AND type = 'transfer'
-          AND ABS(DATEDIFF(date, %s)) <= 3
+        FROM transfer_groups tg
+        JOIN transactions t ON t.transfer_group_id = tg.id
+        WHERE tg.from_account_id = %s
+          AND tg.to_account_id = %s
+          AND t.account_id = %s
+          AND t.type = 'transfer'
+          AND ABS(DATEDIFF(t.date, %s)) <= 3
         LIMIT 1
-    """, (from_account_id, category_id, scheduled_date))
+    """, (from_account_id, to_account_id, from_account_id, scheduled_date))
     return cursor.fetchone() is not None
 
 
@@ -174,8 +177,8 @@ def schedule_instance(cursor, p, day):
     cursor.execute("""
         INSERT INTO predicted_instances
         (predicted_transaction_id, scheduled_date, from_account_id, to_account_id,
-         category_id, amount, description)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+         category_id, prediction_type, amount, description)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             amount = IF(
                 confirmed = 1
@@ -198,7 +201,7 @@ def schedule_instance(cursor, p, day):
             )
     """, (
         p['id'], day, p['from_account_id'], p['to_account_id'],
-        p['category_id'], amount, p['description']
+        p['category_id'], p.get('prediction_type') or 'expense', amount, p['description']
     ))
 
 
@@ -528,8 +531,8 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 print("⏩ Payment date outside forecast window")
                 continue
 
-            if actual_transfer_exists_by_category(cursor, int(card['paid_from']), int(category_id), payment_date):
-                print("⏩ Skipping – actual repayment already found (Transfer To category)")
+            if actual_transfer_exists_by_metadata(cursor, int(card['paid_from']), int(card['id']), payment_date):
+                print("⏩ Skipping – actual repayment already found (transfer group metadata)")
                 continue
 
             statement_id, statement_balance, estimation_basis = estimate_statement_balance_for_cycle(
@@ -604,8 +607,8 @@ def predict_credit_card_repayments(cursor, today, end_date):
 
             cursor.execute("""
                 INSERT INTO predicted_instances
-                    (scheduled_date, from_account_id, to_account_id, category_id, amount, description, statement_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (scheduled_date, from_account_id, to_account_id, category_id, prediction_type, amount, description, statement_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     amount = IF(
                         confirmed = 1
@@ -637,6 +640,7 @@ def predict_credit_card_repayments(cursor, today, end_date):
                 card['paid_from'],
                 card['id'],
                 category_id,
+                'transfer',
                 amount_to_insert,
                 f"Credit card repayment: {card['name']}",
                 statement_id

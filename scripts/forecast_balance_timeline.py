@@ -32,14 +32,16 @@ transactions = cursor.fetchall()
 cursor.execute("""
     SELECT p.scheduled_date AS date,
            p.amount,
-           c.type AS category_type,
+           COALESCE(p.prediction_type, c.type) AS category_type,
            p.from_account_id,
            p.to_account_id,
            p.description
     FROM predicted_instances p
-    INNER JOIN categories c ON p.category_id = c.id
+     LEFT JOIN categories c ON p.category_id = c.id
     WHERE p.scheduled_date > %s
       AND COALESCE(p.fulfilled, 0) = 0
+      AND COALESCE(p.resolution_status, 'open') = 'open'
+      AND COALESCE(p.resolution_status, 'open') = 'open'
 """, (today,))
 predictions = cursor.fetchall()
 

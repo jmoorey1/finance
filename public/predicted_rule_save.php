@@ -98,7 +98,9 @@ if ($toAccountId !== null) {
     }
 }
 
-if ($catType === 'transfer') {
+$predictionType = in_array($catType, ['income', 'expense', 'transfer'], true) ? $catType : 'expense';
+
+if ($predictionType === 'transfer') {
     if ($toAccountId === null || $toAccountId <= 0) {
         $errors[] = 'Transfer rules require a To Account.';
     }
@@ -195,6 +197,7 @@ try {
                 from_account_id = ?,
                 to_account_id = ?,
                 category_id = ?,
+                prediction_type = ?,
                 amount = ?,
                 variable = ?,
                 average_over_last = ?,
@@ -214,6 +217,7 @@ try {
             $fromAccountId,
             $toAccountId,
             $categoryId,
+            $predictionType,
             $amount,
             $variable,
             $variable ? $averageOverLast : null,
@@ -233,16 +237,17 @@ try {
     } else {
         $stmt = $pdo->prepare("
             INSERT INTO predicted_transactions (
-                description, from_account_id, to_account_id, category_id, amount,
+                description, from_account_id, to_account_id, category_id, prediction_type, amount,
                 variable, average_over_last, day_of_month, adjust_for_weekend, active,
                 anchor_type, frequency, repeat_interval, weekday, nth_weekday, is_business_day
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $description,
             $fromAccountId,
             $toAccountId,
             $categoryId,
+            $predictionType,
             $amount,
             $variable,
             $variable ? $averageOverLast : null,

@@ -108,13 +108,13 @@ function cp_fetch_predicted_account_events(PDO $pdo, string $startDate, string $
             pi.description,
             pi.from_account_id,
             pi.to_account_id,
-            c.type AS category_type,
+            COALESCE(pi.prediction_type, c.type) AS category_type,
             fa.name AS from_account_name,
             fa.type AS from_account_type,
             ta.name AS to_account_name,
             ta.type AS to_account_type
         FROM predicted_instances pi
-        JOIN categories c ON c.id = pi.category_id
+        LEFT JOIN categories c ON c.id = pi.category_id
         LEFT JOIN accounts fa ON fa.id = pi.from_account_id
         LEFT JOIN accounts ta ON ta.id = pi.to_account_id
         WHERE pi.scheduled_date BETWEEN ? AND ?
@@ -227,13 +227,13 @@ function cp_fetch_late_predicted_account_events(PDO $pdo, string $effectiveDate,
             pi.description,
             pi.from_account_id,
             pi.to_account_id,
-            c.type AS category_type,
+            COALESCE(pi.prediction_type, c.type) AS category_type,
             fa.name AS from_account_name,
             fa.type AS from_account_type,
             ta.name AS to_account_name,
             ta.type AS to_account_type
         FROM predicted_instances pi
-        JOIN categories c ON c.id = pi.category_id
+        LEFT JOIN categories c ON c.id = pi.category_id
         LEFT JOIN accounts fa ON fa.id = pi.from_account_id
         LEFT JOIN accounts ta ON ta.id = pi.to_account_id
         WHERE pi.scheduled_date < ?
