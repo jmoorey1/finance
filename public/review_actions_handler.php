@@ -2,6 +2,7 @@
 require_once '../config/db.php';
 require_once '../scripts/payee_matching.php';
 require_once '../scripts/lib/split_transaction_helpers.php';
+require_once '../scripts/lib/transfer_group_helpers.php';
 $conn = get_db_connection();
 
 $action = $_POST['action'] ?? '';
@@ -230,6 +231,17 @@ switch ($action) {
                     $conn->prepare("DELETE FROM transactions WHERE id = ?")
                         ->execute([(int)$placeholder['id']]);
 
+                    finance_update_transfer_group_metadata(
+                        $conn,
+                        $transfer_group_id,
+                        null,
+                        $from_account,
+                        $to_account,
+                        $predicted_amount,
+                        (string)$row['date'],
+                        'complete'
+                    );
+
                     $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
                     $mark_prediction_fulfilled_transfer($predicted_id, $transfer_group_id);
 
@@ -251,8 +263,15 @@ switch ($action) {
 
                 // Scenario A: both sides are present in staging now
                 if ($other) {
-                    $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Predicted transfer match')")->execute();
-                    $transfer_group_id = (int) $conn->lastInsertId();
+                    $transfer_group_id = finance_create_transfer_group(
+                        $conn,
+                        'Predicted transfer match',
+                        $from_account,
+                        $to_account,
+                        $predicted_amount,
+                        ($uploaded_account === $from_account) ? (string)$row['date'] : (string)$other['date'],
+                        'complete'
+                    );
 
                     $other_account = (int) $other['account_id'];
                     $assert_predicted_transfer_row($other, $from_account, $to_account, $predicted_amount, 'Other staging row');
@@ -301,8 +320,15 @@ switch ($action) {
                 }
 
                 // Scenario B: only one side present so create placeholder and mark partial
-                $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Predicted transfer (partial)')")->execute();
-                $transfer_group_id = (int) $conn->lastInsertId();
+                $transfer_group_id = finance_create_transfer_group(
+                    $conn,
+                    'Predicted transfer (partial)',
+                    $from_account,
+                    $to_account,
+                    $predicted_amount,
+                    (string)$row['date'],
+                    'partial'
+                );
 
                 $counterparty_account = ($uploaded_account === $from_account) ? $to_account : $from_account;
 
@@ -678,8 +704,18 @@ switch ($action) {
                         (int)$staging['account_id']
                     );
 
-                    $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Manual transfer match')")->execute();
-                    $transfer_group_id = (int)$conn->lastInsertId();
+                    $metadata_from_row = ((float)$staging['amount'] < 0) ? $staging : $counter;
+                    $metadata_to_row = ((float)$staging['amount'] < 0) ? $counter : $staging;
+
+                    $transfer_group_id = finance_create_transfer_group(
+                        $conn,
+                        'Manual transfer match',
+                        (int)$metadata_from_row['account_id'],
+                        (int)$metadata_to_row['account_id'],
+                        abs((float)$metadata_from_row['amount']),
+                        (string)$metadata_from_row['date'],
+                        'complete'
+                    );
 
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
@@ -781,6 +817,20 @@ switch ($action) {
                     $conn->prepare("DELETE FROM transactions WHERE id = ? AND description = 'PLACEHOLDER'")
                         ->execute([$existing_id]);
 
+                    $metadata_from_row = ((float)$staging['amount'] < 0) ? $staging : $counterparty;
+                    $metadata_to_row = ((float)$staging['amount'] < 0) ? $counterparty : $staging;
+
+                    finance_update_transfer_group_metadata(
+                        $conn,
+                        $existing_group_id,
+                        null,
+                        (int)$metadata_from_row['account_id'],
+                        (int)$metadata_to_row['account_id'],
+                        abs((float)$metadata_from_row['amount']),
+                        (string)$metadata_from_row['date'],
+                        'complete'
+                    );
+
                     $conn->prepare("DELETE FROM staging_transactions WHERE id = ?")->execute([$staging_id]);
                 } elseif ($transfer_target === 'one_sided') {
                     $linked_account_id = (int) ($_POST['linked_account_id'] ?? 0);
@@ -804,8 +854,22 @@ switch ($action) {
                         (int)$staging['account_id']
                     );
 
-                    $conn->prepare("INSERT INTO transfer_groups (description) VALUES ('Manual transfer match')")->execute();
-                    $transfer_group_id = (int)$conn->lastInsertId();
+                    $metadata_from_account_id = ((float)$staging['amount'] < 0)
+                        ? (int)$staging['account_id']
+                        : $linked_account_id;
+                    $metadata_to_account_id = ((float)$staging['amount'] < 0)
+                        ? $linked_account_id
+                        : (int)$staging['account_id'];
+
+                    $transfer_group_id = finance_create_transfer_group(
+                        $conn,
+                        'Manual transfer match',
+                        $metadata_from_account_id,
+                        $metadata_to_account_id,
+                        abs((float)$staging['amount']),
+                        (string)$staging['date'],
+                        'partial'
+                    );
 
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)

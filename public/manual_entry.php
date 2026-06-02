@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../scripts/lib/transfer_group_helpers.php';
 
 function h(?string $value): string
 {
@@ -188,8 +189,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('To account does not exist or is inactive.');
             }
 
-            $pdo->exec("INSERT INTO transfer_groups () VALUES ()");
-            $groupId = (int)$pdo->lastInsertId();
+            $groupId = finance_create_transfer_group(
+                $pdo,
+                'Manual transfer: ' . $description,
+                $fromId,
+                $toId,
+                $transferAmount,
+                $date,
+                'complete'
+            );
 
             $stmt = $pdo->prepare("
                 SELECT id
