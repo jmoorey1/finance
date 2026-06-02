@@ -53,30 +53,6 @@ switch ($action) {
         $cat_row = $cat_stmt->fetch(PDO::FETCH_ASSOC);
         $category_type = $cat_row['type'] ?? '';
 
-        $resolve_transfer_category = function (int $linked_account_id, string $directionPrefix) use ($conn): ?int {
-            $stmt = $conn->prepare("
-                SELECT id
-                FROM categories
-                WHERE type = 'transfer'
-                  AND linked_account_id = ?
-                  AND name LIKE ?
-                LIMIT 1
-            ");
-            $stmt->execute([$linked_account_id, $directionPrefix . '%']);
-            $result = $stmt->fetch(PDO::FETCH_ASSOC);
-            return $result['id'] ?? null;
-        };
-
-        $transfer_category_for_account = function (int $txn_account_id, int $from_account, int $to_account) use ($resolve_transfer_category): ?int {
-            if ($txn_account_id === $from_account) {
-                return $resolve_transfer_category($to_account, 'Transfer To :');
-            }
-            if ($txn_account_id === $to_account) {
-                return $resolve_transfer_category($from_account, 'Transfer From :');
-            }
-            return null;
-        };
-
         $expected_transfer_amount_for_account = function (int $txn_account_id, int $from_account, int $to_account, float $predicted_amount): ?float {
             $amount = abs($predicted_amount);
             if ($txn_account_id === $from_account) {
@@ -99,14 +75,6 @@ switch ($action) {
             if (abs((float)($transferRow['amount'] ?? 0) - $expected_amount) >= 0.01) {
                 throw new RuntimeException($label . ' amount does not match predicted transfer.');
             }
-        };
-
-        $resolve_transfer_category_or_fail = function (int $txn_account_id, int $from_account, int $to_account) use ($transfer_category_for_account): int {
-            $category_id = $transfer_category_for_account($txn_account_id, $from_account, $to_account);
-            if ($category_id === null) {
-                throw new RuntimeException('Transfer category not found for predicted transfer side.');
-            }
-            return (int)$category_id;
         };
 
         $mark_prediction_partial = function (int $prediction_id, int $transfer_group_id) use ($conn): void {
@@ -210,20 +178,17 @@ switch ($action) {
                         throw new RuntimeException('Uploaded transfer row does not match the partial transfer placeholder amount.');
                     }
 
-                    $cat = $resolve_transfer_category_or_fail($uploaded_account, $from_account, $to_account);
-
                     $ins = $conn->prepare("
                         INSERT INTO transactions
                             (account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
                         VALUES
-                            (?, ?, ?, ?, 'transfer', ?, ?, ?)
+                            (?, ?, ?, ?, 'transfer', NULL, ?, ?)
                     ");
                     $ins->execute([
                         $uploaded_account,
                         $row['date'],
                         $row['description'],
                         $row['amount'],
-                        $cat,
                         $transfer_group_id,
                         $row['predicted_transaction_id']
                     ]);
@@ -280,34 +245,30 @@ switch ($action) {
                         throw new RuntimeException('Both staging rows are for the same side of the predicted transfer.');
                     }
 
-                    $cat1 = $resolve_transfer_category_or_fail($uploaded_account, $from_account, $to_account);
                     $conn->prepare("
                         INSERT INTO transactions
                             (account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
                         VALUES
-                            (?, ?, ?, ?, 'transfer', ?, ?, ?)
+                            (?, ?, ?, ?, 'transfer', NULL, ?, ?)
                     ")->execute([
                         $uploaded_account,
                         $row['date'],
                         $row['description'],
                         $row['amount'],
-                        $cat1,
                         $transfer_group_id,
                         $row['predicted_transaction_id']
                     ]);
 
-                    $cat2 = $resolve_transfer_category_or_fail($other_account, $from_account, $to_account);
                     $conn->prepare("
                         INSERT INTO transactions
                             (account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
                         VALUES
-                            (?, ?, ?, ?, 'transfer', ?, ?, ?)
+                            (?, ?, ?, ?, 'transfer', NULL, ?, ?)
                     ")->execute([
                         $other_account,
                         $other['date'],
                         $other['description'],
                         $other['amount'],
-                        $cat2,
                         $transfer_group_id,
                         $row['predicted_transaction_id']
                     ]);
@@ -332,35 +293,31 @@ switch ($action) {
 
                 $counterparty_account = ($uploaded_account === $from_account) ? $to_account : $from_account;
 
-                $real_cat = $resolve_transfer_category_or_fail($uploaded_account, $from_account, $to_account);
                 $conn->prepare("
                     INSERT INTO transactions
                         (account_id, date, description, amount, type, category_id, transfer_group_id, predicted_transaction_id)
                     VALUES
-                        (?, ?, ?, ?, 'transfer', ?, ?, ?)
+                        (?, ?, ?, ?, 'transfer', NULL, ?, ?)
                 ")->execute([
                     $uploaded_account,
                     $row['date'],
                     $row['description'],
                     $row['amount'],
-                    $real_cat,
                     $transfer_group_id,
                     $row['predicted_transaction_id']
                 ]);
 
                 $placeholder_amt = -1 * (float) $row['amount'];
-                $placeholder_cat = $resolve_transfer_category_or_fail($counterparty_account, $from_account, $to_account);
 
                 $conn->prepare("
                     INSERT INTO transactions
                         (account_id, date, description, amount, type, category_id, transfer_group_id)
                     VALUES
-                        (?, ?, 'PLACEHOLDER', ?, 'transfer', ?, ?)
+                        (?, ?, 'PLACEHOLDER', ?, 'transfer', NULL, ?)
                 ")->execute([
                     $counterparty_account,
                     $row['date'],
                     $placeholder_amt,
-                    $placeholder_cat,
                     $transfer_group_id
                 ]);
 
@@ -646,29 +603,6 @@ switch ($action) {
             try {
                 $conn->beginTransaction();
 
-                $resolve_transfer_category = function (int $txn_account_id, float $amount, int $linked_account_id) use ($conn): ?int {
-                    $direction = $amount < 0 ? 'Transfer To :' : 'Transfer From :';
-                    $stmt = $conn->prepare("
-                        SELECT id
-                        FROM categories
-                        WHERE type = 'transfer'
-                          AND linked_account_id = ?
-                          AND name LIKE ?
-                        LIMIT 1
-                    ");
-                    $stmt->execute([$linked_account_id, $direction . '%']);
-                    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-                    return isset($result['id']) ? (int)$result['id'] : null;
-                };
-
-                $resolve_transfer_category_or_fail = function (int $txn_account_id, float $amount, int $linked_account_id) use ($resolve_transfer_category): int {
-                    $category_id = $resolve_transfer_category($txn_account_id, $amount, $linked_account_id);
-                    if ($category_id === null) {
-                        throw new RuntimeException('Unable to resolve transfer category.');
-                    }
-                    return $category_id;
-                };
-
                 $assert_transfer_pair = function (array $first, array $second): void {
                     if ((int)$first['account_id'] === (int)$second['account_id']) {
                         throw new RuntimeException('Transfer sides must use different accounts.');
@@ -693,16 +627,6 @@ switch ($action) {
                     }
 
                     $assert_transfer_pair($staging, $counter);
-                    $first_cat = $resolve_transfer_category_or_fail(
-                        (int)$staging['account_id'],
-                        (float)$staging['amount'],
-                        (int)$counter['account_id']
-                    );
-                    $second_cat = $resolve_transfer_category_or_fail(
-                        (int)$counter['account_id'],
-                        (float)$counter['amount'],
-                        (int)$staging['account_id']
-                    );
 
                     $metadata_from_row = ((float)$staging['amount'] < 0) ? $staging : $counter;
                     $metadata_to_row = ((float)$staging['amount'] < 0) ? $counter : $staging;
@@ -719,25 +643,23 @@ switch ($action) {
 
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                        VALUES (?, ?, ?, ?, 'transfer', NULL, ?)
                     ")->execute([
                         $staging['account_id'],
                         $staging['date'],
                         $staging['description'],
                         $staging['amount'],
-                        $first_cat,
                         $transfer_group_id
                     ]);
 
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                        VALUES (?, ?, ?, ?, 'transfer', NULL, ?)
                     ")->execute([
                         $counter['account_id'],
                         $counter['date'],
                         $counter['description'],
                         $counter['amount'],
-                        $second_cat,
                         $transfer_group_id
                     ]);
 
@@ -788,31 +710,16 @@ switch ($action) {
                     $counterparty = $counterparties[0];
                     $assert_transfer_pair($staging, $counterparty);
 
-                    $first_cat = $resolve_transfer_category_or_fail(
-                        (int)$staging['account_id'],
-                        (float)$staging['amount'],
-                        (int)$counterparty['account_id']
-                    );
-                    $counterparty_cat = $resolve_transfer_category_or_fail(
-                        (int)$counterparty['account_id'],
-                        (float)$counterparty['amount'],
-                        (int)$staging['account_id']
-                    );
-
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                        VALUES (?, ?, ?, ?, 'transfer', NULL, ?)
                     ")->execute([
                         $staging['account_id'],
                         $staging['date'],
                         $staging['description'],
                         $staging['amount'],
-                        $first_cat,
                         $existing_group_id
                     ]);
-
-                    $conn->prepare("UPDATE transactions SET category_id = ? WHERE id = ?")
-                        ->execute([$counterparty_cat, (int)$counterparty['id']]);
 
                     $conn->prepare("DELETE FROM transactions WHERE id = ? AND description = 'PLACEHOLDER'")
                         ->execute([$existing_id]);
@@ -843,16 +750,6 @@ switch ($action) {
                     }
 
                     $placeholder_amt = -1 * (float)$staging['amount'];
-                    $first_cat = $resolve_transfer_category_or_fail(
-                        (int)$staging['account_id'],
-                        (float)$staging['amount'],
-                        $linked_account_id
-                    );
-                    $placeholder_cat = $resolve_transfer_category_or_fail(
-                        $linked_account_id,
-                        $placeholder_amt,
-                        (int)$staging['account_id']
-                    );
 
                     $metadata_from_account_id = ((float)$staging['amount'] < 0)
                         ? (int)$staging['account_id']
@@ -873,24 +770,22 @@ switch ($action) {
 
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                        VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                        VALUES (?, ?, ?, ?, 'transfer', NULL, ?)
                     ")->execute([
                         $staging['account_id'],
                         $staging['date'],
                         $staging['description'],
                         $staging['amount'],
-                        $first_cat,
                         $transfer_group_id
                     ]);
 
                     $conn->prepare("
                         INSERT INTO transactions (account_id, date, description, amount, type, category_id, transfer_group_id)
-                        VALUES (?, ?, 'PLACEHOLDER', ?, 'transfer', ?, ?)
+                        VALUES (?, ?, 'PLACEHOLDER', ?, 'transfer', NULL, ?)
                     ")->execute([
                         $linked_account_id,
                         $staging['date'],
                         $placeholder_amt,
-                        $placeholder_cat,
                         $transfer_group_id
                     ]);
 

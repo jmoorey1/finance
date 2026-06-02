@@ -200,24 +200,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             $stmt = $pdo->prepare("
-                SELECT id
-                FROM categories
-                WHERE linked_account_id = ?
-                  AND name LIKE ?
-                LIMIT 1
-            ");
-
-            $stmt->execute([$toId, 'Transfer To :%']);
-            $fromCategoryId = $stmt->fetchColumn();
-
-            $stmt->execute([$fromId, 'Transfer From :%']);
-            $toCategoryId = $stmt->fetchColumn();
-
-            if (!$fromCategoryId || !$toCategoryId) {
-                throw new RuntimeException('Transfer categories not found for this pair.');
-            }
-
-            $stmt = $pdo->prepare("
                 INSERT INTO transactions (
                     account_id,
                     date,
@@ -226,7 +208,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     type,
                     category_id,
                     transfer_group_id
-                ) VALUES (?, ?, ?, ?, 'transfer', ?, ?)
+                ) VALUES (?, ?, ?, ?, 'transfer', NULL, ?)
             ");
 
             // From side
@@ -235,7 +217,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $date,
                 $description,
                 -$transferAmount,
-                $fromCategoryId,
                 $groupId,
             ]);
 
@@ -245,7 +226,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $date,
                 $description,
                 $transferAmount,
-                $toCategoryId,
                 $groupId,
             ]);
         }
