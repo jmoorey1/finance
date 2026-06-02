@@ -473,8 +473,19 @@ DROP TABLE IF EXISTS `transfer_groups`;
 CREATE TABLE `transfer_groups` (
   `id` int NOT NULL AUTO_INCREMENT,
   `description` varchar(255) DEFAULT NULL,
+  `from_account_id` int DEFAULT NULL,
+  `to_account_id` int DEFAULT NULL,
+  `expected_amount` decimal(10,2) DEFAULT NULL,
+  `transfer_date` date DEFAULT NULL,
+  `transfer_status` enum('complete','partial','needs_review') NOT NULL DEFAULT 'needs_review',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`)
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_transfer_groups_from_account` (`from_account_id`),
+  KEY `idx_transfer_groups_to_account` (`to_account_id`),
+  KEY `idx_transfer_groups_status_date` (`transfer_status`,`transfer_date`),
+  CONSTRAINT `fk_transfer_groups_from_account` FOREIGN KEY (`from_account_id`) REFERENCES `accounts` (`id`),
+  CONSTRAINT `fk_transfer_groups_to_account` FOREIGN KEY (`to_account_id`) REFERENCES `accounts` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `watcher_alerts`;
