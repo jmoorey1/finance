@@ -1,6 +1,7 @@
 <?php
 require_once '../config/db.php';
 require_once '../scripts/payee_matching.php';
+require_once '../scripts/lib/split_transaction_helpers.php';
 $conn = get_db_connection();
 
 $action = $_POST['action'] ?? '';
@@ -543,7 +544,12 @@ switch ($action) {
     // ✳️ APPROVE: Categorised or split/transfer transaction (TBD)
     // ----------------------------------------
     case 'categorise':
-        $category_id = (int) ($_POST['category_id'] ?? 0);
+        $categoryRaw = trim((string)($_POST['category_id'] ?? ''));
+        $isSplitCategorySelection = finance_is_split_sentinel($categoryRaw);
+        $isTransferCategorySelection = ($categoryRaw === '-1');
+        $category_id = (!$isSplitCategorySelection && !$isTransferCategorySelection && $categoryRaw !== '')
+            ? (int)$categoryRaw
+            : 0;
 
         // Get the full staging transaction row
         $stmt = $conn->prepare("SELECT * FROM staging_transactions WHERE id = ?");
@@ -605,7 +611,7 @@ switch ($action) {
         };
 
         // Transfer Pairing or Placeholder
-        if ($category_id === -1) {
+        if ($isTransferCategorySelection) {
             $transfer_target = (string) ($_POST['transfer_target'] ?? '');
             if ($transfer_target === '') {
                 die("❌ Missing transfer target.");
@@ -841,7 +847,7 @@ switch ($action) {
         }
 
         // REGULAR categorisation
-        if ($category_id !== 197) {
+        if (!$isSplitCategorySelection) {
             try {
                 $account_type = $resolve_account_type_or_fail((int)$staging['account_id']);
                 $resolved_category_id = $resolve_income_expense_category_or_fail($category_id);
@@ -900,12 +906,6 @@ switch ($action) {
             $transaction_type = $transaction_type_for_amount($account_type, $parent_amount);
             $resolved_payee_id = resolve_payee_id_for_description($conn, (string)($staging['description'] ?? ''));
 
-            $split_parent_stmt = $conn->prepare("SELECT id FROM categories WHERE id = ? LIMIT 1");
-            $split_parent_stmt->execute([197]);
-            if ($split_parent_stmt->fetchColumn() === false) {
-                throw new RuntimeException('Split parent category is missing.');
-            }
-
             $total = 0.0;
             $splits = [];
             for ($i = 0; $i < count($split_categories); $i++) {
@@ -942,7 +942,7 @@ switch ($action) {
                 $parent_amount,
                 $transaction_type,
                 substr((string)($staging['original_memo'] ?? ''), 0, 100),
-                197,
+                null,
                 $resolved_payee_id
             ]);
             $transaction_id = (int)$conn->lastInsertId();

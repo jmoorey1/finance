@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../scripts/lib/split_transaction_helpers.php';
 $conn = get_db_connection();
 
 function safe_transaction_edit_redirect(?string $rawRedirect): string
@@ -51,11 +52,18 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['id'])) {
 }
 
 $id = (int)$_POST['id'];
+$categoryRaw = trim((string)($_POST['category_id'] ?? ''));
+$isSplitTransaction = finance_is_split_sentinel($categoryRaw);
+$categoryId = $isSplitTransaction ? null : (int)$categoryRaw;
 
 // Begin transaction
 $conn->beginTransaction();
 
 try {
+    if (!$isSplitTransaction && $categoryId <= 0) {
+        throw new Exception("A valid category is required unless the transaction is split.");
+    }
+
     // Prepare core transaction update
     $stmt = $conn->prepare("
         UPDATE transactions SET
@@ -77,7 +85,7 @@ try {
         $_POST['amount'],
         $_POST['description'],
         $_POST['account_id'],
-        $_POST['category_id'],
+        $categoryId,
         $_POST['payee_id'] !== '' ? $_POST['payee_id'] : null,
         isset($_POST['reconciled']) ? 1 : 0,
         $_POST['statement_id'] !== '' ? $_POST['statement_id'] : null,
@@ -87,7 +95,7 @@ try {
     ]);
 
     // Handle splits
-    if ((int)$_POST['category_id'] === 197) {
+    if ($isSplitTransaction) {
         // Clear old splits
         $conn->prepare("DELETE FROM transaction_splits WHERE transaction_id = ?")->execute([$id]);
 

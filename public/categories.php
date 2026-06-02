@@ -1,8 +1,11 @@
 <?php
 require_once '../config/db.php';
-include '../layout/header.php';
+require_once '../scripts/lib/split_transaction_helpers.php';
 
 define('TRANSFER_PARENT_ID', 275);
+$legacySplitCategoryName = finance_legacy_split_category_name();
+
+include '../layout/header.php';
 
 function cat_h(?string $value): string
 {
@@ -27,12 +30,15 @@ function cat_label_or_dash(?string $value): string
 }
 
 // Load top-level (parent) categories for dropdown
-$parent_stmt = $pdo->query("
+$parent_stmt = $pdo->prepare("
     SELECT id, name, type
     FROM categories
-    WHERE parent_id IS NULL AND id != 197 AND id != 275
+    WHERE parent_id IS NULL
+      AND id != ?
+      AND name != ?
     ORDER BY type ASC, name
 ");
+$parent_stmt->execute([TRANSFER_PARENT_ID, $legacySplitCategoryName]);
 $parent_categories = $parent_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Handle new category form submission
@@ -116,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_category'])) {
 }
 
 // Load all categories for table
-$stmt = $pdo->query("
+$stmt = $pdo->prepare("
 WITH cat_dates AS (
     SELECT t.date, t.category_id
     FROM transactions t
@@ -143,12 +149,13 @@ FROM categories c
 LEFT JOIN categories top ON c.parent_id = top.id
 LEFT JOIN accounts a ON c.linked_account_id = a.id
 LEFT JOIN last_cat ON last_cat.category_id = c.id
-WHERE c.id != 197 AND c.id != 275 AND (a.active IS NULL OR a.active = 1)
+WHERE c.id != ? AND c.name != ? AND (a.active IS NULL OR a.active = 1)
 ORDER BY
     FIELD(c.type, 'income', 'expense', 'transfer'),
     COALESCE(top.name, c.name),
     c.name
 ");
+$stmt->execute([TRANSFER_PARENT_ID, $legacySplitCategoryName]);
 $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $grouped = [

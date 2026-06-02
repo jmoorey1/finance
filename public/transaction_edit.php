@@ -1,8 +1,11 @@
 <?php
 require_once '../config/db.php';
+require_once '../scripts/lib/split_transaction_helpers.php';
 include '../layout/header.php';
 
 $conn = get_db_connection();
+$splitCategorySentinel = finance_split_category_sentinel();
+$legacySplitCategoryName = finance_legacy_split_category_name();
 
 // Validate transaction ID
 if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
@@ -26,7 +29,16 @@ if (!$transaction) {
 
 // Fetch supporting data
 $accounts = $conn->query("SELECT id, name FROM accounts ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-$categories = $conn->query("SELECT c.id, c.name, c.type, c.parent_id, p.name AS parent_name FROM categories c LEFT JOIN categories p ON c.parent_id = p.id where c.id not in (197,275) ORDER BY c.type, COALESCE(p.name, c.name), c.parent_id IS NOT NULL, c.name")->fetchAll(PDO::FETCH_ASSOC);
+$categoriesStmt = $conn->prepare("
+    SELECT c.id, c.name, c.type, c.parent_id, p.name AS parent_name
+    FROM categories c
+    LEFT JOIN categories p ON c.parent_id = p.id
+    WHERE c.id != 275
+      AND c.name != ?
+    ORDER BY c.type, COALESCE(p.name, c.name), c.parent_id IS NOT NULL, c.name
+");
+$categoriesStmt->execute([$legacySplitCategoryName]);
+$categories = $categoriesStmt->fetchAll(PDO::FETCH_ASSOC);
 $payees = $conn->query("SELECT id, name FROM payees ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $funds = $conn->query("SELECT id, name FROM earmarks ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $projects = $conn->query("SELECT id, name FROM projects ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -34,7 +46,8 @@ $statements = $conn->query("SELECT s.id, s.statement_date, s.account_id, a.name 
 
 // Fetch any splits
 $splits = [];
-if ($transaction['category_id'] == 197) {
+$isSplitTransaction = finance_transaction_has_splits($conn, $id);
+if ($isSplitTransaction) {
     $stmt = $conn->prepare("
         SELECT
             ts.category_id,
@@ -101,7 +114,7 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
                 </option>
             <?php endforeach; ?>
             </optgroup>
-            <option value="197" <?= $transaction['category_id'] == 197 ? 'selected' : '' ?>>-- Split/Multiple Categories --</option>
+            <option value="<?= htmlspecialchars($splitCategorySentinel, ENT_QUOTES, 'UTF-8') ?>" <?= $isSplitTransaction ? 'selected' : '' ?>>-- Split/Multiple Categories --</option>
         </select>
 
         <label>Payee:</label>
@@ -149,7 +162,7 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
     </div>
 
 <!-- Split Section -->
-<div id="split-section" style="margin-top: 20px; <?= $transaction['category_id'] == 197 ? '' : 'display: none;' ?>">
+<div id="split-section" style="margin-top: 20px; <?= $isSplitTransaction ? '' : 'display: none;' ?>">
     <h3>Split Categories</h3>
     <table id="split-table">
         <thead>
@@ -272,12 +285,13 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
 </form>
 
 <script>
+const splitCategorySentinel = <?= json_encode($splitCategorySentinel) ?>;
 function toggleSplitSection() {
     const splitSection = document.getElementById('split-section');
     const inputs = splitSection.querySelectorAll('input, select');
-    const selectedCategory = parseInt(document.getElementById('category_id').value);
+    const selectedCategory = String(document.getElementById('category_id').value || '');
 
-    if (selectedCategory === 197) {
+    if (selectedCategory === splitCategorySentinel) {
         splitSection.style.display = '';
         inputs.forEach(el => el.disabled = false);
     } else {

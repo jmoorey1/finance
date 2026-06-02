@@ -87,15 +87,28 @@
           "id": 10,
           "type": "current"
         },
-        "split_parent_category_id": 197,
-        "valid_split_categories": [121, 122]
+        "valid_split_categories": [
+          121,
+          122
+        ],
+        "split_mode": {
+          "source_of_truth": "transaction_splits rows exist",
+          "parent_transaction_category_id": null,
+          "ui_sentinel": "__split__"
+        }
       },
       "post": {
         "action": "categorise",
         "staging_transaction_id": 5003,
-        "category_id": 197,
-        "split_categories": [121, 122],
-        "split_amounts": ["-10.00", "-20.00"]
+        "category_id": "__split__",
+        "split_categories": [
+          121,
+          122
+        ],
+        "split_amounts": [
+          "-10.00",
+          "-20.00"
+        ]
       },
       "expect": {
         "result": "insert_parent_transaction_and_split_rows",
@@ -104,7 +117,8 @@
           "split arrays must both be arrays",
           "split arrays must have the same number of rows",
           "split amounts must be numeric and non-zero",
-          "split total must match the staged transaction amount"
+          "split total must match the staged transaction amount",
+          "parent transaction category_id must be NULL for split transactions"
         ]
       }
     },
@@ -233,6 +247,26 @@
     {
       "file": "public/review.php",
       "contains": "review_page_flash_html($reviewFlash)"
+    },
+    {
+      "file": "public/review_actions_handler.php",
+      "contains": "finance_is_split_sentinel($categoryRaw)"
+    },
+    {
+      "file": "public/review_actions_handler.php",
+      "contains": "null,"
+    },
+    {
+      "file": "public/review_view.php",
+      "contains": "$splitCategorySentinel = finance_split_category_sentinel();"
+    },
+    {
+      "file": "public/transaction_edit.php",
+      "contains": "$isSplitTransaction = finance_transaction_has_splits($conn, $id);"
+    },
+    {
+      "file": "public/transaction_edit_submit.php",
+      "contains": "$categoryId = $isSplitTransaction ? null : (int)$categoryRaw;"
     }
   ]
 }

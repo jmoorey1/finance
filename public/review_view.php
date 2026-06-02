@@ -1,8 +1,11 @@
 <?php
 require_once '../config/db.php';
 require_once '../scripts/payee_matching.php';
+require_once '../scripts/lib/split_transaction_helpers.php';
 
 $conn = get_db_connection();
+$splitCategorySentinel = finance_split_category_sentinel();
+$legacySplitCategoryName = finance_legacy_split_category_name();
 
 // Load full category hierarchy for dropdown rendering
 $allCategories = $conn->query("
@@ -106,6 +109,10 @@ $topCatsByLikeDescriptionStmt = $conn->prepare("
 function add_review_suggestions(array &$suggestions, array &$seen, array $rows, string $sourceLabel, int $limit = 5): void
 {
     foreach ($rows as $row) {
+        if ((string)($row['name'] ?? '') === finance_legacy_split_category_name()) {
+            continue;
+        }
+
         $catId = (int)$row['category_id'];
         if (isset($seen[$catId])) {
             continue;
@@ -170,7 +177,7 @@ function render_category_options(array $allCategories, array $topCategories, ?in
     $lastType = null;
 
     foreach ($allCategories as $cat) {
-        if ((int)$cat['id'] === 197) {
+        if ((string)($cat['name'] ?? '') === finance_legacy_split_category_name()) {
             continue;
         }
 
@@ -345,7 +352,7 @@ include '../layout/header.php';
                                                 $row['suggested_category_id'] ? (int)$row['suggested_category_id'] : null
                                             ) ?>
 
-                                            <option value="197">-- Split/Multiple Categories --</option>
+                                            <option value="<?= htmlspecialchars($splitCategorySentinel, ENT_QUOTES, 'UTF-8') ?>">-- Split/Multiple Categories --</option>
                                             <option value="-1">-- Mark as Transfer --</option>
                                         </select>
                                     </label>
@@ -475,18 +482,19 @@ include '../layout/header.php';
 <?php endif; ?>
 
 <script>
+const splitCategorySentinel = <?= json_encode($splitCategorySentinel) ?>;
 function toggleSplitSection(select) {
-    const selected = parseInt($(select).val(), 10);
+    const selected = String($(select).val() || '');
     const form = $(select).closest('form');
     const split = form.find('.split-section');
     const transfer = form.find('.transfer-section');
     const linked = form.find('.linked-account-section');
 
-    if (selected === 197) {
+    if (selected === splitCategorySentinel) {
         split.show().find('input, select').prop('disabled', false);
         transfer.hide().find('select').prop('disabled', true);
         linked.hide().find('select').prop('disabled', true);
-    } else if (selected === -1) {
+    } else if (selected === '-1') {
         transfer.show().find('select').prop('disabled', false);
         split.hide().find('input, select').prop('disabled', true);
         form.find('select[name="transfer_target"]').trigger('change');
