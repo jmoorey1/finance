@@ -33,6 +33,7 @@ $rulesStmt = $pdo->query("
     SELECT
         pt.*,
         c.name AS category_name,
+        pt.prediction_type,
         fa.name AS from_account_name,
         ta.name AS to_account_name
     FROM predicted_transactions pt
@@ -121,7 +122,13 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         →
                         <?= $r['to_account_name'] ? htmlspecialchars($r['to_account_name']) : '—' ?>
                     </td>
-                    <td><?= htmlspecialchars($r['category_name'] ?? '?') ?></td>
+                    <td>
+                        <?php if (($r['prediction_type'] ?? '') === 'transfer'): ?>
+                            <span class="badge bg-info text-dark">Transfer</span>
+                        <?php else: ?>
+                            <?= htmlspecialchars($r['category_name'] ?? '?') ?>
+                        <?php endif; ?>
+                    </td>
                     <td><?= htmlspecialchars(prediction_rule_format_schedule($r)) ?></td>
                     <td><?= htmlspecialchars(prediction_rule_format_variable_label($r)) ?></td>
                     <td><?= !empty($r['active']) ? '✅' : '—' ?></td>

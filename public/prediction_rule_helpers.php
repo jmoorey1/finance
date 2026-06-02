@@ -9,6 +9,7 @@ if (!function_exists('prediction_rule_defaults')) {
             'from_account_id' => '',
             'to_account_id' => '',
             'category_id' => '',
+            'prediction_type' => 'expense',
             'amount' => '',
             'variable' => 0,
             'average_over_last' => 3,
@@ -49,6 +50,17 @@ if (!function_exists('prediction_rule_frequency_options')) {
             'weekly' => 'Weekly',
             'fortnightly' => 'Fortnightly',
             'custom' => 'Custom (every N weeks from last actual)',
+        ];
+    }
+}
+
+if (!function_exists('prediction_rule_type_options')) {
+    function prediction_rule_type_options(): array
+    {
+        return [
+            'expense' => 'Expense',
+            'income' => 'Income',
+            'transfer' => 'Transfer',
         ];
     }
 }

@@ -7,7 +7,12 @@ include '../layout/header.php';
 $accountsStmt = $pdo->query("SELECT id, name, type FROM accounts WHERE active = 1 ORDER BY type, name");
 $accounts = $accountsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-$categoriesStmt = $pdo->query("SELECT id, name, type FROM categories ORDER BY FIELD(type, 'income', 'expense', 'transfer'), name");
+$categoriesStmt = $pdo->query("
+    SELECT id, name, type
+    FROM categories
+    WHERE type IN ('income', 'expense')
+    ORDER BY FIELD(type, 'income', 'expense'), name
+");
 $categories = $categoriesStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $defaults = prediction_rule_defaults();
@@ -49,6 +54,7 @@ $weekdayOptions = prediction_rule_weekday_options();
 $frequencyOptions = prediction_rule_frequency_options();
 $monthlyAnchorOptions = prediction_rule_monthly_anchor_options();
 $adjustOptions = prediction_rule_adjust_options();
+$typeOptions = prediction_rule_type_options();
 
 function selected($a, $b): string {
     return (string)$a === (string)$b ? 'selected' : '';
@@ -99,6 +105,18 @@ function checked($value): string {
         </div>
 
         <div class="col-md-4">
+            <label class="form-label">Rule Type</label>
+            <select name="prediction_type" id="prediction_type" class="form-select" required>
+                <?php foreach ($typeOptions as $key => $label): ?>
+                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['prediction_type'] ?? 'expense', $key) ?>>
+                        <?= htmlspecialchars($label) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <div class="form-text">Transfers are modelled by From/To Account, not by transfer categories.</div>
+        </div>
+
+        <div class="col-md-4">
             <label class="form-label">From Account</label>
             <select name="from_account_id" class="form-select" required>
                 <option value="">— Select —</option>
@@ -110,9 +128,9 @@ function checked($value): string {
             </select>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-md-4 js-to-account-field">
             <label class="form-label">To Account</label>
-            <select name="to_account_id" class="form-select">
+            <select name="to_account_id" id="to_account_id" class="form-select">
                 <option value="">— None —</option>
                 <?php foreach ($accounts as $a): ?>
                     <option value="<?= (int)$a['id'] ?>" <?= selected($formValues['to_account_id'], $a['id']) ?>>
@@ -123,9 +141,9 @@ function checked($value): string {
             <div class="form-text">Required for transfer rules only.</div>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-md-4 js-category-field">
             <label class="form-label">Category</label>
-            <select name="category_id" class="form-select" required>
+            <select name="category_id" id="category_id" class="form-select">
                 <option value="">— Select —</option>
                 <?php
                 $currentType = null;
@@ -253,9 +271,26 @@ function checked($value): string {
 
 <script>
 function updatePredictionRuleForm() {
+    const predictionType = document.getElementById('prediction_type').value;
     const frequency = document.getElementById('frequency').value;
     const monthlyAnchor = document.getElementById('monthly_anchor_type').value;
     const variable = document.getElementById('variable').checked;
+    const categorySelect = document.getElementById('category_id');
+    const toAccountSelect = document.getElementById('to_account_id');
+
+    const isTransfer = predictionType === 'transfer';
+
+    document.querySelectorAll('.js-category-field').forEach(el => {
+        el.style.display = isTransfer ? 'none' : '';
+    });
+    categorySelect.required = !isTransfer;
+    categorySelect.disabled = isTransfer;
+
+    document.querySelectorAll('.js-to-account-field').forEach(el => {
+        el.style.display = isTransfer ? '' : 'none';
+    });
+    toAccountSelect.required = isTransfer;
+    toAccountSelect.disabled = !isTransfer;
 
     document.querySelectorAll('.js-variable-fields').forEach(el => {
         el.style.display = variable ? '' : 'none';
@@ -294,6 +329,7 @@ function updatePredictionRuleForm() {
     });
 }
 
+document.getElementById('prediction_type').addEventListener('change', updatePredictionRuleForm);
 document.getElementById('frequency').addEventListener('change', updatePredictionRuleForm);
 document.getElementById('monthly_anchor_type').addEventListener('change', updatePredictionRuleForm);
 document.getElementById('variable').addEventListener('change', updatePredictionRuleForm);

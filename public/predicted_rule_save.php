@@ -17,6 +17,7 @@ $id = isset($_POST['id']) && $_POST['id'] !== '' ? (int)$_POST['id'] : 0;
 $description = trim((string)($_POST['description'] ?? ''));
 $fromAccountId = isset($_POST['from_account_id']) && $_POST['from_account_id'] !== '' ? (int)$_POST['from_account_id'] : 0;
 $toAccountId = isset($_POST['to_account_id']) && $_POST['to_account_id'] !== '' ? (int)$_POST['to_account_id'] : null;
+$predictionType = trim((string)($_POST['prediction_type'] ?? 'expense'));
 $categoryId = isset($_POST['category_id']) && $_POST['category_id'] !== '' ? (int)$_POST['category_id'] : 0;
 $amountRaw = trim((string)($_POST['amount'] ?? ''));
 $variable = isset($_POST['variable']) ? 1 : 0;
@@ -31,6 +32,7 @@ $nthWeekday = isset($_POST['nth_weekday']) && $_POST['nth_weekday'] !== '' ? (in
 $adjustForWeekend = trim((string)($_POST['adjust_for_weekend'] ?? 'none'));
 $isBusinessDay = isset($_POST['is_business_day']) ? 1 : 0;
 
+$validPredictionTypes = array_keys(prediction_rule_type_options());
 $validFrequencies = array_keys(prediction_rule_frequency_options());
 $validMonthlyAnchors = array_keys(prediction_rule_monthly_anchor_options());
 $validAdjustments = array_keys(prediction_rule_adjust_options());
@@ -44,8 +46,12 @@ if ($fromAccountId <= 0) {
     $errors[] = 'From account is required.';
 }
 
-if ($categoryId <= 0) {
-    $errors[] = 'Category is required.';
+if (!in_array($predictionType, $validPredictionTypes, true)) {
+    $errors[] = 'Invalid rule type selected.';
+}
+
+if ($predictionType !== 'transfer' && $categoryId <= 0) {
+    $errors[] = 'Category is required for income and expense rules.';
 }
 
 if ($amountRaw === '' || !is_numeric($amountRaw)) {
@@ -79,6 +85,10 @@ if ($categoryId > 0) {
     if ($catType === false) {
         $errors[] = 'Selected category does not exist.';
         $catType = null;
+    } elseif ($predictionType !== 'transfer' && $catType !== $predictionType) {
+        $errors[] = 'Selected category type does not match the selected rule type.';
+    } elseif ($predictionType === 'transfer') {
+        $errors[] = 'Transfer rules should not be assigned a category manually.';
     }
 }
 
@@ -98,14 +108,31 @@ if ($toAccountId !== null) {
     }
 }
 
-$predictionType = in_array($catType, ['income', 'expense', 'transfer'], true) ? $catType : 'expense';
-
 if ($predictionType === 'transfer') {
     if ($toAccountId === null || $toAccountId <= 0) {
         $errors[] = 'Transfer rules require a To Account.';
     }
     if ($toAccountId !== null && $toAccountId === $fromAccountId) {
         $errors[] = 'Transfer rules cannot use the same account for both From and To.';
+    }
+
+    if (empty($errors)) {
+        $stmt = $pdo->prepare("
+            SELECT id
+            FROM categories
+            WHERE type = 'transfer'
+              AND parent_id = 275
+              AND linked_account_id = ?
+              AND name LIKE 'Transfer To :%'
+            ORDER BY id
+            LIMIT 1
+        ");
+        $stmt->execute([$toAccountId]);
+        $categoryId = (int)($stmt->fetchColumn() ?: 0);
+
+        if ($categoryId <= 0) {
+            $errors[] = 'No compatibility transfer category exists for the selected To Account.';
+        }
     }
 } else {
     $toAccountId = null;
@@ -165,6 +192,7 @@ $form['id'] = $id ?: '';
 $form['description'] = $description;
 $form['from_account_id'] = $fromAccountId ?: '';
 $form['to_account_id'] = $toAccountId ?: '';
+$form['prediction_type'] = $predictionType;
 $form['category_id'] = $categoryId ?: '';
 $form['amount'] = $amountRaw;
 $form['variable'] = $variable;
