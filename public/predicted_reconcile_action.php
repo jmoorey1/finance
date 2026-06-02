@@ -70,7 +70,7 @@ try {
             throw new RuntimeException('Selected transaction is on the wrong account.');
         }
 
-        if (abs((float)$txn['amount'] - (float)$instance['amount']) >= 0.01) {
+        if (abs((float)$txn['amount'] - (float)$instance['amount']) >= abs((float)$txn['amount'] * 0.1)) {
             throw new RuntimeException('Selected transaction amount does not match the predicted instance.');
         }
 
