@@ -489,20 +489,7 @@ def predict_credit_card_repayments(cursor, today, end_date):
         repayment_method = card.get('repayment_method') or 'full'
         print(f"\n🧾 Processing card: {card['name']} (method={repayment_method})")
 
-        cursor.execute("""
-            SELECT id
-            FROM categories
-            WHERE type='transfer'
-              AND parent_id = 275
-              AND linked_account_id = %s
-              AND name LIKE 'Transfer To : %%'
-            LIMIT 1
-        """, (card['id'],))
-        category_row = cursor.fetchone()
-        if not category_row:
-            print("⚠️ No 'Transfer To' category found for this card — skipping")
-            continue
-        category_id = category_row['id']
+        category_id = None
 
         recent_statements = get_recent_statements(cursor, card['id'], today, limit=6)
         last_stmt = recent_statements[0] if recent_statements else None

@@ -10,6 +10,7 @@ if (!function_exists('predicted_instance_defaults')) {
             'from_account_id' => '',
             'to_account_id' => '',
             'category_id' => '',
+            'prediction_type' => 'expense',
             'amount' => '',
             'budget_treatment' => 'additional',
             'budget_month' => '',

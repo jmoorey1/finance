@@ -2,6 +2,7 @@
 require_once '../config/db.php';
 auth_session_start();
 require_once 'predicted_instance_helpers.php';
+require_once 'prediction_rule_helpers.php';
 include '../layout/header.php';
 
 $accountsStmt = $pdo->query("
@@ -15,9 +16,11 @@ $accounts = $accountsStmt->fetchAll(PDO::FETCH_ASSOC);
 $categoriesStmt = $pdo->query("
     SELECT id, name, type
     FROM categories
-    ORDER BY FIELD(type, 'income', 'expense', 'transfer'), name
+    WHERE type IN ('income', 'expense')
+    ORDER BY FIELD(type, 'income', 'expense'), name
 ");
 $categories = $categoriesStmt->fetchAll(PDO::FETCH_ASSOC);
+$typeOptions = prediction_rule_type_options();
 
 $defaults = predicted_instance_defaults();
 $formValues = null;
@@ -113,8 +116,20 @@ function pi_selected($a, $b): string {
         </div>
 
         <div class="col-md-4">
+            <label class="form-label">Item Type</label>
+            <select name="prediction_type" id="prediction_type" class="form-select" required>
+                <?php foreach ($typeOptions as $key => $label): ?>
+                    <option value="<?= htmlspecialchars($key) ?>" <?= pi_selected($formValues['prediction_type'] ?? 'expense', $key) ?>>
+                        <?= htmlspecialchars($label) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <div class="form-text">Transfers are modelled by From/To Account, not by transfer categories.</div>
+        </div>
+
+        <div class="col-md-4 js-category-field">
             <label class="form-label">Category</label>
-            <select name="category_id" id="category_id" class="form-select" required>
+            <select name="category_id" id="category_id" class="form-select">
                 <option value="">— Select —</option>
                 <?php
                 $currentType = null;
@@ -152,7 +167,7 @@ function pi_selected($a, $b): string {
 
         <div class="col-md-4 js-to-account-field">
             <label class="form-label">To Account</label>
-            <select name="to_account_id" class="form-select">
+            <select name="to_account_id" id="to_account_id" class="form-select">
                 <option value="">— None —</option>
                 <?php foreach ($accounts as $a): ?>
                     <option value="<?= (int)$a['id'] ?>" <?= pi_selected($formValues['to_account_id'], $a['id']) ?>>
@@ -230,9 +245,9 @@ function suggestedBudgetMonthFromScheduledDate(dateStr) {
 }
 
 function updateOneOffForm() {
+    const predictionType = document.getElementById('prediction_type').value;
     const categorySelect = document.getElementById('category_id');
-    const selectedOption = categorySelect.options[categorySelect.selectedIndex];
-    const categoryType = selectedOption ? selectedOption.getAttribute('data-type') : '';
+    const toAccountSelect = document.getElementById('to_account_id');
     const toAccountFields = document.querySelectorAll('.js-to-account-field');
     const budgetTreatmentWrapper = document.querySelectorAll('.js-budget-treatment-wrapper');
     const budgetFields = document.querySelectorAll('.js-budget-fields');
@@ -241,11 +256,21 @@ function updateOneOffForm() {
     const budgetMonthInput = document.getElementById('budget_month');
     const scheduledDateInput = document.getElementById('scheduled_date');
 
-    toAccountFields.forEach(el => {
-        el.style.display = (categoryType === 'transfer') ? '' : 'none';
-    });
+    const isTransfer = predictionType === 'transfer';
 
-    const supportsBudgetTreatment = (categoryType === 'income' || categoryType === 'expense');
+    document.querySelectorAll('.js-category-field').forEach(el => {
+        el.style.display = isTransfer ? 'none' : '';
+    });
+    categorySelect.required = !isTransfer;
+    categorySelect.disabled = isTransfer;
+
+    toAccountFields.forEach(el => {
+        el.style.display = isTransfer ? '' : 'none';
+    });
+    toAccountSelect.required = isTransfer;
+    toAccountSelect.disabled = !isTransfer;
+
+    const supportsBudgetTreatment = (predictionType === 'income' || predictionType === 'expense');
 
     budgetTreatmentWrapper.forEach(el => {
         el.style.display = supportsBudgetTreatment ? '' : 'none';
@@ -260,11 +285,11 @@ function updateOneOffForm() {
         budgetMonthInput.value = suggestedBudgetMonthFromScheduledDate(scheduledDateInput.value);
     }
 
-    if (categoryType === 'income') {
+    if (predictionType === 'income') {
         amountHelp.textContent = 'Enter a positive amount for income.';
-    } else if (categoryType === 'expense') {
+    } else if (predictionType === 'expense') {
         amountHelp.textContent = 'Enter a negative amount for expense.';
-    } else if (categoryType === 'transfer') {
+    } else if (predictionType === 'transfer') {
         amountHelp.textContent = 'Enter a positive transfer amount. The system will flow it from From Account to To Account.';
         treatmentSelect.value = 'additional';
     } else {
@@ -272,6 +297,7 @@ function updateOneOffForm() {
     }
 }
 
+document.getElementById('prediction_type').addEventListener('change', updateOneOffForm);
 document.getElementById('category_id').addEventListener('change', updateOneOffForm);
 document.getElementById('budget_treatment').addEventListener('change', updateOneOffForm);
 document.getElementById('scheduled_date').addEventListener('change', updateOneOffForm);

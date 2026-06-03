@@ -17,6 +17,7 @@ $scheduledDate = trim((string)($_POST['scheduled_date'] ?? ''));
 $description = trim((string)($_POST['description'] ?? ''));
 $fromAccountId = isset($_POST['from_account_id']) && $_POST['from_account_id'] !== '' ? (int)$_POST['from_account_id'] : 0;
 $toAccountId = isset($_POST['to_account_id']) && $_POST['to_account_id'] !== '' ? (int)$_POST['to_account_id'] : null;
+$predictionType = trim((string)($_POST['prediction_type'] ?? 'expense'));
 $categoryId = isset($_POST['category_id']) && $_POST['category_id'] !== '' ? (int)$_POST['category_id'] : 0;
 $amountRaw = trim((string)($_POST['amount'] ?? ''));
 $budgetTreatment = trim((string)($_POST['budget_treatment'] ?? 'additional'));
@@ -49,8 +50,12 @@ if ($fromAccountId <= 0) {
     $errors[] = 'From account is required.';
 }
 
-if ($categoryId <= 0) {
-    $errors[] = 'Category is required.';
+if (!in_array($predictionType, ['income', 'expense', 'transfer'], true)) {
+    $errors[] = 'Invalid item type selected.';
+}
+
+if ($predictionType !== 'transfer' && $categoryId <= 0) {
+    $errors[] = 'Category is required for income and expense items.';
 }
 
 $amount = null;
@@ -69,6 +74,10 @@ if ($categoryId > 0) {
     if ($catType === false) {
         $errors[] = 'Selected category does not exist.';
         $catType = null;
+    } elseif ($predictionType !== 'transfer' && $catType !== $predictionType) {
+        $errors[] = 'Selected category type does not match the selected item type.';
+    } elseif ($predictionType === 'transfer') {
+        $errors[] = 'Transfer items should not be assigned a category manually.';
     }
 }
 
@@ -91,17 +100,17 @@ if ($toAccountId !== null) {
 $budgetMonthStart = null;
 $budgetAmount = null;
 
-if ($catType === 'income') {
+if ($predictionType === 'income') {
     if ((float)$amount <= 0) {
         $errors[] = 'Income items must use a positive amount.';
     }
     $toAccountId = null;
-} elseif ($catType === 'expense') {
+} elseif ($predictionType === 'expense') {
     if ((float)$amount >= 0) {
         $errors[] = 'Expense items must use a negative amount.';
     }
     $toAccountId = null;
-} elseif ($catType === 'transfer') {
+} elseif ($predictionType === 'transfer') {
     if ($toAccountId === null || $toAccountId <= 0) {
         $errors[] = 'Transfer items require a To Account.';
     }
@@ -112,15 +121,17 @@ if ($catType === 'income') {
         $errors[] = 'Transfer items must use a positive amount.';
     }
 
+    $categoryId = null;
+
     // Transfers do not participate in solvency budget offset logic.
     $budgetTreatment = 'additional';
     $budgetMonthRaw = '';
     $budgetAmountRaw = '';
 } else {
-    $errors[] = 'Category type must be income, expense, or transfer.';
+    $errors[] = 'Item type must be income, expense, or transfer.';
 }
 
-if (in_array($catType, ['income', 'expense'], true) && $budgetTreatment === 'budget_backed') {
+if (in_array($predictionType, ['income', 'expense'], true) && $budgetTreatment === 'budget_backed') {
     if ($budgetMonthRaw === '' && $scheduledDate !== '') {
         $budgetMonthRaw = predicted_instance_financial_month_from_date($scheduledDate);
     }
@@ -152,6 +163,7 @@ $form['scheduled_date'] = $scheduledDate;
 $form['description'] = $description;
 $form['from_account_id'] = $fromAccountId ?: '';
 $form['to_account_id'] = $toAccountId ?: '';
+$form['prediction_type'] = $predictionType;
 $form['category_id'] = $categoryId ?: '';
 $form['amount'] = $amountRaw;
 $form['budget_treatment'] = $budgetTreatment;
@@ -175,6 +187,7 @@ try {
                 from_account_id = ?,
                 to_account_id = ?,
                 category_id = ?,
+                prediction_type = ?,
                 description = ?,
                 budget_treatment = ?,
                 budget_month_start = ?,
@@ -193,6 +206,7 @@ try {
             $fromAccountId,
             $toAccountId,
             $categoryId,
+            $predictionType,
             $description,
             $budgetTreatment,
             $budgetMonthStart,
@@ -209,6 +223,7 @@ try {
                 from_account_id,
                 to_account_id,
                 category_id,
+                prediction_type,
                 description,
                 budget_treatment,
                 budget_month_start,
@@ -216,7 +231,7 @@ try {
                 confirmed,
                 resolution_status
             ) VALUES (
-                NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'open'
+                NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'open'
             )
         ");
         $stmt->execute([
@@ -225,6 +240,7 @@ try {
             $fromAccountId,
             $toAccountId,
             $categoryId,
+            $predictionType,
             $description,
             $budgetTreatment,
             $budgetMonthStart,

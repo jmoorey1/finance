@@ -116,24 +116,7 @@ if ($predictionType === 'transfer') {
         $errors[] = 'Transfer rules cannot use the same account for both From and To.';
     }
 
-    if (empty($errors)) {
-        $stmt = $pdo->prepare("
-            SELECT id
-            FROM categories
-            WHERE type = 'transfer'
-              AND parent_id = 275
-              AND linked_account_id = ?
-              AND name LIKE 'Transfer To :%'
-            ORDER BY id
-            LIMIT 1
-        ");
-        $stmt->execute([$toAccountId]);
-        $categoryId = (int)($stmt->fetchColumn() ?: 0);
-
-        if ($categoryId <= 0) {
-            $errors[] = 'No compatibility transfer category exists for the selected To Account.';
-        }
-    }
+    $categoryId = null;
 } else {
     $toAccountId = null;
 }
