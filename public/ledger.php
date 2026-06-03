@@ -120,7 +120,6 @@ $query = "
     WHERE ll.account_id IN ($account_placeholders)
       AND ll.line_date BETWEEN ? AND ?
       AND ll.description LIKE ?
-      AND (ll.is_prediction = 0 OR ll.line_date >= CURDATE())
 ";
 
 $params = array_merge($selected_accounts, [$start_date, $end_date, $search_like]);

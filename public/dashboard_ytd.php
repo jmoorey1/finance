@@ -96,9 +96,8 @@ foreach ($stmt as $row) {
     $actuals[$row['top_id']] = floatval($row['total']);
 }
 
-// Load forecast (today to end)
+// Load committed predictions across the full selected YTD period.
 $forecast = [];
-$today = (new DateTimeImmutable())->format('Y-m-d');
 $stmt = $pdo->prepare("
     SELECT IFNULL(top.id, c.id) AS top_id, c.type, SUM(pi.amount) AS total
     FROM predicted_instances pi
@@ -110,7 +109,7 @@ $stmt = $pdo->prepare("
       AND COALESCE(pi.resolution_status, 'open') = 'open'
     GROUP BY top_id, c.type
 ");
-$stmt->execute([$today, $end_date->format('Y-m-d')]);
+$stmt->execute([$start_date->format('Y-m-d'), $end_date->format('Y-m-d')]);
 foreach ($stmt as $row) {
     $forecast[$row['top_id']] = floatval($row['total']);
 }
