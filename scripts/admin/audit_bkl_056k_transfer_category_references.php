@@ -233,6 +233,18 @@ function bkl056k_classify_file_hit(array $hit): string
         return 'expected/manual-transfer-counterparty-ui';
     }
 
+    if (
+        stripos($text, 'prediction_type') !== false
+        && (
+            stripos($text, "prediction_type = 'transfer'") !== false
+            || stripos($text, 'prediction_type = "transfer"') !== false
+        )
+        && stripos($text, 'categories') === false
+        && stripos($text, 'c.type') === false
+    ) {
+        return 'expected/transfer-prediction-model';
+    }
+
     return 'review';
 }
 
