@@ -188,12 +188,21 @@ function bkl056k_classify_file_hit(array $hit): string
         'scripts/admin/audit_bkl_056k_transfer_category_references.php',
         'scripts/admin/audit_transfer_group_integrity.php',
         'scripts/admin/repair_transfer_group_integrity.php',
+        'scripts/admin/validate_transfer_model_guardrails.php',
     ];
 
     foreach ($allowedPrefixes as $prefix) {
         if ($file === $prefix || str_starts_with($file, $prefix)) {
             return 'expected/history/admin';
         }
+    }
+
+    if (
+        str_starts_with($file, 'scripts/admin/apply_bkl_')
+        || str_starts_with($file, 'scripts/admin/patch_bkl_')
+        || str_starts_with($file, 'scripts/admin/continue_bkl_')
+    ) {
+        return 'expected/history/admin';
     }
 
     $expectedDeprecationUiFiles = [
