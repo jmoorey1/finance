@@ -260,7 +260,13 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td><?= htmlspecialchars($date) ?></td>
                     <td><?= htmlspecialchars($i['description'] ?? '') ?></td>
                     <td><?= htmlspecialchars($i['from_account'] ?? '—') ?> → <?= htmlspecialchars($i['to_account'] ?? '—') ?></td>
-                    <td><?= htmlspecialchars($i['category'] ?? '') ?></td>
+                    <td>
+                        <?php if (($i['prediction_type'] ?? '') === 'transfer'): ?>
+                            <span class="badge bg-info text-dark">Transfer</span>
+                        <?php else: ?>
+                            <?= htmlspecialchars($i['category'] ?? '') ?>
+                        <?php endif; ?>
+                    </td>
                     <td class="text-end">£<?= number_format($amount, 2) ?></td>
                     <td><?= htmlspecialchars($sourceLabel) ?></td>
                     <td><?= $statusLabel ?></td>
