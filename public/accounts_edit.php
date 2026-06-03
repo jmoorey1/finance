@@ -27,44 +27,6 @@ $paidFromAccounts = $pdo->query("
     ORDER BY name
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Check if the associated transfer categories exist
-$transferToName = "Transfer To : " . $account['name'];
-$transferFromName = "Transfer From : " . $account['name'];
-
-$stmt = $pdo->prepare("
-    SELECT id, name FROM categories
-    WHERE type = 'transfer' AND linked_account_id = ? AND parent_id = 275
-");
-$stmt->execute([$id]);
-$transferCategories = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Determine if Transfer To and Transfer From exist
-$hasTransferTo = false;
-$hasTransferFrom = false;
-foreach ($transferCategories as $cat) {
-    if (strpos($cat['name'], "Transfer To :") === 0) {
-        $hasTransferTo = true;
-    }
-    if (strpos($cat['name'], "Transfer From :") === 0) {
-        $hasTransferFrom = true;
-    }
-}
-
-// Create missing transfer categories
-if (!$hasTransferTo) {
-    $stmt = $pdo->prepare("
-        INSERT INTO categories (name, parent_id, type, linked_account_id, budget_order)
-        VALUES (?, 275, 'transfer', ?, 0)
-    ");
-    $stmt->execute([$transferToName, $id]);
-}
-if (!$hasTransferFrom) {
-    $stmt = $pdo->prepare("
-        INSERT INTO categories (name, parent_id, type, linked_account_id, budget_order)
-        VALUES (?, 275, 'transfer', ?, 0)
-    ");
-    $stmt->execute([$transferFromName, $id]);
-}
 ?>
 
 <div class="container mt-4">

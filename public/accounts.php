@@ -38,24 +38,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_account'])) {
         ");
         $stmt->execute([$name, $type, $institution, $statement_day, $payment_day, $starting_balance, $active]);
 
-        // Get the new account ID
-        $account_id = $pdo->lastInsertId();
-
-        // Insert the two linked transfer categories
-        $transferToName = "Transfer To : " . $name;
-        $transferFromName = "Transfer From : " . $name;
-
-        $stmt = $pdo->prepare("
-            INSERT INTO categories (name, parent_id, type, linked_account_id, budget_order)
-            VALUES (?, 275, 'transfer', ?, 0)
-        ");
-        $stmt->execute([$transferToName, $account_id]);
-
-        $stmt->execute([$transferFromName, $account_id]);
-
         $pdo->commit();
 
-        echo "<div class='alert alert-success'>Account '" . htmlspecialchars($name) . "' and linked transfer categories have been added successfully.</div>";
+        echo "<div class='alert alert-success'>Account '" . htmlspecialchars($name) . "' added successfully.</div>";
     } catch (Exception $e) {
         $pdo->rollBack();
         echo "<div class='alert alert-danger'>Error adding account: " . htmlspecialchars($e->getMessage()) . "</div>";

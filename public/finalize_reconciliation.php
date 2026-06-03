@@ -112,20 +112,6 @@ try {
             $payment_date = new DateTime($payment_date_str ?: $statement['statement_date']);
         }
 
-        // Find the transfer category for "Transfer To : <Card>"
-        $catStmt = $pdo->prepare("
-            SELECT id
-            FROM categories
-            WHERE type = 'transfer'
-              AND parent_id = 275
-              AND linked_account_id = ?
-              AND name LIKE 'Transfer To : %'
-            LIMIT 1
-        ");
-        $catStmt->execute([(int)$statement['account_id']]);
-        $catRow = $catStmt->fetch(PDO::FETCH_ASSOC);
-        $category_id = $catRow ? (int)$catRow['id'] : null;
-
         // Calculate required repayment amount based on method
         $statement_balance = abs((float)$statement['end_balance']);
         $repayment_method = $statement['repayment_method'] ?? 'full';
@@ -155,15 +141,15 @@ try {
             ")->execute([$minimum_payment_due, $statement_id]);
         }
 
-        // If we don't have paid_from or category_id, we can't link a repayment prediction
-        if (!empty($statement['paid_from']) && $category_id) {
-            // Try to find an existing predicted instance (within ±3 days) for this repayment
+        // If we do not have paid_from, we cannot link a repayment prediction.
+        if (!empty($statement['paid_from'])) {
+            // Try to find an existing transfer predicted instance within ±3 days.
             $find = $pdo->prepare("
                 SELECT id, confirmed, scheduled_date, statement_id
                 FROM predicted_instances
                 WHERE from_account_id = ?
                   AND to_account_id = ?
-                  AND category_id = ?
+                  AND prediction_type = 'transfer'
                   AND ABS(DATEDIFF(scheduled_date, ?)) <= 3
                 ORDER BY ABS(DATEDIFF(scheduled_date, ?)) ASC
                 LIMIT 1
@@ -171,7 +157,6 @@ try {
             $find->execute([
                 (int)$statement['paid_from'],
                 (int)$statement['account_id'],
-                (int)$category_id,
                 $payment_date_str,
                 $payment_date_str
             ]);
@@ -192,8 +177,15 @@ try {
                     // Update and confirm
                     $pdo->prepare("
                         UPDATE predicted_instances
-                        SET amount = ?, confirmed = 1, statement_id = ?, scheduled_date = ?,
-                            resolution_status = 'open', resolved_at = NULL, resolution_note = NULL
+                        SET amount = ?,
+                            category_id = NULL,
+                            prediction_type = 'transfer',
+                            confirmed = 1,
+                            statement_id = ?,
+                            scheduled_date = ?,
+                            resolution_status = 'open',
+                            resolved_at = NULL,
+                            resolution_note = NULL
                         WHERE id = ?
                     ")->execute([
                         $repayment_amount,
@@ -204,13 +196,25 @@ try {
                     $confirmed_payment_date = $payment_date_str;
                 }
             } else {
-                // No existing prediction found — insert & confirm one now
+                // No existing prediction found — insert & confirm one now.
                 $pdo->prepare("
                     INSERT INTO predicted_instances
-                        (scheduled_date, from_account_id, to_account_id, category_id, amount, description, confirmed, statement_id)
+                        (
+                            scheduled_date,
+                            from_account_id,
+                            to_account_id,
+                            category_id,
+                            prediction_type,
+                            amount,
+                            description,
+                            confirmed,
+                            statement_id
+                        )
                     VALUES
-                        (?, ?, ?, ?, ?, ?, 1, ?)
+                        (?, ?, ?, NULL, 'transfer', ?, ?, 1, ?)
                     ON DUPLICATE KEY UPDATE
+                        category_id = NULL,
+                        prediction_type = 'transfer',
                         amount = IF(confirmed = 1, amount, VALUES(amount)),
                         statement_id = COALESCE(statement_id, VALUES(statement_id)),
                         confirmed = IF(confirmed = 1, confirmed, 1)
@@ -218,7 +222,6 @@ try {
                     $payment_date_str,
                     (int)$statement['paid_from'],
                     (int)$statement['account_id'],
-                    (int)$category_id,
                     $repayment_amount,
                     $statement['account_name'],
                     $statement_id
