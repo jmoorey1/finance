@@ -34,6 +34,76 @@ if (!$cat) {
     exit;
 }
 
+if (($cat['type'] ?? '') === 'transfer') {
+    $linkedAccountName = null;
+    if (!empty($cat['linked_account_id'])) {
+        $linkedStmt = $pdo->prepare("SELECT name FROM accounts WHERE id = ?");
+        $linkedStmt->execute([(int)$cat['linked_account_id']]);
+        $linkedAccountName = $linkedStmt->fetchColumn() ?: null;
+    }
+
+    $refsStmt = $pdo->prepare("
+        SELECT
+            (SELECT COUNT(*) FROM transactions WHERE category_id = ?) AS transaction_refs,
+            (SELECT COUNT(*) FROM transaction_splits WHERE category_id = ?) AS split_refs,
+            (SELECT COUNT(*) FROM predicted_transactions WHERE category_id = ?) AS predicted_rule_refs,
+            (SELECT COUNT(*) FROM predicted_instances WHERE category_id = ?) AS predicted_instance_refs
+    ");
+    $refsStmt->execute([(int)$cat['id'], (int)$cat['id'], (int)$cat['id'], (int)$cat['id']]);
+    $refs = $refsStmt->fetch(PDO::FETCH_ASSOC) ?: [
+        'transaction_refs' => 0,
+        'split_refs' => 0,
+        'predicted_rule_refs' => 0,
+        'predicted_instance_refs' => 0,
+    ];
+    ?>
+    <div class="container mt-4">
+        <h2>Legacy Transfer Category</h2>
+
+        <div class="alert alert-warning">
+            <strong>This category is read-only.</strong>
+            Transfer categories are deprecated and are no longer used for new actual transfers or transfer predictions.
+            Transfers are now modelled through <code>transfer_groups</code> and <code>prediction_type = 'transfer'</code>.
+        </div>
+
+        <table class="table table-bordered w-auto">
+            <tr>
+                <th>ID</th>
+                <td><?= (int)$cat['id'] ?></td>
+            </tr>
+            <tr>
+                <th>Name</th>
+                <td><?= ced_h((string)$cat['name']) ?></td>
+            </tr>
+            <tr>
+                <th>Linked Account</th>
+                <td><?= ced_h((string)($linkedAccountName ?? '—')) ?></td>
+            </tr>
+            <tr>
+                <th>Transaction References</th>
+                <td><?= (int)$refs['transaction_refs'] ?></td>
+            </tr>
+            <tr>
+                <th>Split References</th>
+                <td><?= (int)$refs['split_refs'] ?></td>
+            </tr>
+            <tr>
+                <th>Prediction Rule References</th>
+                <td><?= (int)$refs['predicted_rule_refs'] ?></td>
+            </tr>
+            <tr>
+                <th>Prediction Instance References</th>
+                <td><?= (int)$refs['predicted_instance_refs'] ?></td>
+            </tr>
+        </table>
+
+        <a href="categories.php" class="btn btn-secondary">Back to Categories</a>
+    </div>
+    <?php
+    include '../layout/footer.php';
+    exit;
+}
+
 $watcherBudgetMode = ced_valid_watcher_budget_mode($cat['watcher_budget_mode'] ?? 'normal');
 $watcherTimingMode = ced_valid_watcher_timing_mode($cat['watcher_timing_mode'] ?? 'operational');
 

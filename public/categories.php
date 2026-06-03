@@ -161,11 +161,47 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $grouped = [
     'income' => [],
     'expense' => [],
-    'transfer' => [],
 ];
+
 foreach ($categories as $cat) {
-    $grouped[$cat['type']][] = $cat;
+    if (isset($grouped[$cat['type']])) {
+        $grouped[$cat['type']][] = $cat;
+    }
 }
+
+$legacy_transfer_stmt = $pdo->query("
+    SELECT
+        c.id,
+        c.name,
+        c.linked_account_id,
+        a.name AS account_name,
+        (
+            SELECT COUNT(*)
+            FROM transactions t
+            WHERE t.category_id = c.id
+        ) AS transaction_refs,
+        (
+            SELECT COUNT(*)
+            FROM transaction_splits ts
+            WHERE ts.category_id = c.id
+        ) AS split_refs,
+        (
+            SELECT COUNT(*)
+            FROM predicted_transactions pt
+            WHERE pt.category_id = c.id
+        ) AS predicted_rule_refs,
+        (
+            SELECT COUNT(*)
+            FROM predicted_instances pi
+            WHERE pi.category_id = c.id
+        ) AS predicted_instance_refs
+    FROM categories c
+    LEFT JOIN accounts a ON a.id = c.linked_account_id
+    WHERE c.type = 'transfer'
+      AND c.id != " . TRANSFER_PARENT_ID . "
+    ORDER BY c.name
+");
+$legacy_transfer_categories = $legacy_transfer_stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <div class="container mt-4">
@@ -232,6 +268,13 @@ foreach ($categories as $cat) {
     </form>
 
     <h2>📂 Category Management</h2>
+
+    <div class="alert alert-info">
+        <strong>Transfer categories are deprecated.</strong>
+        Transfers are now modelled through <code>transfer_groups</code> and transfer prediction metadata.
+        Legacy transfer category rows are retained below as a read-only audit aid, but they are no longer used for new actual or predicted transfers.
+    </div>
+
     <table class="table table-bordered table-striped mt-3">
         <thead class="table-dark">
             <tr>
@@ -248,7 +291,7 @@ foreach ($categories as $cat) {
             </tr>
         </thead>
         <tbody>
-        <?php foreach (['income', 'expense', 'transfer'] as $type): ?>
+        <?php foreach (['income', 'expense'] as $type): ?>
             <tr class="table-secondary">
                 <td colspan="10" class="fw-bold"><?= ucfirst($type) ?> Categories</td>
             </tr>
@@ -288,6 +331,58 @@ foreach ($categories as $cat) {
                 </tr>
             <?php endforeach; ?>
         <?php endforeach; ?>
+        </tbody>
+    </table>
+
+    <h3 class="mt-5">🔒 Legacy Transfer Categories</h3>
+    <div class="alert alert-secondary">
+        These rows are kept for audit/history only. Do not edit or delete them manually.
+        New transfer transactions and transfer predictions should not reference these categories.
+    </div>
+
+    <table class="table table-sm table-bordered align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Linked Account</th>
+                <th class="text-end">Transactions</th>
+                <th class="text-end">Splits</th>
+                <th class="text-end">Prediction Rules</th>
+                <th class="text-end">Prediction Instances</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if (empty($legacy_transfer_categories)): ?>
+                <tr>
+                    <td colspan="8" class="text-muted">No legacy transfer categories found.</td>
+                </tr>
+            <?php else: ?>
+                <?php foreach ($legacy_transfer_categories as $legacy): ?>
+                    <?php
+                        $activeRefs =
+                            (int)$legacy['transaction_refs']
+                            + (int)$legacy['split_refs']
+                            + (int)$legacy['predicted_rule_refs']
+                            + (int)$legacy['predicted_instance_refs'];
+
+                        $status = $activeRefs === 0
+                            ? '<span class="badge bg-success">Unreferenced</span>'
+                            : '<span class="badge bg-warning text-dark">Still referenced</span>';
+                    ?>
+                    <tr>
+                        <td><?= (int)$legacy['id'] ?></td>
+                        <td><?= cat_h((string)$legacy['name']) ?></td>
+                        <td><?= cat_h((string)($legacy['account_name'] ?? '—')) ?></td>
+                        <td class="text-end"><?= (int)$legacy['transaction_refs'] ?></td>
+                        <td class="text-end"><?= (int)$legacy['split_refs'] ?></td>
+                        <td class="text-end"><?= (int)$legacy['predicted_rule_refs'] ?></td>
+                        <td class="text-end"><?= (int)$legacy['predicted_instance_refs'] ?></td>
+                        <td><?= $status ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </tbody>
     </table>
 </div>

@@ -14,6 +14,18 @@ if (!$id) {
     die('Missing category ID');
 }
 
+$typeStmt = $pdo->prepare("SELECT type FROM categories WHERE id = ?");
+$typeStmt->execute([(int)$id]);
+$existingType = $typeStmt->fetchColumn();
+
+if ($existingType === false) {
+    die('Category not found');
+}
+
+if ($existingType === 'transfer') {
+    die('Transfer categories are deprecated and read-only. They are retained for legacy audit only.');
+}
+
 // Handle deletion
 if ($action === 'delete') {
     $replacementId = $_POST['replacement_id'] ?? null;
