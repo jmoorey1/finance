@@ -67,6 +67,7 @@ LABELS: dict[str, tuple[str, str]] = {
     "open-banking": ("006b75", "Open Banking ingestion"),
     "ai-watcher": ("6f42c1", "Finance watcher / analyst capability"),
     "hygiene": ("ededed", "Backlog or project hygiene"),
+    "placeholder": ("cfd3d7", "Historical placeholder without enough implementation detail"),
 }
 
 
@@ -668,7 +669,48 @@ def backlog_items() -> list[BklIssue]:
         ),
     ])
 
-    return items
+    placeholder_without_detail_ids = {
+        "BKL-009", "BKL-016", "BKL-018", "BKL-019", "BKL-022", "BKL-023",
+        "BKL-033", "BKL-034", "BKL-035", "BKL-036", "BKL-037", "BKL-038",
+        "BKL-039", "BKL-040", "BKL-041", "BKL-042", "BKL-043", "BKL-044",
+    }
+
+    normalised_items: list[BklIssue] = []
+    for item in items:
+        if item.bkl_id not in placeholder_without_detail_ids:
+            normalised_items.append(item)
+            continue
+
+        labels = tuple(dict.fromkeys((
+            "historical",
+            "placeholder",
+            *[label for label in item.labels if label not in ("open-backlog", "deferred", "partial", "completed")],
+        )))
+
+        notes = item.notes
+        if notes:
+            notes += "\n\n"
+        notes += (
+            "Closed during backlog hygiene because this issue was only a recovered placeholder "
+            "without enough implementation detail to act on. Reopen only if the original detail is recovered "
+            "or a fresh actionable specification is written."
+        )
+
+        normalised_items.append(BklIssue(
+            bkl_id=item.bkl_id,
+            title=item.title,
+            state="closed",
+            labels=labels,
+            status="Closed — placeholder without sufficient implementation detail.",
+            context=item.context,
+            problem=item.problem,
+            summary=item.summary,
+            validation=item.validation,
+            notes=notes,
+            related=item.related,
+        ))
+
+    return normalised_items
 
 
 def main() -> int:
