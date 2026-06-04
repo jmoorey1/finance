@@ -204,17 +204,6 @@ function bkl056k_classify_file_hit(array $hit): string
     ) {
         return 'expected/history/admin';
     }
-
-    $expectedDeprecationUiFiles = [
-        'public/categories.php',
-        'public/category_edit.php',
-        'public/category_edit_submit.php',
-    ];
-
-    if (in_array($file, $expectedDeprecationUiFiles, true)) {
-        return 'expected/deprecation-ui';
-    }
-
     $expectedTransferModelFiles = [
         'public/predicted_reconcile_action.php',
         'scripts/predict_instances.py',

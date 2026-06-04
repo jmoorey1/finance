@@ -2,7 +2,6 @@
 require_once '../config/db.php';
 require_once '../scripts/lib/split_transaction_helpers.php';
 
-define('TRANSFER_PARENT_ID', 275);
 $legacySplitCategoryName = finance_legacy_split_category_name();
 
 include '../layout/header.php';
@@ -34,11 +33,10 @@ $parent_stmt = $pdo->prepare("
     SELECT id, name, type
     FROM categories
     WHERE parent_id IS NULL
-      AND id != ?
       AND name != ?
     ORDER BY type ASC, name
 ");
-$parent_stmt->execute([TRANSFER_PARENT_ID, $legacySplitCategoryName]);
+$parent_stmt->execute([$legacySplitCategoryName]);
 $parent_categories = $parent_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Handle new category form submission
@@ -143,19 +141,17 @@ SELECT
     top.name AS parent_name,
     top.watcher_budget_mode AS parent_watcher_budget_mode,
     top.watcher_timing_mode AS parent_watcher_timing_mode,
-    a.name AS account_name,
     last_cat.last_date
 FROM categories c
 LEFT JOIN categories top ON c.parent_id = top.id
-LEFT JOIN accounts a ON c.linked_account_id = a.id
 LEFT JOIN last_cat ON last_cat.category_id = c.id
-WHERE c.id != ? AND c.name != ? AND (a.active IS NULL OR a.active = 1)
+WHERE c.name != ?
 ORDER BY
-    FIELD(c.type, 'income', 'expense', 'transfer'),
+    FIELD(c.type, 'income', 'expense'),
     COALESCE(top.name, c.name),
     c.name
 ");
-$stmt->execute([TRANSFER_PARENT_ID, $legacySplitCategoryName]);
+$stmt->execute([$legacySplitCategoryName]);
 $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $grouped = [
@@ -168,40 +164,6 @@ foreach ($categories as $cat) {
         $grouped[$cat['type']][] = $cat;
     }
 }
-
-$legacy_transfer_stmt = $pdo->query("
-    SELECT
-        c.id,
-        c.name,
-        c.linked_account_id,
-        a.name AS account_name,
-        (
-            SELECT COUNT(*)
-            FROM transactions t
-            WHERE t.category_id = c.id
-        ) AS transaction_refs,
-        (
-            SELECT COUNT(*)
-            FROM transaction_splits ts
-            WHERE ts.category_id = c.id
-        ) AS split_refs,
-        (
-            SELECT COUNT(*)
-            FROM predicted_transactions pt
-            WHERE pt.category_id = c.id
-        ) AS predicted_rule_refs,
-        (
-            SELECT COUNT(*)
-            FROM predicted_instances pi
-            WHERE pi.category_id = c.id
-        ) AS predicted_instance_refs
-    FROM categories c
-    LEFT JOIN accounts a ON a.id = c.linked_account_id
-    WHERE c.type = 'transfer'
-      AND c.id != " . TRANSFER_PARENT_ID . "
-    ORDER BY c.name
-");
-$legacy_transfer_categories = $legacy_transfer_stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <div class="container mt-4">
@@ -268,20 +230,12 @@ $legacy_transfer_categories = $legacy_transfer_stmt->fetchAll(PDO::FETCH_ASSOC);
     </form>
 
     <h2>📂 Category Management</h2>
-
-    <div class="alert alert-info">
-        <strong>Transfer categories are deprecated.</strong>
-        Transfers are now modelled through <code>transfer_groups</code> and transfer prediction metadata.
-        Legacy transfer category rows are retained below as a read-only audit aid, but they are no longer used for new actual or predicted transfers.
-    </div>
-
     <table class="table table-bordered table-striped mt-3">
         <thead class="table-dark">
             <tr>
                 <th>Name</th>
                 <th>Type</th>
                 <th>Parent</th>
-                <th>Account</th>
                 <th>Fixedness</th>
                 <th>Priority</th>
                 <th>Budget Watcher</th>
@@ -293,7 +247,7 @@ $legacy_transfer_categories = $legacy_transfer_stmt->fetchAll(PDO::FETCH_ASSOC);
         <tbody>
         <?php foreach (['income', 'expense'] as $type): ?>
             <tr class="table-secondary">
-                <td colspan="10" class="fw-bold"><?= ucfirst($type) ?> Categories</td>
+                <td colspan="9" class="fw-bold"><?= ucfirst($type) ?> Categories</td>
             </tr>
             <?php foreach ($grouped[$type] as $cat): ?>
                 <?php
@@ -321,7 +275,6 @@ $legacy_transfer_categories = $legacy_transfer_stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td class="<?= $nameStyle ?>"<?= $nameIndent ?>><?= $cat_link ?></td>
                     <td><?= ucfirst((string)$cat['type']) ?></td>
                     <td><?= cat_h((string)($cat['parent_name'] ?? '—')) ?></td>
-                    <td><?= cat_h((string)($cat['account_name'] ?? '—')) ?></td>
                     <td><?= cat_label_or_dash($cat['fixedness'] ?? null) ?></td>
                     <td><?= cat_label_or_dash($cat['priority'] ?? null) ?></td>
                     <td><?= cat_h($budgetWatcher) ?></td>
@@ -331,58 +284,6 @@ $legacy_transfer_categories = $legacy_transfer_stmt->fetchAll(PDO::FETCH_ASSOC);
                 </tr>
             <?php endforeach; ?>
         <?php endforeach; ?>
-        </tbody>
-    </table>
-
-    <h3 class="mt-5">🔒 Legacy Transfer Categories</h3>
-    <div class="alert alert-secondary">
-        These rows are kept for audit/history only. Do not edit or delete them manually.
-        New transfer transactions and transfer predictions should not reference these categories.
-    </div>
-
-    <table class="table table-sm table-bordered align-middle">
-        <thead class="table-light">
-            <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Linked Account</th>
-                <th class="text-end">Transactions</th>
-                <th class="text-end">Splits</th>
-                <th class="text-end">Prediction Rules</th>
-                <th class="text-end">Prediction Instances</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if (empty($legacy_transfer_categories)): ?>
-                <tr>
-                    <td colspan="8" class="text-muted">No legacy transfer categories found.</td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($legacy_transfer_categories as $legacy): ?>
-                    <?php
-                        $activeRefs =
-                            (int)$legacy['transaction_refs']
-                            + (int)$legacy['split_refs']
-                            + (int)$legacy['predicted_rule_refs']
-                            + (int)$legacy['predicted_instance_refs'];
-
-                        $status = $activeRefs === 0
-                            ? '<span class="badge bg-success">Unreferenced</span>'
-                            : '<span class="badge bg-warning text-dark">Still referenced</span>';
-                    ?>
-                    <tr>
-                        <td><?= (int)$legacy['id'] ?></td>
-                        <td><?= cat_h((string)$legacy['name']) ?></td>
-                        <td><?= cat_h((string)($legacy['account_name'] ?? '—')) ?></td>
-                        <td class="text-end"><?= (int)$legacy['transaction_refs'] ?></td>
-                        <td class="text-end"><?= (int)$legacy['split_refs'] ?></td>
-                        <td class="text-end"><?= (int)$legacy['predicted_rule_refs'] ?></td>
-                        <td class="text-end"><?= (int)$legacy['predicted_instance_refs'] ?></td>
-                        <td><?= $status ?></td>
-                    </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
         </tbody>
     </table>
 </div>

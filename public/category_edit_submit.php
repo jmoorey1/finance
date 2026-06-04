@@ -22,8 +22,8 @@ if ($existingType === false) {
     die('Category not found');
 }
 
-if ($existingType === 'transfer') {
-    die('Transfer categories are deprecated and read-only. They are retained for legacy audit only.');
+if (!in_array((string)$existingType, ['income', 'expense'], true)) {
+    die('Unsupported category type.');
 }
 
 // Handle deletion
@@ -70,34 +70,12 @@ if ($watcherBudgetMode !== 'normal') {
     $watcherTimingMode = 'operational';
 }
 
+if (!in_array($type, ['income', 'expense'], true)) {
+    die('Unsupported category type.');
+}
+
 // Determine new name
-if ($type === 'transfer') {
-    $direction = (string)($_POST['direction'] ?? 'TO');
-    $linked_account_id = (int)($_POST['linked_account_id'] ?? 0);
-
-    // Get account name
-    $stmt = $pdo->prepare("SELECT name FROM accounts WHERE id = ?");
-    $stmt->execute([$linked_account_id]);
-    $account_name = $stmt->fetchColumn();
-
-    if (!$account_name) {
-        die('Linked account not found');
-    }
-
-    $name = "TRANSFER $direction : $account_name";
-
-    $update = $pdo->prepare("
-        UPDATE categories
-        SET name = ?,
-            linked_account_id = ?,
-            parent_id = 275,
-            watcher_budget_mode = 'normal',
-            watcher_timing_mode = 'operational'
-        WHERE id = ?
-    ");
-    $update->execute([$name, $linked_account_id, $id]);
-
-} elseif ($parent_id) {
+if ($parent_id) {
     // It's a subcategory, use parent name + suffix
     $suffix = $_POST['suffix'] ?? $_POST['name'] ?? '';
 
