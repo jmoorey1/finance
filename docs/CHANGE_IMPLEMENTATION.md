@@ -18,6 +18,26 @@ This process should be followed for all non-trivial changes.
 
 ## Standard Workflow
 
+### 0. Classify the change and required checks
+
+Before backing up or editing source files, record which validation paths apply to the change.
+
+At minimum, decide:
+
+- whether the change touches Review or import behaviour covered by the regression fixture pack
+- whether the change fixes a bug in an already-covered workflow
+- whether schema, view, index, constraint, or migration governance applies
+- whether direct MySQL validation is required
+- which user-facing success path and edge case will be tested
+
+For Review and import changes, fixture applicability defaults to **yes**.
+
+For a bug fix in a covered workflow, running the existing suite is not enough. The implementation must add or update a regression fixture or source assertion that specifically represents the defect. The new regression coverage should fail against the pre-fix source and pass against the corrected source wherever the current lightweight fixture design permits.
+
+If the fixture pack genuinely cannot represent the defect, state that explicitly in the implementation plan, document the limitation, and provide a targeted alternative test. Do not silently omit regression coverage.
+
+---
+
 ### 1. Back up the files you are about to change
 
 Before touching any file, create backups for every source file that will be modified.
@@ -165,6 +185,17 @@ Command:
 php8.2 scripts/tests/run_review_import_fixture_checks.php
 ```
 
+Before running the suite, confirm that the fixture data and assertions include the specific bug or guardrail introduced by the current change.
+
+For covered bug fixes:
+
+- add or update a case in the relevant fixture
+- add source assertions for the corrected guardrail where useful
+- add a `not_contains` assertion when a specific known-bad source pattern must not return
+- document any part of the behaviour that the lightweight DB-free runner cannot execute
+
+Running an unchanged suite after fixing a new covered bug is incomplete regression testing.
+
 These checks:
 
 - read only from the working tree
@@ -241,6 +272,18 @@ Only intentional code, config, migration, and schema-export changes should remai
 ---
 
 ### 11. Review the working tree
+
+Before staging or committing, confirm that every required check identified in Step 0 has been completed against the final source state.
+
+Where the regression fixture pack applies, rerun it after the final source edit:
+
+```bash
+php8.2 scripts/tests/run_review_import_fixture_checks.php
+```
+
+Do not rely on a run performed before the last code or fixture change.
+
+If a covered bug fix does not include a changed or demonstrably existing regression case for that defect, stop and correct the coverage before committing.
 
 Run:
 
@@ -364,7 +407,9 @@ A change is complete only when all of the following are true:
 - required migrations were created and applied where relevant
 - schema export was refreshed where relevant
 - syntax/lint checks passed
-- regression fixture checks were run where relevant
+- fixture applicability was decided before implementation
+- covered bug fixes include regression coverage for the specific defect
+- regression fixture checks were rerun after the final source edit where relevant
 - functional testing passed
 - linked surfaces were checked
 - database validation was performed where relevant
@@ -378,6 +423,11 @@ A change is complete only when all of the following are true:
 ## Quick Reference
 
 ```bash
+0. classify the change:
+   - fixture applicability
+   - bug-specific regression coverage
+   - migration requirement
+   - direct SQL validation requirement
 1. backup files
 2. create patch script in scripts/admin/
 3. write patch content
@@ -388,14 +438,16 @@ A change is complete only when all of the following are true:
    - export schema
 5. run patch script
 6. php -l all changed PHP files
-7. run fixture checks where relevant:
+7. add/update the bug-specific fixture where relevant
+8. run fixture checks after the final source edit:
    - php8.2 scripts/tests/run_review_import_fixture_checks.php
-8. perform manual / SQL validation tests
-9. once signed off:
+9. perform manual / SQL validation tests
+10. once signed off:
    - remove backups
    - remove patch scripts
    - restore runtime/state files
    - git add intended files
+   - review git diff --cached --stat
    - git commit with accurate message
    - git push
 ```
