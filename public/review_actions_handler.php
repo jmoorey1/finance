@@ -750,14 +750,69 @@ switch ($action) {
                         throw new RuntimeException('One-sided transfer target must be a different account.');
                     }
 
-                    $placeholder_amt = -1 * (float)$staging['amount'];
-
                     $metadata_from_account_id = ((float)$staging['amount'] < 0)
                         ? (int)$staging['account_id']
                         : $linked_account_id;
                     $metadata_to_account_id = ((float)$staging['amount'] < 0)
                         ? $linked_account_id
                         : (int)$staging['account_id'];
+
+                    /*
+                     * Do not create a second partial transfer when the uploaded
+                     * transaction can consume an existing PLACEHOLDER.
+                     */
+                    $placeholder_start_date = (new DateTimeImmutable((string)$staging['date']))
+                        ->modify('-3 days')
+                        ->format('Y-m-d');
+
+                    $placeholder_end_date = (new DateTimeImmutable((string)$staging['date']))
+                        ->modify('+3 days')
+                        ->format('Y-m-d');
+
+                    $existing_placeholder_stmt = $conn->prepare("
+                        SELECT
+                            t.id,
+                            t.transfer_group_id
+                        FROM transactions t
+                        JOIN transfer_groups tg
+                          ON tg.id = t.transfer_group_id
+                        WHERE t.description = 'PLACEHOLDER'
+                          AND t.account_id = ?
+                          AND ABS(t.amount - ?) < 0.01
+                          AND t.date BETWEEN ? AND ?
+                          AND tg.transfer_status = 'partial'
+                          AND tg.from_account_id = ?
+                          AND tg.to_account_id = ?
+                        ORDER BY
+                            ABS(DATEDIFF(t.date, ?)),
+                            t.id
+                        LIMIT 1
+                        FOR UPDATE
+                    ");
+
+                    $existing_placeholder_stmt->execute([
+                        (int)$staging['account_id'],
+                        (float)$staging['amount'],
+                        $placeholder_start_date,
+                        $placeholder_end_date,
+                        $metadata_from_account_id,
+                        $metadata_to_account_id,
+                        (string)$staging['date']
+                    ]);
+
+                    if (
+                        $existing_placeholder_stmt->fetch(
+                            PDO::FETCH_ASSOC
+                        )
+                    ) {
+                        throw new RuntimeException(
+                            'A matching PLACEHOLDER already exists. '
+                            . 'Select the existing PLACEHOLDER rather than '
+                            . 'creating a new one-sided transfer.'
+                        );
+                    }
+
+                    $placeholder_amt = -1 * (float)$staging['amount'];
 
                     $transfer_group_id = finance_create_transfer_group(
                         $conn,

@@ -389,18 +389,34 @@ include '../layout/header.php';
                                                 }
 
                                                 $placeholders = $conn->prepare("
-                                                    SELECT id, account_id, date, amount
-                                                    FROM transactions
-                                                    WHERE description = 'PLACEHOLDER'
-                                                      AND ABS(amount - ?) < 0.01
-                                                      AND date BETWEEN ? AND ?
+                                                    SELECT
+                                                        t.id,
+                                                        t.account_id,
+                                                        t.date,
+                                                        t.amount,
+                                                        t.transfer_group_id
+                                                    FROM transactions t
+                                                    JOIN transfer_groups tg
+                                                      ON tg.id = t.transfer_group_id
+                                                    WHERE t.description = 'PLACEHOLDER'
+                                                      AND t.account_id = ?
+                                                      AND ABS(t.amount - ?) < 0.01
+                                                      AND t.date BETWEEN ? AND ?
+                                                      AND tg.transfer_status = 'partial'
+                                                    ORDER BY ABS(DATEDIFF(t.date, ?)), t.id
                                                 ");
-                                                $placeholders->execute([$opposite_amount, $start_date, $end_date]);
+                                                $placeholders->execute([
+                                                    (int)$row['account_id'],
+                                                    $this_amount,
+                                                    $start_date,
+                                                    $end_date,
+                                                    $target_date
+                                                ]);
                                                 $placeholders_list = $placeholders->fetchAll(PDO::FETCH_ASSOC);
                                                 $placeholders_count = count($placeholders_list);
 
                                                 foreach ($placeholders_list as $match) {
-                                                    echo "<option value=\"existing_{$match['id']}\">[PLACEHOLDER] Account {$match['account_id']} ({$match['date']}, {$match['amount']})</option>";
+                                                    echo "<option value=\"existing_{$match['id']}\">[PLACEHOLDER — Group {$match['transfer_group_id']}] Account {$match['account_id']} ({$match['date']}, {$match['amount']})</option>";
                                                 }
 
                                                 if ($candidates_count === 0 && $placeholders_count === 0) {
