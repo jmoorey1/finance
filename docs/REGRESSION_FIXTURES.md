@@ -22,9 +22,11 @@ The runner only reads files from the working tree. It does not connect to MySQL,
 
 The checks deliberately stay lightweight:
 
-- Review fixtures validate the case definitions and assert that the production Review action still contains the guardrails for duplicate confirmation, regular categorisation, split categorisation, manual transfers, and predicted transfer fulfillment.
+- Review fixtures validate the case definitions and assert that the production Review action still contains the guardrails for duplicate confirmation, regular categorisation, split categorisation, manual transfers, transfer placeholder reuse, and predicted transfer fulfillment.
+- The transfer placeholder reuse fixture verifies the important semantics: the uploaded transaction and placeholder use the same account and signed amount, the existing partial group is reused, and the completed result contains two real transactions with no placeholder.
 - Import fixtures parse the synthetic CSV fixture and assert the expected billed/repaired/malformed/non-billed counts and signed amounts.
-- Source assertions make accidental removal of the recent hardening noisy during a manual server check.
+- Source assertions support both `contains` and `not_contains`, making removal of required guardrails—or reintroduction of known-bad source patterns—noisy during a manual server check.
+- A bug fix in an already-covered Review or import workflow must add or update a regression case. Merely running the existing suite is not evidence that the newly fixed defect is covered.
 
 ## Limits
 

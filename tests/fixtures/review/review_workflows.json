@@ -1,272 +1,358 @@
 {
-  "version": 1,
-  "description": "Synthetic Review workflow cases that document the high-risk paths fixed during backlog hardening.",
-  "cases": [
-    {
-      "name": "confirm duplicate only accepts the stored candidate",
-      "workflow": "review.confirm_duplicate",
-      "setup": {
-        "staging": {
-          "id": 5001,
-          "status": "potential_duplicate",
-          "matched_transaction_id": 9001,
-          "account_id": 10,
-          "date": "2026-05-01",
-          "description": "Example Groceries London",
-          "amount": "-12.34"
+    "version": 1,
+    "description": "Synthetic Review workflow cases that document the high-risk paths fixed during backlog hardening.",
+    "cases": [
+        {
+            "name": "confirm duplicate only accepts the stored candidate",
+            "workflow": "review.confirm_duplicate",
+            "setup": {
+                "staging": {
+                    "id": 5001,
+                    "status": "potential_duplicate",
+                    "matched_transaction_id": 9001,
+                    "account_id": 10,
+                    "date": "2026-05-01",
+                    "description": "Example Groceries London",
+                    "amount": "-12.34"
+                },
+                "matched_transaction": {
+                    "id": 9001,
+                    "account_id": 10,
+                    "date": "2026-04-30",
+                    "description": "Example Groceries",
+                    "amount": "-12.34"
+                }
+            },
+            "post": {
+                "action": "confirm_duplicate",
+                "staging_transaction_id": 5001,
+                "matched_transaction_id": 9001
+            },
+            "expect": {
+                "result": "delete_staging",
+                "guards": [
+                    "staging row must still be potential_duplicate",
+                    "posted matched_transaction_id must equal stored matched_transaction_id",
+                    "matched transaction must have same account, same amount, nearby date, and similar description"
+                ]
+            }
         },
-        "matched_transaction": {
-          "id": 9001,
-          "account_id": 10,
-          "date": "2026-04-30",
-          "description": "Example Groceries",
-          "amount": "-12.34"
+        {
+            "name": "regular categorisation requires an income or expense category",
+            "workflow": "review.categorise.regular",
+            "setup": {
+                "staging": {
+                    "id": 5002,
+                    "account_id": 10,
+                    "date": "2026-05-02",
+                    "description": "Coffee",
+                    "amount": "-3.50"
+                },
+                "account": {
+                    "id": 10,
+                    "type": "current"
+                },
+                "category": {
+                    "id": 120,
+                    "type": "expense"
+                }
+            },
+            "post": {
+                "action": "categorise",
+                "staging_transaction_id": 5002,
+                "category_id": 120
+            },
+            "expect": {
+                "result": "insert_transaction_and_delete_staging",
+                "transaction_type": "withdrawal",
+                "guards": [
+                    "staging account must exist",
+                    "amount must be non-zero",
+                    "category must exist and be income or expense"
+                ]
+            }
+        },
+        {
+            "name": "split categorisation requires balanced non-zero split lines",
+            "workflow": "review.categorise.split",
+            "setup": {
+                "staging": {
+                    "id": 5003,
+                    "account_id": 10,
+                    "date": "2026-05-03",
+                    "description": "Mixed shop",
+                    "amount": "-30.00"
+                },
+                "account": {
+                    "id": 10,
+                    "type": "current"
+                },
+                "valid_split_categories": [
+                    121,
+                    122
+                ],
+                "split_mode": {
+                    "source_of_truth": "transaction_splits rows exist",
+                    "parent_transaction_category_id": null,
+                    "ui_sentinel": "__split__"
+                }
+            },
+            "post": {
+                "action": "categorise",
+                "staging_transaction_id": 5003,
+                "category_id": "__split__",
+                "split_categories": [
+                    121,
+                    122
+                ],
+                "split_amounts": [
+                    "-10.00",
+                    "-20.00"
+                ]
+            },
+            "expect": {
+                "result": "insert_parent_transaction_and_split_rows",
+                "transaction_type": "withdrawal",
+                "guards": [
+                    "split arrays must both be arrays",
+                    "split arrays must have the same number of rows",
+                    "split amounts must be numeric and non-zero",
+                    "split total must match the staged transaction amount",
+                    "parent transaction category_id must be NULL for split transactions"
+                ]
+            }
+        },
+        {
+            "name": "manual transfer pairing requires different accounts and balanced amounts",
+            "workflow": "review.categorise.transfer_pair",
+            "setup": {
+                "staging": {
+                    "id": 5004,
+                    "account_id": 10,
+                    "date": "2026-05-04",
+                    "description": "Move to savings",
+                    "amount": "-100.00"
+                },
+                "counterparty_staging": {
+                    "id": 5005,
+                    "account_id": 11,
+                    "date": "2026-05-04",
+                    "description": "Move from current",
+                    "amount": "100.00"
+                }
+            },
+            "post": {
+                "action": "categorise",
+                "staging_transaction_id": 5004,
+                "category_id": -1,
+                "transfer_target": "staging_5005"
+            },
+            "expect": {
+                "result": "create_transfer_group_insert_two_transactions_delete_both_staging_rows",
+                "guards": [
+                    "transfer sides must use different accounts",
+                    "transfer sides must balance to zero",
+                    "both transfer categories must resolve"
+                ]
+            }
+        },
+        {
+            "name": "predicted transfer fulfillment validates account side and placeholder state",
+            "workflow": "review.fulfill_prediction.transfer",
+            "setup": {
+                "staging": {
+                    "id": 5006,
+                    "account_id": 10,
+                    "date": "2026-05-05",
+                    "description": "Predicted move",
+                    "amount": "-250.00",
+                    "predicted_instance_id": 7001
+                },
+                "predicted_instance": {
+                    "id": 7001,
+                    "from_account_id": 10,
+                    "to_account_id": 11,
+                    "amount": "250.00",
+                    "category_type": "transfer"
+                }
+            },
+            "post": {
+                "action": "fulfill_prediction",
+                "staging_transaction_id": 5006,
+                "predicted_instance_id": 7001
+            },
+            "expect": {
+                "result": "fulfill_or_partially_fulfill_predicted_transfer",
+                "guards": [
+                    "uploaded account must match one side of the predicted transfer",
+                    "uploaded amount sign must match the account side",
+                    "partial fulfillment must contain exactly one matching placeholder"
+                ]
+            }
+        },
+        {
+            "name": "manual transfer reuses a matching existing placeholder",
+            "workflow": "review.categorise.transfer_placeholder_reuse",
+            "setup": {
+                "staging": {
+                    "id": 5007,
+                    "account_id": 9,
+                    "date": "2026-06-15",
+                    "description": "JOHN MOOREY EXPENSES FT",
+                    "amount": "-1504.86"
+                },
+                "existing_transfer_group": {
+                    "id": 1259,
+                    "from_account_id": 9,
+                    "to_account_id": 14,
+                    "expected_amount": "1504.86",
+                    "transfer_date": "2026-06-15",
+                    "transfer_status": "partial"
+                },
+                "placeholder_transaction": {
+                    "id": 17986,
+                    "transfer_group_id": 1259,
+                    "account_id": 9,
+                    "date": "2026-06-15",
+                    "description": "PLACEHOLDER",
+                    "amount": "-1504.86"
+                },
+                "counterparty_transaction": {
+                    "id": 17985,
+                    "transfer_group_id": 1259,
+                    "account_id": 14,
+                    "date": "2026-06-15",
+                    "description": "MOOREY I S",
+                    "amount": "1504.86"
+                }
+            },
+            "post": {
+                "action": "categorise",
+                "staging_transaction_id": 5007,
+                "category_id": -1,
+                "transfer_target": "existing_17986"
+            },
+            "expect": {
+                "result": "replace_placeholder_in_existing_group",
+                "transfer_group_id": 1259,
+                "transfer_status": "complete",
+                "transaction_count": 2,
+                "placeholder_count": 0,
+                "net_amount": "0.00",
+                "guards": [
+                    "placeholder account must equal the uploaded transaction account",
+                    "placeholder signed amount must equal the uploaded transaction signed amount",
+                    "placeholder must belong to a partial transfer group",
+                    "one-sided creation must be rejected when a compatible placeholder already exists",
+                    "existing transfer group must be reused rather than creating a new group"
+                ]
+            }
         }
-      },
-      "post": {
-        "action": "confirm_duplicate",
-        "staging_transaction_id": 5001,
-        "matched_transaction_id": 9001
-      },
-      "expect": {
-        "result": "delete_staging",
-        "guards": [
-          "staging row must still be potential_duplicate",
-          "posted matched_transaction_id must equal stored matched_transaction_id",
-          "matched transaction must have same account, same amount, nearby date, and similar description"
-        ]
-      }
-    },
-    {
-      "name": "regular categorisation requires an income or expense category",
-      "workflow": "review.categorise.regular",
-      "setup": {
-        "staging": {
-          "id": 5002,
-          "account_id": 10,
-          "date": "2026-05-02",
-          "description": "Coffee",
-          "amount": "-3.50"
+    ],
+    "source_assertions": [
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Staging transaction is not marked as a potential duplicate."
         },
-        "account": {
-          "id": 10,
-          "type": "current"
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Posted duplicate match does not match the stored review candidate."
         },
-        "category": {
-          "id": 120,
-          "type": "expense"
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Matched transaction date is outside the duplicate review window."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Selected category must be an income or expense category."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Transaction amount cannot be zero."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Split categories and amounts are required."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Split total ("
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Transfer sides must use different accounts."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Selected placeholder account does not match uploaded transaction account."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Uploaded account does not match predicted transfer."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "Partial predicted transfer must contain exactly one placeholder."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "INSERT INTO transactions (account_id, date, description, amount, type, original_ref, category_id, payee_id)"
+        },
+        {
+            "file": "public/review_actions.php",
+            "contains": "review_action_set_flash('error', $output)"
+        },
+        {
+            "file": "public/review.php",
+            "contains": "review_page_flash_html($reviewFlash)"
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "finance_is_split_sentinel($categoryRaw)"
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "null,"
+        },
+        {
+            "file": "public/review_view.php",
+            "contains": "$splitCategorySentinel = finance_split_category_sentinel();"
+        },
+        {
+            "file": "public/transaction_edit.php",
+            "contains": "$isSplitTransaction = finance_transaction_has_splits($conn, $id);"
+        },
+        {
+            "file": "public/transaction_edit_submit.php",
+            "contains": "$categoryId = $isSplitTransaction ? null : (int)$categoryRaw;"
+        },
+        {
+            "file": "public/review_view.php",
+            "contains": "AND t.account_id = ?"
+        },
+        {
+            "file": "public/review_view.php",
+            "contains": "$this_amount,"
+        },
+        {
+            "file": "public/review_view.php",
+            "contains": "AND tg.transfer_status = 'partial'"
+        },
+        {
+            "file": "public/review_view.php",
+            "not_contains": "$placeholders->execute([$opposite_amount, $start_date, $end_date]);"
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "A matching PLACEHOLDER already exists."
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "AND tg.from_account_id = ?"
+        },
+        {
+            "file": "public/review_actions_handler.php",
+            "contains": "AND tg.to_account_id = ?"
         }
-      },
-      "post": {
-        "action": "categorise",
-        "staging_transaction_id": 5002,
-        "category_id": 120
-      },
-      "expect": {
-        "result": "insert_transaction_and_delete_staging",
-        "transaction_type": "withdrawal",
-        "guards": [
-          "staging account must exist",
-          "amount must be non-zero",
-          "category must exist and be income or expense"
-        ]
-      }
-    },
-    {
-      "name": "split categorisation requires balanced non-zero split lines",
-      "workflow": "review.categorise.split",
-      "setup": {
-        "staging": {
-          "id": 5003,
-          "account_id": 10,
-          "date": "2026-05-03",
-          "description": "Mixed shop",
-          "amount": "-30.00"
-        },
-        "account": {
-          "id": 10,
-          "type": "current"
-        },
-        "valid_split_categories": [
-          121,
-          122
-        ],
-        "split_mode": {
-          "source_of_truth": "transaction_splits rows exist",
-          "parent_transaction_category_id": null,
-          "ui_sentinel": "__split__"
-        }
-      },
-      "post": {
-        "action": "categorise",
-        "staging_transaction_id": 5003,
-        "category_id": "__split__",
-        "split_categories": [
-          121,
-          122
-        ],
-        "split_amounts": [
-          "-10.00",
-          "-20.00"
-        ]
-      },
-      "expect": {
-        "result": "insert_parent_transaction_and_split_rows",
-        "transaction_type": "withdrawal",
-        "guards": [
-          "split arrays must both be arrays",
-          "split arrays must have the same number of rows",
-          "split amounts must be numeric and non-zero",
-          "split total must match the staged transaction amount",
-          "parent transaction category_id must be NULL for split transactions"
-        ]
-      }
-    },
-    {
-      "name": "manual transfer pairing requires different accounts and balanced amounts",
-      "workflow": "review.categorise.transfer_pair",
-      "setup": {
-        "staging": {
-          "id": 5004,
-          "account_id": 10,
-          "date": "2026-05-04",
-          "description": "Move to savings",
-          "amount": "-100.00"
-        },
-        "counterparty_staging": {
-          "id": 5005,
-          "account_id": 11,
-          "date": "2026-05-04",
-          "description": "Move from current",
-          "amount": "100.00"
-        }
-      },
-      "post": {
-        "action": "categorise",
-        "staging_transaction_id": 5004,
-        "category_id": -1,
-        "transfer_target": "staging_5005"
-      },
-      "expect": {
-        "result": "create_transfer_group_insert_two_transactions_delete_both_staging_rows",
-        "guards": [
-          "transfer sides must use different accounts",
-          "transfer sides must balance to zero",
-          "both transfer categories must resolve"
-        ]
-      }
-    },
-    {
-      "name": "predicted transfer fulfillment validates account side and placeholder state",
-      "workflow": "review.fulfill_prediction.transfer",
-      "setup": {
-        "staging": {
-          "id": 5006,
-          "account_id": 10,
-          "date": "2026-05-05",
-          "description": "Predicted move",
-          "amount": "-250.00",
-          "predicted_instance_id": 7001
-        },
-        "predicted_instance": {
-          "id": 7001,
-          "from_account_id": 10,
-          "to_account_id": 11,
-          "amount": "250.00",
-          "category_type": "transfer"
-        }
-      },
-      "post": {
-        "action": "fulfill_prediction",
-        "staging_transaction_id": 5006,
-        "predicted_instance_id": 7001
-      },
-      "expect": {
-        "result": "fulfill_or_partially_fulfill_predicted_transfer",
-        "guards": [
-          "uploaded account must match one side of the predicted transfer",
-          "uploaded amount sign must match the account side",
-          "partial fulfillment must contain exactly one matching placeholder"
-        ]
-      }
-    }
-  ],
-  "source_assertions": [
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Staging transaction is not marked as a potential duplicate."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Posted duplicate match does not match the stored review candidate."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Matched transaction date is outside the duplicate review window."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Selected category must be an income or expense category."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Transaction amount cannot be zero."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Split categories and amounts are required."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Split total ("
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Transfer sides must use different accounts."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Selected placeholder account does not match uploaded transaction account."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Uploaded account does not match predicted transfer."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "Partial predicted transfer must contain exactly one placeholder."
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "INSERT INTO transactions (account_id, date, description, amount, type, original_ref, category_id, payee_id)"
-    },
-    {
-      "file": "public/review_actions.php",
-      "contains": "review_action_set_flash('error', $output)"
-    },
-    {
-      "file": "public/review.php",
-      "contains": "review_page_flash_html($reviewFlash)"
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "finance_is_split_sentinel($categoryRaw)"
-    },
-    {
-      "file": "public/review_actions_handler.php",
-      "contains": "null,"
-    },
-    {
-      "file": "public/review_view.php",
-      "contains": "$splitCategorySentinel = finance_split_category_sentinel();"
-    },
-    {
-      "file": "public/transaction_edit.php",
-      "contains": "$isSplitTransaction = finance_transaction_has_splits($conn, $id);"
-    },
-    {
-      "file": "public/transaction_edit_submit.php",
-      "contains": "$categoryId = $isSplitTransaction ? null : (int)$categoryRaw;"
-    }
-  ]
+    ]
 }

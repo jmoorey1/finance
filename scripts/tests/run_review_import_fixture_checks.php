@@ -42,23 +42,64 @@ function validate_source_assertions(string $repoRoot, array $assertions): int
         fixture_assert(is_array($assertion), "Source assertion {$index} must be an object.");
 
         $relativeFile = (string)($assertion['file'] ?? '');
-        $needle = (string)($assertion['contains'] ?? '');
+        $hasContains = array_key_exists('contains', $assertion);
+        $hasNotContains = array_key_exists('not_contains', $assertion);
 
-        fixture_assert($relativeFile !== '', "Source assertion {$index} is missing file.");
-        fixture_assert($needle !== '', "Source assertion {$index} is missing contains.");
+        fixture_assert(
+            $relativeFile !== '',
+            "Source assertion {$index} is missing file."
+        );
 
-        $path = $repoRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeFile);
+        fixture_assert(
+            $hasContains !== $hasNotContains,
+            "Source assertion {$index} must define exactly one of contains or not_contains."
+        );
+
+        $needle = $hasContains
+            ? (string)$assertion['contains']
+            : (string)$assertion['not_contains'];
+
+        fixture_assert(
+            $needle !== '',
+            "Source assertion {$index} has an empty search string."
+        );
+
+        $path = $repoRoot
+            . DIRECTORY_SEPARATOR
+            . str_replace(
+                '/',
+                DIRECTORY_SEPARATOR,
+                $relativeFile
+            );
+
         if (!array_key_exists($path, $sourceCache)) {
-            fixture_assert(is_file($path), "Source file not found for assertion: {$relativeFile}");
+            fixture_assert(
+                is_file($path),
+                "Source file not found for assertion: {$relativeFile}"
+            );
+
             $content = file_get_contents($path);
-            fixture_assert($content !== false, "Unable to read source file: {$relativeFile}");
+
+            fixture_assert(
+                $content !== false,
+                "Unable to read source file: {$relativeFile}"
+            );
+
             $sourceCache[$path] = $content;
         }
 
-        fixture_assert(
-            str_contains($sourceCache[$path], $needle),
-            "Source assertion failed for {$relativeFile}: missing [{$needle}]"
-        );
+        if ($hasContains) {
+            fixture_assert(
+                str_contains($sourceCache[$path], $needle),
+                "Source assertion failed for {$relativeFile}: missing [{$needle}]"
+            );
+        } else {
+            fixture_assert(
+                !str_contains($sourceCache[$path], $needle),
+                "Negative source assertion failed for {$relativeFile}: found forbidden text [{$needle}]"
+            );
+        }
+
         $checked++;
     }
 
@@ -164,21 +205,181 @@ function parse_credit_card_fixture(string $path, int $accountId): array
     ];
 }
 
+function find_review_case_by_workflow(
+    array $cases,
+    string $workflow
+): array {
+    $matches = array_values(
+        array_filter(
+            $cases,
+            static fn(array $case): bool =>
+                (string)($case['workflow'] ?? '') === $workflow
+        )
+    );
+
+    fixture_assert(
+        count($matches) === 1,
+        "Expected exactly one Review fixture for workflow {$workflow}."
+    );
+
+    return $matches[0];
+}
+
+function validate_transfer_placeholder_reuse_case(
+    array $cases
+): void {
+    $case = find_review_case_by_workflow(
+        $cases,
+        'review.categorise.transfer_placeholder_reuse'
+    );
+
+    $setup = $case['setup'] ?? [];
+    $post = $case['post'] ?? [];
+    $expect = $case['expect'] ?? [];
+
+    $staging = $setup['staging'] ?? [];
+    $group = $setup['existing_transfer_group'] ?? [];
+    $placeholder = $setup['placeholder_transaction'] ?? [];
+    $counterparty = $setup['counterparty_transaction'] ?? [];
+
+    fixture_assert(
+        (int)($staging['account_id'] ?? 0)
+            === (int)($placeholder['account_id'] ?? -1),
+        'Transfer placeholder fixture must use the uploaded transaction account.'
+    );
+
+    fixture_assert(
+        (string)($staging['amount'] ?? '')
+            === (string)($placeholder['amount'] ?? 'different'),
+        'Transfer placeholder fixture must use the same signed amount as the uploaded transaction.'
+    );
+
+    fixture_assert(
+        abs(
+            (float)($staging['amount'] ?? 0)
+            + (float)($counterparty['amount'] ?? 0)
+        ) < 0.01,
+        'Transfer placeholder fixture real transaction sides must balance to zero.'
+    );
+
+    fixture_assert(
+        (string)($group['transfer_status'] ?? '') === 'partial',
+        'Transfer placeholder fixture must begin with a partial transfer group.'
+    );
+
+    fixture_assert(
+        (int)($placeholder['transfer_group_id'] ?? 0)
+            === (int)($group['id'] ?? -1),
+        'Transfer placeholder fixture placeholder must belong to the existing group.'
+    );
+
+    fixture_assert(
+        (int)($counterparty['transfer_group_id'] ?? 0)
+            === (int)($group['id'] ?? -1),
+        'Transfer placeholder fixture counterparty must belong to the existing group.'
+    );
+
+    fixture_assert(
+        (string)($post['transfer_target'] ?? '')
+            === 'existing_' . (int)($placeholder['id'] ?? 0),
+        'Transfer placeholder fixture must select the existing placeholder.'
+    );
+
+    fixture_assert(
+        (string)($expect['result'] ?? '')
+            === 'replace_placeholder_in_existing_group',
+        'Transfer placeholder fixture must expect the existing group to be reused.'
+    );
+
+    fixture_assert(
+        (int)($expect['transfer_group_id'] ?? 0)
+            === (int)($group['id'] ?? -1),
+        'Transfer placeholder fixture expected group must equal the existing group.'
+    );
+
+    fixture_assert(
+        (string)($expect['transfer_status'] ?? '') === 'complete',
+        'Transfer placeholder fixture must expect the group to become complete.'
+    );
+
+    fixture_assert(
+        (int)($expect['transaction_count'] ?? 0) === 2,
+        'Completed transfer placeholder fixture must expect exactly two transactions.'
+    );
+
+    fixture_assert(
+        (int)($expect['placeholder_count'] ?? -1) === 0,
+        'Completed transfer placeholder fixture must expect no placeholders.'
+    );
+
+    fixture_assert(
+        (string)($expect['net_amount'] ?? '') === '0.00',
+        'Completed transfer placeholder fixture must expect a zero net amount.'
+    );
+}
+
 function validate_review_fixtures(array $fixture): int
 {
-    fixture_assert(($fixture['version'] ?? null) === 1, 'Review fixture version must be 1.');
-    fixture_assert(isset($fixture['cases']) && is_array($fixture['cases']), 'Review fixture cases must be an array.');
-    fixture_assert(count($fixture['cases']) >= 5, 'Expected at least five Review workflow fixture cases.');
+    fixture_assert(
+        ($fixture['version'] ?? null) === 1,
+        'Review fixture version must be 1.'
+    );
+
+    fixture_assert(
+        isset($fixture['cases'])
+            && is_array($fixture['cases']),
+        'Review fixture cases must be an array.'
+    );
+
+    fixture_assert(
+        count($fixture['cases']) >= 6,
+        'Expected at least six Review workflow fixture cases.'
+    );
 
     foreach ($fixture['cases'] as $index => $case) {
-        fixture_assert(is_array($case), "Review case {$index} must be an object.");
-        fixture_assert((string)($case['name'] ?? '') !== '', "Review case {$index} is missing name.");
-        fixture_assert((string)($case['workflow'] ?? '') !== '', "Review case {$index} is missing workflow.");
-        fixture_assert(isset($case['setup']) && is_array($case['setup']), "Review case {$index} is missing setup.");
-        fixture_assert(isset($case['post']) && is_array($case['post']), "Review case {$index} is missing post.");
-        fixture_assert(isset($case['expect']) && is_array($case['expect']), "Review case {$index} is missing expect.");
-        fixture_assert(isset($case['expect']['guards']) && is_array($case['expect']['guards']), "Review case {$index} is missing guard list.");
+        fixture_assert(
+            is_array($case),
+            "Review case {$index} must be an object."
+        );
+
+        fixture_assert(
+            (string)($case['name'] ?? '') !== '',
+            "Review case {$index} is missing name."
+        );
+
+        fixture_assert(
+            (string)($case['workflow'] ?? '') !== '',
+            "Review case {$index} is missing workflow."
+        );
+
+        fixture_assert(
+            isset($case['setup'])
+                && is_array($case['setup']),
+            "Review case {$index} is missing setup."
+        );
+
+        fixture_assert(
+            isset($case['post'])
+                && is_array($case['post']),
+            "Review case {$index} is missing post."
+        );
+
+        fixture_assert(
+            isset($case['expect'])
+                && is_array($case['expect']),
+            "Review case {$index} is missing expect."
+        );
+
+        fixture_assert(
+            isset($case['expect']['guards'])
+                && is_array($case['expect']['guards']),
+            "Review case {$index} is missing guard list."
+        );
     }
+
+    validate_transfer_placeholder_reuse_case(
+        $fixture['cases']
+    );
 
     return count($fixture['cases']);
 }
