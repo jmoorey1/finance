@@ -223,6 +223,7 @@
                 <li class="nav-item"><a class="nav-link" href="/finance/public/index.php">Home</a></li>
                 <li class="nav-item"><a class="nav-link" href="/finance/public/dashboard.php">Monthly Summary</a></li>
                 <li class="nav-item"><a class="nav-link" href="/finance/public/dashboard_ytd.php">Year-to-Date</a></li>
+                <li class="nav-item"><a class="nav-link" href="/finance/public/payroll.php">Payroll</a></li>
                 <li class="nav-item"><a class="nav-link" href="/finance/public/insights.php">Spending Insights</a></li>
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">Manage</a>
