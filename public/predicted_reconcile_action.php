@@ -2,6 +2,7 @@
 require_once '../config/db.php';
 auth_session_start();
 require_once '../scripts/predicted_reconciliation.php';
+require_once '../scripts/lib/transfer_group_helpers.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['prediction_id'], $_POST['action'])) {
     header('Location: predicted.php');
@@ -70,6 +71,17 @@ try {
             throw new RuntimeException('Selected transaction is on the wrong account.');
         }
 
+        $validCandidate = false;
+        foreach (pr_find_regular_candidates($pdo, $instance) as $candidate) {
+            if ((int)$candidate['id'] === $transactionId && empty($candidate['already_linked'])) {
+                $validCandidate = true;
+                break;
+            }
+        }
+
+        if (!$validCandidate) {
+            throw new RuntimeException('Selected transaction is not a valid reconciliation candidate.');
+        }
 
         pr_mark_regular_fulfilled($pdo, $instance, $transactionId);
         $_SESSION['prediction_action_flash'] = '✅ Predicted instance reconciled to actual transaction.';
@@ -141,7 +153,7 @@ try {
         }
 
         $stmt = $pdo->prepare("
-            SELECT id, account_id, amount, transfer_group_id, predicted_transaction_id
+            SELECT id, account_id, date, amount, transfer_group_id, predicted_transaction_id
             FROM transactions
             WHERE id IN (?, ?)
             ORDER BY id ASC
@@ -192,8 +204,26 @@ try {
         $transferGroupId = $fromGroup ?: $toGroup;
 
         if (!$transferGroupId) {
-            $pdo->prepare("INSERT INTO transfer_groups (description) VALUES ('Retrospective predicted reconciliation')")->execute();
-            $transferGroupId = (int)$pdo->lastInsertId();
+            $transferGroupId = finance_create_transfer_group(
+                $pdo,
+                'Retrospective predicted reconciliation',
+                (int)$instance['from_account_id'],
+                (int)$instance['to_account_id'],
+                $predAmount,
+                (string)$fromTxn['date'],
+                'complete'
+            );
+        } else {
+            finance_update_transfer_group_metadata(
+                $pdo,
+                $transferGroupId,
+                null,
+                (int)$instance['from_account_id'],
+                (int)$instance['to_account_id'],
+                $predAmount,
+                (string)$fromTxn['date'],
+                'complete'
+            );
         }
 
         $pdo->prepare("
