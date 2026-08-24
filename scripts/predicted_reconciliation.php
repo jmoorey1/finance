@@ -83,7 +83,7 @@ function pr_find_regular_candidates(PDO $pdo, array $instance, int $windowDays =
         JOIN accounts a ON a.id = t.account_id
         LEFT JOIN categories c ON c.id = t.category_id
         WHERE t.account_id = ?
-          AND ABS(t.amount - ?) < ABS(t.amount * 0.1)
+          AND ((ABS(t.amount - ?) < ABS(t.amount * 0.1)) OR (t.description like ?))
           AND ABS(DATEDIFF(t.date, ?)) <= ?
         ORDER BY ABS(DATEDIFF(t.date, ?)) ASC, t.date DESC, t.id DESC
         LIMIT 50
@@ -91,6 +91,7 @@ function pr_find_regular_candidates(PDO $pdo, array $instance, int $windowDays =
     $stmt->execute([
         (int)$instance['from_account_id'],
         (float)$instance['amount'],
+        $instance['description'],
         $instance['scheduled_date'],
         $windowDays,
         $instance['scheduled_date'],
