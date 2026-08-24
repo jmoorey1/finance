@@ -45,10 +45,12 @@ unset MYSQL_PWD
 # Keep schema.sql deterministic and portable:
 # - remove table-level AUTO_INCREMENT counters, which are live-data artefacts
 # - remove machine/user-specific DEFINER clauses from dumped views
+# - remove trailing horizontal whitespace emitted by mysqldump for view stubs
 #
 # Important: this does not remove column-level AUTO_INCREMENT definitions.
 perl -0pi -e 's/ AUTO_INCREMENT=\d+//g' "${TMP_SQL}"
 perl -0pi -e 's{/\*!\d{5}\s+DEFINER=`[^`]+`@`[^`]+`\s+SQL SECURITY DEFINER\s+\*/\n?}{}g' "${TMP_SQL}"
+perl -pi -e 's/[ \t]+$//' "${TMP_SQL}"
 
 if grep -qE ' AUTO_INCREMENT=[0-9]+' "${TMP_SQL}"; then
   echo "ERROR: schema export still contains table-level AUTO_INCREMENT values."
@@ -57,6 +59,11 @@ fi
 
 if grep -qE 'DEFINER=`[^`]+`@`[^`]+' "${TMP_SQL}"; then
   echo "ERROR: schema export still contains environment-specific DEFINER clauses."
+  exit 1
+fi
+
+if grep -nE '[ \t]+$' "${TMP_SQL}" >/dev/null; then
+  echo "ERROR: schema export still contains trailing horizontal whitespace."
   exit 1
 fi
 
