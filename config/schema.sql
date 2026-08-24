@@ -365,6 +365,61 @@ CREATE TABLE `payroll_expenses` (
   CONSTRAINT `fk_payroll_expenses_report` FOREIGN KEY (`report_id`) REFERENCES `payroll_expense_reports` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `payroll_finance_link_status`;
+/*!50001 DROP VIEW IF EXISTS `payroll_finance_link_status`*/;
+SET @saved_cs_client     = @@character_set_client;
+/*!50503 SET character_set_client = utf8mb4 */;
+/*!50001 CREATE VIEW `payroll_finance_link_status` AS SELECT
+ 1 AS `payslip_id`,
+ 1 AS `employment_id`,
+ 1 AS `person_id`,
+ 1 AS `person_name`,
+ 1 AS `pay_date`,
+ 1 AS `statement_amount_paid`,
+ 1 AS `statement_net_pay`,
+ 1 AS `calculated_net_pay`,
+ 1 AS `notional_line_count`,
+ 1 AS `payment_method`,
+ 1 AS `receiving_account_id`,
+ 1 AS `receiving_account_name`,
+ 1 AS `income_category_id`,
+ 1 AS `income_category_label`,
+ 1 AS `prediction_rule_id`,
+ 1 AS `prediction_rule_description`,
+ 1 AS `linkage_start_date`,
+ 1 AS `candidate_window_days`,
+ 1 AS `expected_settlement_amount`,
+ 1 AS `expected_amount_source`,
+ 1 AS `link_count`,
+ 1 AS `linked_amount`,
+ 1 AS `first_transaction_date`,
+ 1 AS `last_transaction_date`,
+ 1 AS `link_status`*/;
+SET character_set_client = @saved_cs_client;
+DROP TABLE IF EXISTS `payroll_finance_mappings`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `payroll_finance_mappings` (
+  `employment_id` int NOT NULL,
+  `receiving_account_id` int NOT NULL,
+  `income_category_id` int DEFAULT NULL,
+  `prediction_rule_id` int DEFAULT NULL,
+  `linkage_start_date` date NOT NULL DEFAULT '2020-01-01',
+  `candidate_window_days` tinyint unsigned NOT NULL DEFAULT '7',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`employment_id`),
+  KEY `idx_payroll_finance_mappings_account` (`receiving_account_id`),
+  KEY `idx_payroll_finance_mappings_category` (`income_category_id`),
+  KEY `idx_payroll_finance_mappings_prediction` (`prediction_rule_id`),
+  CONSTRAINT `fk_payroll_finance_mappings_account` FOREIGN KEY (`receiving_account_id`) REFERENCES `accounts` (`id`),
+  CONSTRAINT `fk_payroll_finance_mappings_category` FOREIGN KEY (`income_category_id`) REFERENCES `categories` (`id`),
+  CONSTRAINT `fk_payroll_finance_mappings_employment` FOREIGN KEY (`employment_id`) REFERENCES `payroll_employments` (`id`),
+  CONSTRAINT `fk_payroll_finance_mappings_prediction` FOREIGN KEY (`prediction_rule_id`) REFERENCES `predicted_transactions` (`id`),
+  CONSTRAINT `chk_payroll_finance_mappings_start_date` CHECK ((`linkage_start_date` >= _utf8mb4'2020-01-01')),
+  CONSTRAINT `chk_payroll_finance_mappings_window` CHECK ((`candidate_window_days` between 0 and 31))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payroll_line_items`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -467,6 +522,38 @@ SET @saved_cs_client     = @@character_set_client;
  1 AS `line_item_count`,
  1 AS `notional_line_count`*/;
 SET character_set_client = @saved_cs_client;
+DROP TABLE IF EXISTS `payroll_payslip_transaction_link_totals`;
+/*!50001 DROP VIEW IF EXISTS `payroll_payslip_transaction_link_totals`*/;
+SET @saved_cs_client     = @@character_set_client;
+/*!50503 SET character_set_client = utf8mb4 */;
+/*!50001 CREATE VIEW `payroll_payslip_transaction_link_totals` AS SELECT
+ 1 AS `payslip_id`,
+ 1 AS `link_count`,
+ 1 AS `linked_amount`,
+ 1 AS `first_transaction_date`,
+ 1 AS `last_transaction_date`*/;
+SET character_set_client = @saved_cs_client;
+DROP TABLE IF EXISTS `payroll_payslip_transaction_links`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `payroll_payslip_transaction_links` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `payslip_id` int NOT NULL,
+  `transaction_id` int NOT NULL,
+  `matched_amount` decimal(12,2) NOT NULL,
+  `match_method` enum('manual','exact_same_day','historical_backfill','import_assisted') NOT NULL DEFAULT 'manual',
+  `notes` varchar(255) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payroll_payslip_transaction_link` (`payslip_id`,`transaction_id`),
+  UNIQUE KEY `uq_payroll_transaction_single_payslip` (`transaction_id`),
+  KEY `idx_payroll_payslip_transaction_links_payslip` (`payslip_id`,`created_at`),
+  CONSTRAINT `fk_payroll_payslip_transaction_links_payslip` FOREIGN KEY (`payslip_id`) REFERENCES `payroll_payslips` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_payroll_payslip_transaction_links_transaction` FOREIGN KEY (`transaction_id`) REFERENCES `transactions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_payroll_payslip_transaction_links_amount` CHECK ((`matched_amount` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payroll_payslips`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -988,6 +1075,18 @@ CREATE TABLE `watcher_alerts` (
 /*!50001 SET character_set_client      = @saved_cs_client */;
 /*!50001 SET character_set_results     = @saved_cs_results */;
 /*!50001 SET collation_connection      = @saved_col_connection */;
+/*!50001 DROP VIEW IF EXISTS `payroll_finance_link_status`*/;
+/*!50001 SET @saved_cs_client          = @@character_set_client */;
+/*!50001 SET @saved_cs_results         = @@character_set_results */;
+/*!50001 SET @saved_col_connection     = @@collation_connection */;
+/*!50001 SET character_set_client      = utf8mb4 */;
+/*!50001 SET character_set_results     = utf8mb4 */;
+/*!50001 SET collation_connection      = utf8mb4_general_ci */;
+/*!50001 CREATE ALGORITHM=UNDEFINED */
+/*!50001 VIEW `payroll_finance_link_status` AS select `ps`.`payslip_id` AS `payslip_id`,`ps`.`employment_id` AS `employment_id`,`ps`.`person_id` AS `person_id`,`ps`.`person_name` AS `person_name`,`ps`.`pay_date` AS `pay_date`,`ps`.`statement_amount_paid` AS `statement_amount_paid`,`ps`.`statement_net_pay` AS `statement_net_pay`,`ps`.`calculated_net_pay` AS `calculated_net_pay`,`ps`.`notional_line_count` AS `notional_line_count`,`ps`.`payment_method` AS `payment_method`,`fm`.`receiving_account_id` AS `receiving_account_id`,`account`.`name` AS `receiving_account_name`,`fm`.`income_category_id` AS `income_category_id`,(case when (`income_category`.`id` is null) then NULL when (`parent_category`.`id` is null) then `income_category`.`name` else concat(`parent_category`.`name`,' : ',`income_category`.`name`) end) AS `income_category_label`,`fm`.`prediction_rule_id` AS `prediction_rule_id`,`prediction`.`description` AS `prediction_rule_description`,`fm`.`linkage_start_date` AS `linkage_start_date`,`fm`.`candidate_window_days` AS `candidate_window_days`,(case when (`ps`.`statement_amount_paid` is not null) then `ps`.`statement_amount_paid` when ((`ps`.`statement_net_pay` is not null) and (`ps`.`notional_line_count` = 0)) then `ps`.`statement_net_pay` when (`ps`.`notional_line_count` = 0) then `ps`.`calculated_net_pay` else NULL end) AS `expected_settlement_amount`,(case when (`ps`.`statement_amount_paid` is not null) then 'statement_amount_paid' when ((`ps`.`statement_net_pay` is not null) and (`ps`.`notional_line_count` = 0)) then 'statement_net_pay' when (`ps`.`notional_line_count` = 0) then 'calculated_lines' else 'manual_required' end) AS `expected_amount_source`,coalesce(`totals`.`link_count`,0) AS `link_count`,coalesce(`totals`.`linked_amount`,0) AS `linked_amount`,`totals`.`first_transaction_date` AS `first_transaction_date`,`totals`.`last_transaction_date` AS `last_transaction_date`,(case when (`fm`.`employment_id` is null) then 'unconfigured' when (`ps`.`pay_date` < `fm`.`linkage_start_date`) then 'out_of_scope' when ((case when (`ps`.`statement_amount_paid` is not null) then `ps`.`statement_amount_paid` when ((`ps`.`statement_net_pay` is not null) and (`ps`.`notional_line_count` = 0)) then `ps`.`statement_net_pay` when (`ps`.`notional_line_count` = 0) then `ps`.`calculated_net_pay` else NULL end) is null) then 'no_settlement' when ((case when (`ps`.`statement_amount_paid` is not null) then `ps`.`statement_amount_paid` when ((`ps`.`statement_net_pay` is not null) and (`ps`.`notional_line_count` = 0)) then `ps`.`statement_net_pay` when (`ps`.`notional_line_count` = 0) then `ps`.`calculated_net_pay` else NULL end) <= 0) then 'no_settlement' when (coalesce(`totals`.`link_count`,0) = 0) then 'unlinked' when (abs((coalesce(`totals`.`linked_amount`,0) - (case when (`ps`.`statement_amount_paid` is not null) then `ps`.`statement_amount_paid` when ((`ps`.`statement_net_pay` is not null) and (`ps`.`notional_line_count` = 0)) then `ps`.`statement_net_pay` when (`ps`.`notional_line_count` = 0) then `ps`.`calculated_net_pay` else NULL end))) <= 0.01) then 'settled' when (coalesce(`totals`.`linked_amount`,0) < (case when (`ps`.`statement_amount_paid` is not null) then `ps`.`statement_amount_paid` when ((`ps`.`statement_net_pay` is not null) and (`ps`.`notional_line_count` = 0)) then `ps`.`statement_net_pay` when (`ps`.`notional_line_count` = 0) then `ps`.`calculated_net_pay` else NULL end)) then 'partial' else 'overlinked' end) AS `link_status` from ((((((`payroll_payslip_summary` `ps` left join `payroll_finance_mappings` `fm` on((`fm`.`employment_id` = `ps`.`employment_id`))) left join `accounts` `account` on((`account`.`id` = `fm`.`receiving_account_id`))) left join `categories` `income_category` on((`income_category`.`id` = `fm`.`income_category_id`))) left join `categories` `parent_category` on((`parent_category`.`id` = `income_category`.`parent_id`))) left join `predicted_transactions` `prediction` on((`prediction`.`id` = `fm`.`prediction_rule_id`))) left join `payroll_payslip_transaction_link_totals` `totals` on((`totals`.`payslip_id` = `ps`.`payslip_id`))) */;
+/*!50001 SET character_set_client      = @saved_cs_client */;
+/*!50001 SET character_set_results     = @saved_cs_results */;
+/*!50001 SET collation_connection      = @saved_col_connection */;
 /*!50001 DROP VIEW IF EXISTS `payroll_monthly_summary`*/;
 /*!50001 SET @saved_cs_client          = @@character_set_client */;
 /*!50001 SET @saved_cs_results         = @@character_set_results */;
@@ -1009,6 +1108,18 @@ CREATE TABLE `watcher_alerts` (
 /*!50001 SET collation_connection      = utf8mb4_general_ci */;
 /*!50001 CREATE ALGORITHM=UNDEFINED */
 /*!50001 VIEW `payroll_payslip_summary` AS select `p`.`id` AS `payslip_id`,`p`.`employment_id` AS `employment_id`,`e`.`person_id` AS `person_id`,`person`.`full_name` AS `person_name`,`p`.`pay_date` AS `pay_date`,date_format(`p`.`pay_date`,'%Y-%m-01') AS `month_start`,`p`.`tax_year_start` AS `tax_year_start`,concat(`p`.`tax_year_start`,'/',right((`p`.`tax_year_start` + 1),2)) AS `tax_year`,`p`.`tax_month` AS `tax_month`,`p`.`tax_code` AS `tax_code`,`p`.`annual_salary` AS `annual_salary`,`p`.`statement_total_earnings` AS `statement_total_earnings`,`p`.`statement_total_deductions` AS `statement_total_deductions`,`p`.`statement_net_pay` AS `statement_net_pay`,`p`.`statement_amount_paid` AS `statement_amount_paid`,`p`.`payment_method` AS `payment_method`,sum((case when (`c`.`name` = 'BASIC PAY') then `li`.`amount` else 0 end)) AS `basic_pay`,sum((case when (`c`.`name` = 'BENEFITS') then `li`.`amount` else 0 end)) AS `benefits`,sum((case when (`c`.`name` = 'PRE-TAX DEDUCTIONS') then `li`.`amount` else 0 end)) AS `pre_tax_deductions`,sum((case when (`c`.`name` = 'ADDITIONAL EARNINGS') then `li`.`amount` else 0 end)) AS `additional_earnings`,sum((case when (`c`.`name` = 'BONUS') then `li`.`amount` else 0 end)) AS `bonus`,sum((case when (`c`.`name` = 'PENSION') then `li`.`amount` else 0 end)) AS `pension`,sum((case when (`c`.`name` = 'TAXES') then `li`.`amount` else 0 end)) AS `taxes`,sum((case when (`c`.`name` = 'POST-TAX DEDUCTIONS') then `li`.`amount` else 0 end)) AS `post_tax_deductions`,sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) AS `total_gross`,sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 1)) then `li`.`amount` else 0 end)) AS `notional_pay`,sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) AS `calculated_cash_earnings`,coalesce(`p`.`statement_total_earnings`,sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end))) AS `cash_earnings`,sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) AS `calculated_total_deductions`,coalesce(`p`.`statement_total_deductions`,sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end))) AS `total_deductions`,(sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) - sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end))) AS `calculated_net_pay`,coalesce(`p`.`statement_net_pay`,(sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) - sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)))) AS `net_pay`,`p`.`statement_amount_paid` AS `amount_paid`,coalesce(`p`.`statement_amount_paid`,`p`.`statement_net_pay`,(sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) - sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)))) AS `settlement_amount`,(case when (`p`.`statement_amount_paid` is not null) then 'statement_amount_paid' when (`p`.`statement_net_pay` is not null) then 'statement_net_pay' else 'calculated_lines' end) AS `settlement_amount_source`,round((case when (sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) = 0) then 0 else ((sum((case when (`c`.`name` = 'TAXES') then `li`.`amount` else 0 end)) / sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end))) * 100) end),2) AS `tax_percentage`,count(`li`.`id`) AS `line_item_count`,sum((case when (coalesce(`li`.`is_notional`,0) = 1) then 1 else 0 end)) AS `notional_line_count` from (((((`payroll_payslips` `p` join `payroll_employments` `e` on((`e`.`id` = `p`.`employment_id`))) join `payroll_people` `person` on((`person`.`id` = `e`.`person_id`))) left join `payroll_line_items` `li` on((`li`.`payslip_id` = `p`.`id`))) left join `payroll_categories` `c` on((`c`.`id` = `li`.`category_id`))) left join `payroll_line_types` `lt` on((`lt`.`id` = `c`.`line_type_id`))) group by `p`.`id`,`p`.`employment_id`,`e`.`person_id`,`person`.`full_name`,`p`.`pay_date`,`p`.`tax_year_start`,`p`.`tax_month`,`p`.`tax_code`,`p`.`annual_salary`,`p`.`statement_total_earnings`,`p`.`statement_total_deductions`,`p`.`statement_net_pay`,`p`.`statement_amount_paid`,`p`.`payment_method` */;
+/*!50001 SET character_set_client      = @saved_cs_client */;
+/*!50001 SET character_set_results     = @saved_cs_results */;
+/*!50001 SET collation_connection      = @saved_col_connection */;
+/*!50001 DROP VIEW IF EXISTS `payroll_payslip_transaction_link_totals`*/;
+/*!50001 SET @saved_cs_client          = @@character_set_client */;
+/*!50001 SET @saved_cs_results         = @@character_set_results */;
+/*!50001 SET @saved_col_connection     = @@collation_connection */;
+/*!50001 SET character_set_client      = utf8mb4 */;
+/*!50001 SET character_set_results     = utf8mb4 */;
+/*!50001 SET collation_connection      = utf8mb4_general_ci */;
+/*!50001 CREATE ALGORITHM=UNDEFINED */
+/*!50001 VIEW `payroll_payslip_transaction_link_totals` AS select `l`.`payslip_id` AS `payslip_id`,count(0) AS `link_count`,sum(`l`.`matched_amount`) AS `linked_amount`,min(`t`.`date`) AS `first_transaction_date`,max(`t`.`date`) AS `last_transaction_date` from (`payroll_payslip_transaction_links` `l` join `transactions` `t` on((`t`.`id` = `l`.`transaction_id`))) group by `l`.`payslip_id` */;
 /*!50001 SET character_set_client      = @saved_cs_client */;
 /*!50001 SET character_set_results     = @saved_cs_results */;
 /*!50001 SET collation_connection      = @saved_col_connection */;
