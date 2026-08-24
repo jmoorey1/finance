@@ -57,6 +57,32 @@ if ($employment !== null) {
 include '../layout/header.php';
 ?>
 
+<style>
+    /*
+     * The shared application shell caps normal pages at 960px. Payroll history
+     * is a wide analytical table, so give this page enough desktop width to
+     * show every financial column and the actions together. On narrower
+     * screens Bootstrap's responsive table wrapper can still scroll normally.
+     */
+    body > .container {
+        max-width: 1500px;
+    }
+
+    .payroll-history-table th,
+    .payroll-history-table td {
+        vertical-align: middle;
+    }
+
+    .payroll-history-table .payroll-nowrap {
+        white-space: nowrap;
+    }
+
+    .payroll-history-table .payroll-actions {
+        min-width: 118px;
+        white-space: nowrap;
+    }
+</style>
+
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
 
     <div>
@@ -80,6 +106,15 @@ include '../layout/header.php';
         </p>
 
     </div>
+
+    <?php if ($employment !== null): ?>
+        <a
+            href="payroll_payslip_edit.php?employment_id=<?= (int)$employment['employment_id'] ?>"
+            class="btn btn-primary"
+        >
+            + Add payslip
+        </a>
+    <?php endif; ?>
 
 </div>
 
@@ -217,22 +252,22 @@ include '../layout/header.php';
 
     <div class="table-responsive">
 
-        <table class="table table-hover table-striped align-middle">
+        <table class="table table-hover table-striped table-sm align-middle payroll-history-table">
 
             <thead class="table-dark">
 
                 <tr>
                     <th>Date</th>
-                    <th>Tax period</th>
-                    <th>Tax code</th>
-                    <th class="text-end">Annual salary</th>
-                    <th class="text-end">Basic</th>
-                    <th class="text-end">Bonus</th>
-                    <th class="text-end">Gross</th>
-                    <th class="text-end">Tax</th>
-                    <th class="text-end">Pension</th>
-                    <th class="text-end">Net</th>
-                    <th></th>
+                    <th class="payroll-nowrap">Tax period</th>
+                    <th class="payroll-nowrap">Tax code</th>
+                    <th class="text-end payroll-nowrap">Annual salary</th>
+                    <th class="text-end payroll-nowrap">Basic</th>
+                    <th class="text-end payroll-nowrap">Bonus</th>
+                    <th class="text-end payroll-nowrap">Gross</th>
+                    <th class="text-end payroll-nowrap">Tax</th>
+                    <th class="text-end payroll-nowrap">Pension</th>
+                    <th class="text-end payroll-nowrap">Net</th>
+                    <th class="payroll-actions text-end"><span class="visually-hidden">Actions</span></th>
                 </tr>
 
             </thead>
@@ -264,14 +299,14 @@ include '../layout/header.php';
                             )->format('d M Y') ?>
                         </td>
 
-                        <td>
+                        <td class="payroll-nowrap">
                             <?= payroll_ui_h(
                                 $row['tax_year']
                             ) ?>
                             · M<?= (int)$row['tax_month'] ?>
                         </td>
 
-                        <td>
+                        <td class="payroll-nowrap">
                             <?= $row['tax_code']
                                 ? payroll_ui_h(
                                     $row['tax_code']
@@ -279,7 +314,7 @@ include '../layout/header.php';
                                 : '—' ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-nowrap">
                             <?= $row['annual_salary'] !== null
                                 ? payroll_ui_money(
                                     $row['annual_salary']
@@ -287,49 +322,56 @@ include '../layout/header.php';
                                 : '—' ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-nowrap">
                             <?= payroll_ui_money(
                                 $row['basic_pay']
                             ) ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-nowrap">
                             <?= payroll_ui_money(
                                 $row['bonus']
                             ) ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-nowrap">
                             <?= payroll_ui_money(
                                 $row['total_gross']
                             ) ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-nowrap">
                             <?= payroll_ui_money(
                                 $row['taxes']
                             ) ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-nowrap">
                             <?= payroll_ui_money(
                                 $row['pension']
                             ) ?>
                         </td>
 
-                        <td class="text-end fw-bold">
+                        <td class="text-end fw-bold payroll-nowrap">
                             <?= payroll_ui_money(
                                 $row['net_pay']
                             ) ?>
                         </td>
 
-                        <td class="text-end">
+                        <td class="text-end payroll-actions">
 
                             <a
                                 href="payroll_payslip.php?id=<?= (int)$row['payslip_id'] ?>"
                                 class="btn btn-sm btn-outline-secondary"
                             >
                                 Open
+                            </a>
+
+                            <a
+                                href="payroll_payslip_edit.php?id=<?= (int)$row['payslip_id'] ?>"
+                                class="btn btn-sm btn-outline-primary"
+                            >
+                                Edit
                             </a>
 
                         </td>
