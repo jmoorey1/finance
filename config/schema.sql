@@ -375,6 +375,7 @@ CREATE TABLE `payroll_line_items` (
   `description` varchar(150) NOT NULL,
   `amount` decimal(12,2) NOT NULL,
   `category_id` tinyint NOT NULL,
+  `is_notional` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 when the source payslip marks this line as shown but not paid',
   `legacy_line_item_id` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -383,7 +384,8 @@ CREATE TABLE `payroll_line_items` (
   KEY `idx_payroll_line_items_payslip` (`payslip_id`),
   KEY `idx_payroll_line_items_category` (`category_id`),
   CONSTRAINT `fk_payroll_line_items_category` FOREIGN KEY (`category_id`) REFERENCES `payroll_categories` (`id`),
-  CONSTRAINT `fk_payroll_line_items_payslip` FOREIGN KEY (`payslip_id`) REFERENCES `payroll_payslips` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_payroll_line_items_payslip` FOREIGN KEY (`payslip_id`) REFERENCES `payroll_payslips` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_payroll_line_items_is_notional` CHECK ((`is_notional` in (0,1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payroll_line_types`;
@@ -437,6 +439,11 @@ SET @saved_cs_client     = @@character_set_client;
  1 AS `tax_month`,
  1 AS `tax_code`,
  1 AS `annual_salary`,
+ 1 AS `statement_total_earnings`,
+ 1 AS `statement_total_deductions`,
+ 1 AS `statement_net_pay`,
+ 1 AS `statement_amount_paid`,
+ 1 AS `payment_method`,
  1 AS `basic_pay`,
  1 AS `benefits`,
  1 AS `pre_tax_deductions`,
@@ -446,10 +453,19 @@ SET @saved_cs_client     = @@character_set_client;
  1 AS `taxes`,
  1 AS `post_tax_deductions`,
  1 AS `total_gross`,
+ 1 AS `notional_pay`,
+ 1 AS `calculated_cash_earnings`,
+ 1 AS `cash_earnings`,
+ 1 AS `calculated_total_deductions`,
  1 AS `total_deductions`,
+ 1 AS `calculated_net_pay`,
  1 AS `net_pay`,
+ 1 AS `amount_paid`,
+ 1 AS `settlement_amount`,
+ 1 AS `settlement_amount_source`,
  1 AS `tax_percentage`,
- 1 AS `line_item_count`*/;
+ 1 AS `line_item_count`,
+ 1 AS `notional_line_count`*/;
 SET character_set_client = @saved_cs_client;
 DROP TABLE IF EXISTS `payroll_payslips`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -460,6 +476,11 @@ CREATE TABLE `payroll_payslips` (
   `pay_date` date NOT NULL,
   `tax_code` varchar(20) DEFAULT NULL,
   `annual_salary` decimal(12,2) DEFAULT NULL,
+  `statement_total_earnings` decimal(12,2) DEFAULT NULL COMMENT 'Total Earnings printed on the source payslip',
+  `statement_total_deductions` decimal(12,2) DEFAULT NULL COMMENT 'Total Deductions printed on the source payslip, preserving its sign',
+  `statement_net_pay` decimal(12,2) DEFAULT NULL COMMENT 'Net Pay printed on the source payslip',
+  `statement_amount_paid` decimal(12,2) DEFAULT NULL COMMENT 'Amount Paid printed on the source payslip; authoritative cash settlement when captured',
+  `payment_method` varchar(30) DEFAULT NULL COMMENT 'Payment method printed on the source payslip, e.g. Bacs or Cheque',
   `tax_year_start` smallint GENERATED ALWAYS AS ((year((`pay_date` - interval 5 day)) - if((month((`pay_date` - interval 5 day)) < 4),1,0))) STORED,
   `tax_month` tinyint GENERATED ALWAYS AS ((((month((`pay_date` - interval 5 day)) + 8) % 12) + 1)) STORED,
   `legacy_payslip_id` int DEFAULT NULL,
@@ -470,7 +491,8 @@ CREATE TABLE `payroll_payslips` (
   UNIQUE KEY `uq_payroll_payslips_legacy_id` (`legacy_payslip_id`),
   KEY `idx_payroll_payslips_employment_date` (`employment_id`,`pay_date`,`id`),
   KEY `idx_payroll_payslips_tax_period` (`employment_id`,`tax_year_start`,`tax_month`),
-  CONSTRAINT `fk_payroll_payslips_employment` FOREIGN KEY (`employment_id`) REFERENCES `payroll_employments` (`id`)
+  CONSTRAINT `fk_payroll_payslips_employment` FOREIGN KEY (`employment_id`) REFERENCES `payroll_employments` (`id`),
+  CONSTRAINT `chk_payroll_payslips_statement_arithmetic` CHECK (((`statement_total_earnings` is null) or (`statement_total_deductions` is null) or (`statement_net_pay` is null) or (`statement_net_pay` = (`statement_total_earnings` - `statement_total_deductions`))))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `payroll_people`;
@@ -986,7 +1008,7 @@ CREATE TABLE `watcher_alerts` (
 /*!50001 SET character_set_results     = utf8mb4 */;
 /*!50001 SET collation_connection      = utf8mb4_general_ci */;
 /*!50001 CREATE ALGORITHM=UNDEFINED */
-/*!50001 VIEW `payroll_payslip_summary` AS select `p`.`id` AS `payslip_id`,`p`.`employment_id` AS `employment_id`,`e`.`person_id` AS `person_id`,`person`.`full_name` AS `person_name`,`p`.`pay_date` AS `pay_date`,date_format(`p`.`pay_date`,'%Y-%m-01') AS `month_start`,`p`.`tax_year_start` AS `tax_year_start`,concat(`p`.`tax_year_start`,'/',right((`p`.`tax_year_start` + 1),2)) AS `tax_year`,`p`.`tax_month` AS `tax_month`,`p`.`tax_code` AS `tax_code`,`p`.`annual_salary` AS `annual_salary`,sum((case when (`c`.`name` = 'BASIC PAY') then `li`.`amount` else 0 end)) AS `basic_pay`,sum((case when (`c`.`name` = 'BENEFITS') then `li`.`amount` else 0 end)) AS `benefits`,sum((case when (`c`.`name` = 'PRE-TAX DEDUCTIONS') then `li`.`amount` else 0 end)) AS `pre_tax_deductions`,sum((case when (`c`.`name` = 'ADDITIONAL EARNINGS') then `li`.`amount` else 0 end)) AS `additional_earnings`,sum((case when (`c`.`name` = 'BONUS') then `li`.`amount` else 0 end)) AS `bonus`,sum((case when (`c`.`name` = 'PENSION') then `li`.`amount` else 0 end)) AS `pension`,sum((case when (`c`.`name` = 'TAXES') then `li`.`amount` else 0 end)) AS `taxes`,sum((case when (`c`.`name` = 'POST-TAX DEDUCTIONS') then `li`.`amount` else 0 end)) AS `post_tax_deductions`,sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) AS `total_gross`,sum((case when (`lt`.`name` = 'Deduction') then `li`.`amount` else 0 end)) AS `total_deductions`,(sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) - sum((case when (`lt`.`name` = 'Deduction') then `li`.`amount` else 0 end))) AS `net_pay`,round((case when (sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) = 0) then 0 else ((sum((case when (`c`.`name` = 'TAXES') then `li`.`amount` else 0 end)) / sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end))) * 100) end),2) AS `tax_percentage`,count(`li`.`id`) AS `line_item_count` from (((((`payroll_payslips` `p` join `payroll_employments` `e` on((`e`.`id` = `p`.`employment_id`))) join `payroll_people` `person` on((`person`.`id` = `e`.`person_id`))) left join `payroll_line_items` `li` on((`li`.`payslip_id` = `p`.`id`))) left join `payroll_categories` `c` on((`c`.`id` = `li`.`category_id`))) left join `payroll_line_types` `lt` on((`lt`.`id` = `c`.`line_type_id`))) group by `p`.`id`,`p`.`employment_id`,`e`.`person_id`,`person`.`full_name`,`p`.`pay_date`,`p`.`tax_year_start`,`p`.`tax_month`,`p`.`tax_code`,`p`.`annual_salary` */;
+/*!50001 VIEW `payroll_payslip_summary` AS select `p`.`id` AS `payslip_id`,`p`.`employment_id` AS `employment_id`,`e`.`person_id` AS `person_id`,`person`.`full_name` AS `person_name`,`p`.`pay_date` AS `pay_date`,date_format(`p`.`pay_date`,'%Y-%m-01') AS `month_start`,`p`.`tax_year_start` AS `tax_year_start`,concat(`p`.`tax_year_start`,'/',right((`p`.`tax_year_start` + 1),2)) AS `tax_year`,`p`.`tax_month` AS `tax_month`,`p`.`tax_code` AS `tax_code`,`p`.`annual_salary` AS `annual_salary`,`p`.`statement_total_earnings` AS `statement_total_earnings`,`p`.`statement_total_deductions` AS `statement_total_deductions`,`p`.`statement_net_pay` AS `statement_net_pay`,`p`.`statement_amount_paid` AS `statement_amount_paid`,`p`.`payment_method` AS `payment_method`,sum((case when (`c`.`name` = 'BASIC PAY') then `li`.`amount` else 0 end)) AS `basic_pay`,sum((case when (`c`.`name` = 'BENEFITS') then `li`.`amount` else 0 end)) AS `benefits`,sum((case when (`c`.`name` = 'PRE-TAX DEDUCTIONS') then `li`.`amount` else 0 end)) AS `pre_tax_deductions`,sum((case when (`c`.`name` = 'ADDITIONAL EARNINGS') then `li`.`amount` else 0 end)) AS `additional_earnings`,sum((case when (`c`.`name` = 'BONUS') then `li`.`amount` else 0 end)) AS `bonus`,sum((case when (`c`.`name` = 'PENSION') then `li`.`amount` else 0 end)) AS `pension`,sum((case when (`c`.`name` = 'TAXES') then `li`.`amount` else 0 end)) AS `taxes`,sum((case when (`c`.`name` = 'POST-TAX DEDUCTIONS') then `li`.`amount` else 0 end)) AS `post_tax_deductions`,sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) AS `total_gross`,sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 1)) then `li`.`amount` else 0 end)) AS `notional_pay`,sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) AS `calculated_cash_earnings`,coalesce(`p`.`statement_total_earnings`,sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end))) AS `cash_earnings`,sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) AS `calculated_total_deductions`,coalesce(`p`.`statement_total_deductions`,sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end))) AS `total_deductions`,(sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) - sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end))) AS `calculated_net_pay`,coalesce(`p`.`statement_net_pay`,(sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) - sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)))) AS `net_pay`,`p`.`statement_amount_paid` AS `amount_paid`,coalesce(`p`.`statement_amount_paid`,`p`.`statement_net_pay`,(sum((case when ((`lt`.`name` = 'Pay') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)) - sum((case when ((`lt`.`name` = 'Deduction') and (coalesce(`li`.`is_notional`,0) = 0)) then `li`.`amount` else 0 end)))) AS `settlement_amount`,(case when (`p`.`statement_amount_paid` is not null) then 'statement_amount_paid' when (`p`.`statement_net_pay` is not null) then 'statement_net_pay' else 'calculated_lines' end) AS `settlement_amount_source`,round((case when (sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end)) = 0) then 0 else ((sum((case when (`c`.`name` = 'TAXES') then `li`.`amount` else 0 end)) / sum((case when (`lt`.`name` = 'Pay') then `li`.`amount` else 0 end))) * 100) end),2) AS `tax_percentage`,count(`li`.`id`) AS `line_item_count`,sum((case when (coalesce(`li`.`is_notional`,0) = 1) then 1 else 0 end)) AS `notional_line_count` from (((((`payroll_payslips` `p` join `payroll_employments` `e` on((`e`.`id` = `p`.`employment_id`))) join `payroll_people` `person` on((`person`.`id` = `e`.`person_id`))) left join `payroll_line_items` `li` on((`li`.`payslip_id` = `p`.`id`))) left join `payroll_categories` `c` on((`c`.`id` = `li`.`category_id`))) left join `payroll_line_types` `lt` on((`lt`.`id` = `c`.`line_type_id`))) group by `p`.`id`,`p`.`employment_id`,`e`.`person_id`,`person`.`full_name`,`p`.`pay_date`,`p`.`tax_year_start`,`p`.`tax_month`,`p`.`tax_code`,`p`.`annual_salary`,`p`.`statement_total_earnings`,`p`.`statement_total_deductions`,`p`.`statement_net_pay`,`p`.`statement_amount_paid`,`p`.`payment_method` */;
 /*!50001 SET character_set_client      = @saved_cs_client */;
 /*!50001 SET character_set_results     = @saved_cs_results */;
 /*!50001 SET collation_connection      = @saved_col_connection */;

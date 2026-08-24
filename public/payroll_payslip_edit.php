@@ -21,6 +21,11 @@ $formHeader = [
     'pay_date' => date('Y-m-d'),
     'tax_code' => '',
     'annual_salary' => '',
+    'statement_total_earnings' => '',
+    'statement_total_deductions' => '',
+    'statement_net_pay' => '',
+    'statement_amount_paid' => '',
+    'payment_method' => '',
 ];
 
 $formLines = [];
@@ -43,6 +48,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'pay_date' => (string)($_POST['pay_date'] ?? ''),
         'tax_code' => (string)($_POST['tax_code'] ?? ''),
         'annual_salary' => (string)($_POST['annual_salary'] ?? ''),
+        'statement_total_earnings' => (string)($_POST['statement_total_earnings'] ?? ''),
+        'statement_total_deductions' => (string)($_POST['statement_total_deductions'] ?? ''),
+        'statement_net_pay' => (string)($_POST['statement_net_pay'] ?? ''),
+        'statement_amount_paid' => (string)($_POST['statement_amount_paid'] ?? ''),
+        'payment_method' => (string)($_POST['payment_method'] ?? ''),
     ];
 
     $postedLines = $_POST['lines'] ?? [];
@@ -115,6 +125,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'pay_date' => (string)$header['pay_date'],
                 'tax_code' => (string)($header['tax_code'] ?? ''),
                 'annual_salary' => (string)($header['annual_salary'] ?? ''),
+                'statement_total_earnings' => (string)($header['statement_total_earnings'] ?? ''),
+                'statement_total_deductions' => (string)($header['statement_total_deductions'] ?? ''),
+                'statement_net_pay' => (string)($header['statement_net_pay'] ?? ''),
+                'statement_amount_paid' => (string)($header['statement_amount_paid'] ?? ''),
+                'payment_method' => (string)($header['payment_method'] ?? ''),
             ];
 
             $formLines = payroll_write_get_lines(
@@ -404,6 +419,174 @@ include '../layout/header.php';
 
             </div>
 
+            <div class="card mb-4 border-info">
+
+                <div class="card-header">
+                    <strong>Statement totals &amp; settlement</strong>
+                </div>
+
+                <div class="card-body">
+
+                    <div class="alert alert-info py-2">
+                        Copy these values exactly as printed on the payslip.
+                        Deductions preserve their printed sign: an RSU-only
+                        statement can show <strong>£0.00 earnings</strong>,
+                        <strong>-£724.32 deductions</strong> and
+                        <strong>£724.32 net pay</strong>.
+                        Amount Paid is recorded separately because it is the
+                        authoritative cash-settlement value for future
+                        Payroll ↔ Finance linkage.
+                    </div>
+
+                    <div class="row g-3">
+
+                        <div class="col-md-3">
+
+                            <label
+                                for="statement_total_earnings"
+                                class="form-label"
+                            >
+                                Total earnings
+                            </label>
+
+                            <div class="input-group">
+
+                                <span class="input-group-text">£</span>
+
+                                <input
+                                    type="number"
+                                    name="statement_total_earnings"
+                                    id="statement_total_earnings"
+                                    class="form-control"
+                                    step="0.01"
+                                    value="<?= payroll_ui_h(
+                                        $formHeader['statement_total_earnings']
+                                    ) ?>"
+                                >
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-3">
+
+                            <label
+                                for="statement_total_deductions"
+                                class="form-label"
+                            >
+                                Total deductions
+                            </label>
+
+                            <div class="input-group">
+
+                                <span class="input-group-text">£</span>
+
+                                <input
+                                    type="number"
+                                    name="statement_total_deductions"
+                                    id="statement_total_deductions"
+                                    class="form-control"
+                                    step="0.01"
+                                    value="<?= payroll_ui_h(
+                                        $formHeader['statement_total_deductions']
+                                    ) ?>"
+                                >
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-3">
+
+                            <label
+                                for="statement_net_pay"
+                                class="form-label"
+                            >
+                                Net pay
+                            </label>
+
+                            <div class="input-group">
+
+                                <span class="input-group-text">£</span>
+
+                                <input
+                                    type="number"
+                                    name="statement_net_pay"
+                                    id="statement_net_pay"
+                                    class="form-control"
+                                    step="0.01"
+                                    value="<?= payroll_ui_h(
+                                        $formHeader['statement_net_pay']
+                                    ) ?>"
+                                >
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-3">
+
+                            <label
+                                for="statement_amount_paid"
+                                class="form-label"
+                            >
+                                Amount paid
+                            </label>
+
+                            <div class="input-group">
+
+                                <span class="input-group-text">£</span>
+
+                                <input
+                                    type="number"
+                                    name="statement_amount_paid"
+                                    id="statement_amount_paid"
+                                    class="form-control"
+                                    step="0.01"
+                                    value="<?= payroll_ui_h(
+                                        $formHeader['statement_amount_paid']
+                                    ) ?>"
+                                >
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-4">
+
+                            <label
+                                for="payment_method"
+                                class="form-label"
+                            >
+                                Payment method
+                            </label>
+
+                            <input
+                                type="text"
+                                name="payment_method"
+                                id="payment_method"
+                                class="form-control"
+                                maxlength="30"
+                                placeholder="e.g. Bacs, Cheque"
+                                value="<?= payroll_ui_h(
+                                    $formHeader['payment_method']
+                                ) ?>"
+                            >
+
+                        </div>
+
+                    </div>
+
+                    <div class="small text-muted mt-3">
+                        Leave these fields blank on a legacy record if the
+                        original statement has not been checked. Existing
+                        line-derived values remain available as a fallback.
+                    </div>
+
+                </div>
+
+            </div>
+
             <div class="card mb-4">
 
                 <div class="card-header d-flex justify-content-between align-items-center gap-3">
@@ -413,7 +596,10 @@ include '../layout/header.php';
                         <div class="small text-muted">
                             Enter amounts as shown on the payslip.
                             The selected category determines whether
-                            a line is Pay or Deduction.
+                            a line is Pay or Deduction. Tick
+                            <strong>Notional</strong> when the source
+                            statement marks an item with * and states
+                            that the item has been shown but not paid.
                         </div>
                     </div>
 
@@ -437,6 +623,7 @@ include '../layout/header.php';
                                 <th style="min-width: 130px;">Code</th>
                                 <th style="min-width: 220px;">Description</th>
                                 <th style="min-width: 130px;" class="text-end">Amount</th>
+                                <th style="min-width: 100px;">Notional</th>
                                 <th style="min-width: 100px;">Remove</th>
                             </tr>
                         </thead>
@@ -532,6 +719,32 @@ include '../layout/header.php';
                                             required
                                         >
                                     </div>
+                                </td>
+
+                                <td>
+
+                                    <div class="form-check">
+
+                                        <input
+                                            class="form-check-input"
+                                            type="checkbox"
+                                            name="lines[<?= $index ?>][is_notional]"
+                                            value="1"
+                                            id="notional-line-<?= $index ?>"
+                                            <?= !empty($line['is_notional'])
+                                                ? 'checked'
+                                                : '' ?>
+                                        >
+
+                                        <label
+                                            class="form-check-label"
+                                            for="notional-line-<?= $index ?>"
+                                        >
+                                            Notional
+                                        </label>
+
+                                    </div>
+
                                 </td>
 
                                 <td>
@@ -678,6 +891,29 @@ include '../layout/header.php';
                             required
                         >
                     </div>
+                </td>
+
+                <td>
+
+                    <div class="form-check">
+
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            name="lines[__INDEX__][is_notional]"
+                            value="1"
+                            id="notional-line-__INDEX__"
+                        >
+
+                        <label
+                            class="form-check-label"
+                            for="notional-line-__INDEX__"
+                        >
+                            Notional
+                        </label>
+
+                    </div>
+
                 </td>
 
                 <td>

@@ -146,11 +146,11 @@ include '../layout/header.php';
             <div class="card h-100">
                 <div class="card-body">
                     <div class="text-muted small">
-                        Gross
+                        Cash earnings
                     </div>
                     <div class="fw-bold">
                         <?= payroll_ui_money(
-                            $payslip['total_gross']
+                            $payslip['cash_earnings']
                         ) ?>
                     </div>
                 </div>
@@ -254,6 +254,7 @@ include '../layout/header.php';
                                 <th>Category</th>
                                 <th>Code</th>
                                 <th>Description</th>
+                                <th>Notional</th>
                                 <th class="text-end">
                                     Amount
                                 </th>
@@ -299,6 +300,16 @@ include '../layout/header.php';
                                     <?= payroll_ui_h(
                                         $line['description']
                                     ) ?>
+                                </td>
+
+                                <td>
+                                    <?php if ((int)$line['is_notional'] === 1): ?>
+                                        <span class="badge bg-warning text-dark">
+                                            Notional
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="text-muted">—</span>
+                                    <?php endif; ?>
                                 </td>
 
                                 <td class="text-end fw-bold">
@@ -355,6 +366,80 @@ include '../layout/header.php';
                                     $payslip['tax_code']
                                 )
                                 : '—' ?>
+                        </dd>
+
+                        <dt class="col-6">
+                            Statement earnings
+                        </dt>
+
+                        <dd class="col-6 text-end">
+                            <?= $payslip['statement_total_earnings'] !== null
+                                ? payroll_ui_money(
+                                    $payslip['statement_total_earnings']
+                                )
+                                : '—' ?>
+                        </dd>
+
+                        <dt class="col-6">
+                            Statement deductions
+                        </dt>
+
+                        <dd class="col-6 text-end">
+                            <?= $payslip['statement_total_deductions'] !== null
+                                ? payroll_ui_money(
+                                    $payslip['statement_total_deductions']
+                                )
+                                : '—' ?>
+                        </dd>
+
+                        <dt class="col-6">
+                            Statement net pay
+                        </dt>
+
+                        <dd class="col-6 text-end">
+                            <?= $payslip['statement_net_pay'] !== null
+                                ? payroll_ui_money(
+                                    $payslip['statement_net_pay']
+                                )
+                                : '—' ?>
+                        </dd>
+
+                        <dt class="col-6">
+                            Amount paid
+                        </dt>
+
+                        <dd class="col-6 text-end fw-bold">
+                            <?= $payslip['amount_paid'] !== null
+                                ? payroll_ui_money(
+                                    $payslip['amount_paid']
+                                )
+                                : '—' ?>
+                        </dd>
+
+                        <dt class="col-6">
+                            Payment method
+                        </dt>
+
+                        <dd class="col-6 text-end">
+                            <?= $payslip['payment_method']
+                                ? payroll_ui_h(
+                                    $payslip['payment_method']
+                                )
+                                : '—' ?>
+                        </dd>
+
+                        <dt class="col-6">
+                            Settlement basis
+                        </dt>
+
+                        <dd class="col-6 text-end">
+                            <?= match (
+                                (string)$payslip['settlement_amount_source']
+                            ) {
+                                'statement_amount_paid' => 'Amount paid',
+                                'statement_net_pay' => 'Statement net pay',
+                                default => 'Calculated lines',
+                            } ?>
                         </dd>
 
                         <dt class="col-6">

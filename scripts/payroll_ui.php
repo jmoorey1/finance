@@ -289,6 +289,7 @@ function payroll_ui_get_payslip_lines(
             li.code,
             li.description,
             li.amount,
+            li.is_notional,
             c.id AS category_id,
             c.name AS category_name,
             c.display_order,
