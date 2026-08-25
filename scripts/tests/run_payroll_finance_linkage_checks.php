@@ -83,6 +83,12 @@ function payroll_finance_test_money(
     }
 }
 
+/*
+ * --------------------------------------------------------------------------
+ * Governed object checks
+ * --------------------------------------------------------------------------
+ */
+
 foreach (
     [
         'payroll_finance_mappings',
@@ -132,6 +138,30 @@ foreach (
     );
 }
 
+/*
+ * --------------------------------------------------------------------------
+ * Permanent-state snapshots
+ * --------------------------------------------------------------------------
+ */
+
+$beforePeople =
+    payroll_finance_test_count(
+        $pdo,
+        "
+        SELECT COUNT(*)
+        FROM payroll_people
+        "
+    );
+
+$beforeEmployments =
+    payroll_finance_test_count(
+        $pdo,
+        "
+        SELECT COUNT(*)
+        FROM payroll_employments
+        "
+    );
+
 $beforePayslips =
     payroll_finance_test_count(
         $pdo,
@@ -177,32 +207,13 @@ $beforeLinks =
         "
     );
 
-$employment =
-    $pdo->query("
-        SELECT
-            e.id AS employment_id
-        FROM payroll_employments e
-        JOIN payroll_payslips p
-          ON p.employment_id = e.id
-        GROUP BY e.id
-        ORDER BY
-            MAX(p.pay_date) DESC,
-            e.id
-        LIMIT 1
-    ")->fetch(
-        PDO::FETCH_ASSOC
-    );
-
-if (!$employment) {
-    payroll_finance_test_fail(
-        'A payroll employment is required for regression testing.'
-    );
-}
-
-$employmentId =
-    (int)$employment[
-        'employment_id'
-    ];
+/*
+ * Finance supporting data can come from permanent reference/config rows.
+ *
+ * The Payroll person/employment itself must NOT be borrowed from live data:
+ * doing so makes this regression dependent on the user's real mapping and
+ * existing transaction links.
+ */
 
 $account =
     $pdo->query("
@@ -230,7 +241,9 @@ if (!$account) {
 }
 
 $accountId =
-    (int)$account['id'];
+    (int)$account[
+        'id'
+    ];
 
 $incomeCategory =
     $pdo->query("
@@ -263,8 +276,13 @@ foreach (
     as $category
 ) {
     $payrollCategoryIds[
-        (string)$category['name']
-    ] = (int)$category['id'];
+        (string)$category[
+            'name'
+        ]
+    ] =
+        (int)$category[
+            'id'
+        ];
 }
 
 foreach (
@@ -287,11 +305,67 @@ foreach (
 $testDate =
     '2035-01-31';
 
-$transactionStarted = false;
+$transactionStarted =
+    false;
 
 try {
     $pdo->beginTransaction();
-    $transactionStarted = true;
+    $transactionStarted =
+        true;
+
+    /*
+     * Create a fully synthetic Payroll identity/employment.
+     *
+     * This is the key isolation fix: no real John/India mapping is read,
+     * overwritten, or constrained by the regression test.
+     */
+    $stmt =
+        $pdo->prepare("
+            INSERT INTO payroll_people (
+                full_name
+            ) VALUES (
+                ?
+            )
+        ");
+
+    $stmt->execute([
+        'Payroll Finance Link Regression Person',
+    ]);
+
+    $personId =
+        (int)$pdo->lastInsertId();
+
+    payroll_finance_test_assert(
+        $personId > 0,
+        'Synthetic Payroll person must be created.'
+    );
+
+    $stmt =
+        $pdo->prepare("
+            INSERT INTO payroll_employments (
+                person_id,
+                employer_name,
+                employee_number,
+                status
+            ) VALUES (
+                ?,
+                'Payroll Finance Regression Employer',
+                'FIN-LINK-TEST',
+                'active'
+            )
+        ");
+
+    $stmt->execute([
+        $personId,
+    ]);
+
+    $employmentId =
+        (int)$pdo->lastInsertId();
+
+    payroll_finance_test_assert(
+        $employmentId > 0,
+        'Synthetic Payroll employment must be created.'
+    );
 
     $mapping =
         payroll_finance_validate_mapping(
@@ -362,7 +436,8 @@ try {
             $pdo,
             [
                 [
-                    'id' => 0,
+                    'id' =>
+                        0,
 
                     'category_id' =>
                         $payrollCategoryIds[
@@ -383,7 +458,8 @@ try {
                 ],
 
                 [
-                    'id' => 0,
+                    'id' =>
+                        0,
 
                     'category_id' =>
                         $payrollCategoryIds[
@@ -415,21 +491,35 @@ try {
             false
         );
 
-    $stmt = $pdo->prepare("
-        INSERT INTO transactions (
-            account_id,
-            date,
-            description,
-            amount,
-            type,
-            cleared,
-            category_id,
-            predicted_transaction_id,
-            reconciled
-        ) VALUES (
-            ?, ?, ?, ?, 'deposit', 1, ?, NULL, 0
-        )
-    ");
+    payroll_finance_test_assert(
+        $payslipId > 0,
+        'Synthetic payslip must be created.'
+    );
+
+    $stmt =
+        $pdo->prepare("
+            INSERT INTO transactions (
+                account_id,
+                date,
+                description,
+                amount,
+                type,
+                cleared,
+                category_id,
+                predicted_transaction_id,
+                reconciled
+            ) VALUES (
+                ?,
+                ?,
+                ?,
+                ?,
+                'deposit',
+                1,
+                ?,
+                NULL,
+                0
+            )
+        ");
 
     $stmt->execute([
         $accountId,
@@ -441,6 +531,11 @@ try {
 
     $transactionId =
         (int)$pdo->lastInsertId();
+
+    payroll_finance_test_assert(
+        $transactionId > 0,
+        'Synthetic Finance transaction must be created.'
+    );
 
     $transactionBeforeStmt =
         $pdo->prepare("
@@ -510,14 +605,17 @@ try {
             $payslipId
         );
 
-    $candidate = null;
+    $candidate =
+        null;
 
     foreach (
         $candidates
         as $row
     ) {
         if (
-            (int)$row['id']
+            (int)$row[
+                'id'
+            ]
             === $transactionId
         ) {
             $candidate =
@@ -617,7 +715,8 @@ try {
         'Creating a Payroll Finance link must not alter the bank transaction.'
     );
 
-    $duplicateBlocked = false;
+    $duplicateBlocked =
+        false;
 
     try {
         payroll_finance_link_transaction(
@@ -626,8 +725,10 @@ try {
             $transactionId,
             false
         );
+
     } catch (RuntimeException $e) {
-        $duplicateBlocked = true;
+        $duplicateBlocked =
+            true;
     }
 
     payroll_finance_test_assert(
@@ -658,11 +759,12 @@ try {
     /*
      * Explicit 2020 scope guardrail.
      */
-    $stmt = $pdo->prepare("
-        UPDATE payroll_payslips
-        SET pay_date = '2019-12-31'
-        WHERE id = ?
-    ");
+    $stmt =
+        $pdo->prepare("
+            UPDATE payroll_payslips
+            SET pay_date = '2019-12-31'
+            WHERE id = ?
+        ");
 
     $stmt->execute([
         $payslipId,
@@ -690,7 +792,8 @@ try {
     );
 
     $pdo->rollBack();
-    $transactionStarted = false;
+    $transactionStarted =
+        false;
 
 } catch (Throwable $e) {
     if (
@@ -709,6 +812,30 @@ try {
 
     exit(1);
 }
+
+/*
+ * --------------------------------------------------------------------------
+ * Rollback validation
+ * --------------------------------------------------------------------------
+ */
+
+$afterPeople =
+    payroll_finance_test_count(
+        $pdo,
+        "
+        SELECT COUNT(*)
+        FROM payroll_people
+        "
+    );
+
+$afterEmployments =
+    payroll_finance_test_count(
+        $pdo,
+        "
+        SELECT COUNT(*)
+        FROM payroll_employments
+        "
+    );
 
 $afterPayslips =
     payroll_finance_test_count(
@@ -756,29 +883,52 @@ $afterLinks =
     );
 
 payroll_finance_test_assert(
-    $afterPayslips === $beforePayslips,
+    $afterPeople
+    === $beforePeople,
+    'Regression test must roll back its synthetic Payroll person.'
+);
+
+payroll_finance_test_assert(
+    $afterEmployments
+    === $beforeEmployments,
+    'Regression test must roll back its synthetic Payroll employment.'
+);
+
+payroll_finance_test_assert(
+    $afterPayslips
+    === $beforePayslips,
     'Regression test must roll back its synthetic payslip.'
 );
 
 payroll_finance_test_assert(
-    $afterLines === $beforeLines,
+    $afterLines
+    === $beforeLines,
     'Regression test must roll back its synthetic payroll lines.'
 );
 
 payroll_finance_test_assert(
-    $afterTransactions === $beforeTransactions,
+    $afterTransactions
+    === $beforeTransactions,
     'Regression test must roll back its synthetic transaction.'
 );
 
 payroll_finance_test_assert(
-    $afterMappings === $beforeMappings,
+    $afterMappings
+    === $beforeMappings,
     'Regression test must roll back its temporary Finance mapping.'
 );
 
 payroll_finance_test_assert(
-    $afterLinks === $beforeLinks,
+    $afterLinks
+    === $beforeLinks,
     'Regression test must roll back its temporary Payroll Finance link.'
 );
+
+/*
+ * --------------------------------------------------------------------------
+ * UI/source assertions
+ * --------------------------------------------------------------------------
+ */
 
 $detailSource =
     file_get_contents(
@@ -815,6 +965,7 @@ payroll_finance_test_assert(
 );
 
 echo "Payroll Finance linkage checks passed.\n";
+echo "Synthetic employment isolation: verified.\n";
 echo "Employment Finance mapping: verified.\n";
 echo "Exact same-day candidate discovery: verified.\n";
 echo "Persistent link / unlink path: verified.\n";
