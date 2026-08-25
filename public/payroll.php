@@ -62,45 +62,76 @@ include '../layout/header.php';
     </div>
 
     <?php if (count($employments) > 0): ?>
-        <form method="get" class="d-flex align-items-end gap-2">
-            <div>
-                <label
-                    for="employment_id"
-                    class="form-label small text-muted mb-1"
-                >
-                    Employee
-                </label>
 
-                <select
-                    name="employment_id"
-                    id="employment_id"
-                    class="form-select"
-                    onchange="this.form.submit()"
-                >
-                    <?php foreach ($employments as $option): ?>
-                        <option
-                            value="<?= (int)$option['employment_id'] ?>"
-                            <?= $employment
-                                && (int)$option['employment_id']
-                                === (int)$employment['employment_id']
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            <?= payroll_ui_h($option['full_name']) ?>
-                            <?= !empty($option['employee_number'])
-                                ? ' · ' . payroll_ui_h($option['employee_number'])
-                                : '' ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
+        <div class="d-flex flex-wrap align-items-end gap-2">
 
-            <noscript>
-                <button class="btn btn-primary" type="submit">
-                    Go
-                </button>
-            </noscript>
-        </form>
+            <?php if ($employment !== null): ?>
+
+                <a
+                    class="btn btn-outline-primary"
+                    href="payroll_reporting.php?employment_id=<?= (int)$employment['employment_id'] ?>"
+                >
+                    📈 Reporting
+                </a>
+
+            <?php endif; ?>
+
+            <form
+                method="get"
+                class="d-flex align-items-end gap-2"
+            >
+
+                <div>
+
+                    <label
+                        for="employment_id"
+                        class="form-label small text-muted mb-1"
+                    >
+                        Employee
+                    </label>
+
+                    <select
+                        name="employment_id"
+                        id="employment_id"
+                        class="form-select"
+                        onchange="this.form.submit()"
+                    >
+
+                        <?php foreach ($employments as $option): ?>
+
+                            <option
+                                value="<?= (int)$option['employment_id'] ?>"
+                                <?= $employment
+                                    && (int)$option['employment_id']
+                                    === (int)$employment['employment_id']
+                                    ? 'selected'
+                                    : '' ?>
+                            >
+                                <?= payroll_ui_h($option['full_name']) ?>
+                                <?= !empty($option['employee_number'])
+                                    ? ' · ' . payroll_ui_h($option['employee_number'])
+                                    : '' ?>
+                            </option>
+
+                        <?php endforeach; ?>
+
+                    </select>
+
+                </div>
+
+                <noscript>
+                    <button
+                        class="btn btn-primary"
+                        type="submit"
+                    >
+                        Go
+                    </button>
+                </noscript>
+
+            </form>
+
+        </div>
+
     <?php endif; ?>
 </div>
 
