@@ -149,6 +149,20 @@ include '../layout/header.php';
         <div class="d-flex flex-wrap gap-2">
 
             <a
+                class="btn btn-primary"
+                href="payroll_payslip_edit.php?id=<?= $payslipId ?>"
+            >
+                Edit payslip
+            </a>
+
+            <a
+                class="btn btn-outline-primary"
+                href="payroll_payslip_edit.php?copy_from=<?= $payslipId ?>"
+            >
+                Copy payslip
+            </a>
+
+            <a
                 class="btn btn-outline-primary"
                 href="payroll_finance_settings.php?employment_id=<?= $employmentId ?>"
             >

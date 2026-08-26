@@ -3,6 +3,7 @@
 require_once '../config/db.php';
 require_once '../scripts/payroll_ui.php';
 require_once '../scripts/payroll_write.php';
+require_once '../scripts/payroll_copy.php';
 
 $employments = payroll_ui_get_employments($pdo);
 $categories = payroll_write_get_categories($pdo);
@@ -11,6 +12,10 @@ $error = null;
 $payslipId = null;
 $isNew = true;
 $notFound = false;
+
+$copySourcePayslipId = null;
+$copySourcePayDate = null;
+$isCopy = false;
 
 $savedState = $_SERVER['REQUEST_METHOD'] === 'GET'
     ? (string)($_GET['saved'] ?? '')
@@ -41,6 +46,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $isNew = true;
     } else {
         $error = 'Invalid payslip form submission.';
+    }
+
+    $postedCopySourceId =
+        (int)(
+            $_POST[
+                'copy_source_payslip_id'
+            ]
+            ?? 0
+        );
+
+    if (
+        $isNew
+        && $postedCopySourceId > 0
+    ) {
+        $copySourcePayslipId =
+            $postedCopySourceId;
+
+        $copySourceHeader =
+            payroll_write_get_header(
+                $pdo,
+                $copySourcePayslipId
+            );
+
+        if ($copySourceHeader !== null) {
+            $copySourcePayDate =
+                (string)$copySourceHeader[
+                    'pay_date'
+                ];
+        }
+
+        $isCopy = true;
     }
 
     $formHeader = [
@@ -107,7 +143,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ? (int)$_GET['id']
         : 0;
 
-    if ($requestedPayslipId > 0) {
+    $requestedCopyFromId = isset($_GET['copy_from'])
+        ? (int)$_GET['copy_from']
+        : 0;
+
+    if ($requestedCopyFromId > 0) {
+        $copyDraft =
+            payroll_copy_prepare_draft(
+                $pdo,
+                $requestedCopyFromId
+            );
+
+        if ($copyDraft === null) {
+            $notFound = true;
+            http_response_code(404);
+        } else {
+            $payslipId = null;
+            $isNew = true;
+            $isCopy = true;
+
+            $copySourcePayslipId =
+                (int)$copyDraft[
+                    'source_payslip_id'
+                ];
+
+            $copySourcePayDate =
+                (string)$copyDraft[
+                    'source_pay_date'
+                ];
+
+            $formHeader =
+                $copyDraft[
+                    'header'
+                ];
+
+            $formLines =
+                $copyDraft[
+                    'lines'
+                ];
+        }
+
+    } elseif ($requestedPayslipId > 0) {
         $payslipId = $requestedPayslipId;
         $isNew = false;
 
@@ -161,6 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'code' => '',
                 'description' => '',
                 'amount' => '',
+                'is_notional' => '0',
             ],
         ];
     }
@@ -174,6 +251,7 @@ if ($formLines === [] && !$notFound) {
             'code' => '',
             'description' => '',
             'amount' => '',
+            'is_notional' => '0',
         ],
     ];
 }
@@ -202,7 +280,16 @@ include '../layout/header.php';
 
         <div>
             <div class="small mb-2">
-                <?php if ($isNew): ?>
+                <?php if (
+                    $isCopy
+                    && $copySourcePayslipId !== null
+                ): ?>
+                    <a
+                        href="payroll_payslip.php?id=<?= (int)$copySourcePayslipId ?>"
+                    >
+                        ← Source payslip
+                    </a>
+                <?php elseif ($isNew): ?>
                     <a
                         href="payroll_payslips.php<?= !empty($formHeader['employment_id'])
                             ? '?employment_id=' . (int)$formHeader['employment_id']
@@ -226,12 +313,27 @@ include '../layout/header.php';
             </h1>
 
             <p class="text-muted mb-0">
-                Header and line-item changes are saved together
-                in one database transaction.
+                <?php if ($isCopy): ?>
+                    Review the copied values, then save them as a completely
+                    separate payslip.
+                <?php else: ?>
+                    Header and line-item changes are saved together
+                    in one database transaction.
+                <?php endif; ?>
             </p>
         </div>
 
-        <?php if (!$isNew && $payslipId !== null): ?>
+        <?php if (
+            $isCopy
+            && $copySourcePayslipId !== null
+        ): ?>
+            <a
+                href="payroll_payslip.php?id=<?= (int)$copySourcePayslipId ?>"
+                class="btn btn-outline-secondary"
+            >
+                View source payslip
+            </a>
+        <?php elseif (!$isNew && $payslipId !== null): ?>
             <a
                 href="payroll_payslip.php?id=<?= (int)$payslipId ?>"
                 class="btn btn-outline-secondary"
@@ -250,6 +352,37 @@ include '../layout/header.php';
         <div class="alert alert-success">
             Payslip updated successfully.
         </div>
+    <?php endif; ?>
+
+    <?php if (
+        $isCopy
+        && $copySourcePayslipId !== null
+    ): ?>
+
+        <div class="alert alert-info">
+
+            <div class="fw-bold">
+                Creating a new payslip copied from
+                <?php if ($copySourcePayDate !== null): ?>
+                    <?= (
+                        new DateTimeImmutable(
+                            $copySourcePayDate
+                        )
+                    )->format('d F Y') ?>
+                <?php else: ?>
+                    payslip #<?= (int)$copySourcePayslipId ?>
+                <?php endif; ?>.
+            </div>
+
+            <div class="small mt-1">
+                The initial copy uses today's date.
+                Review the pay date, statement totals, Amount Paid and every
+                line item before saving. Saving this form creates a new
+                payslip and does not modify the source.
+            </div>
+
+        </div>
+
     <?php endif; ?>
 
     <?php if ($error !== null): ?>
@@ -284,7 +417,41 @@ include '../layout/header.php';
                 value="<?= $isNew ? 'create' : 'edit' ?>"
             >
 
+            <?php if (
+                $isCopy
+                && $copySourcePayslipId !== null
+            ): ?>
+                <input
+                    type="hidden"
+                    name="copy_source_payslip_id"
+                    value="<?= (int)$copySourcePayslipId ?>"
+                >
+            <?php endif; ?>
+
             <?php if (!$isNew): ?>
+OLD,
+    'Preserve Copy-mode UI state through POST'
+);
+
+/*
+ * The employee selector must not redirect away from the copied form.
+ */
+patch_exact(
+    $editPath,
+    <<<'OLD'
+                                <?= $isNew
+                                    ? 'onchange="window.location=\'payroll_payslip_edit.php?employment_id=\'+encodeURIComponent(this.value)"'
+                                    : '' ?>
+                                required
+OLD,
+    <<<'NEW'
+                                <?= !$isCopy && $isNew
+                                    ? 'onchange="window.location=\'payroll_payslip_edit.php?employment_id=\'+encodeURIComponent(this.value)"'
+                                    : '' ?>
+                                <?= $isCopy
+                                    ? 'disabled'
+                                    : '' ?>
+                                required
                 <input
                     type="hidden"
                     name="payslip_id"
@@ -340,6 +507,21 @@ include '../layout/header.php';
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+
+                            <?php if ($isCopy): ?>
+
+                                <input
+                                    type="hidden"
+                                    name="employment_id"
+                                    value="<?= (int)$formHeader['employment_id'] ?>"
+                                >
+
+                                <div class="form-text">
+                                    Employee is inherited from the source
+                                    payslip for this copy.
+                                </div>
+
+                            <?php endif; ?>
 
                         </div>
 
@@ -802,7 +984,17 @@ include '../layout/header.php';
                         : 'Save changes' ?>
                 </button>
 
-                <?php if ($isNew): ?>
+                <?php if (
+                    $isCopy
+                    && $copySourcePayslipId !== null
+                ): ?>
+                    <a
+                        href="payroll_payslip.php?id=<?= (int)$copySourcePayslipId ?>"
+                        class="btn btn-outline-secondary"
+                    >
+                        Cancel
+                    </a>
+                <?php elseif ($isNew): ?>
                     <a
                         href="payroll_payslips.php<?= !empty($formHeader['employment_id'])
                             ? '?employment_id=' . (int)$formHeader['employment_id']
