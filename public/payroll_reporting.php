@@ -294,6 +294,41 @@ include '../layout/header.php';
 
     </div>
 
+    <?php if (
+        abs((float)$totals['equity_compensation']) > 0.005
+        || abs((float)$totals['equity_tax']) > 0.005
+        || abs((float)$totals['combined_tax']) > 0.005
+    ): ?>
+
+        <div class="alert alert-info">
+
+            <strong>
+                Equity / RSU reporting is separated.
+            </strong>
+
+            <div class="small mt-1">
+                Equity compensation:
+                <?= payroll_reporting_page_money(
+                    $totals['equity_compensation']
+                ) ?>
+                · Equity tax / NI:
+                <?= payroll_reporting_page_abs_money(
+                    $totals['equity_tax']
+                ) ?>
+                · Combined / unallocated tax / NI:
+                <?= payroll_reporting_page_abs_money(
+                    $totals['combined_tax']
+                ) ?>.
+
+                The ordinary tax figures below exclude Equity and Combined
+                tax. Only source-reviewed lines are reclassified; unreviewed
+                historical RSU statements remain Ordinary until corrected.
+            </div>
+
+        </div>
+
+    <?php endif; ?>
+
     <?php if ($quality['has_warning']): ?>
 
         <div class="alert alert-warning">
@@ -404,7 +439,7 @@ include '../layout/header.php';
                 <div class="card-body">
 
                     <div class="small text-muted">
-                        Tax
+                        Ordinary tax / NI
                     </div>
 
                     <div class="fs-5 fw-bold">
@@ -412,6 +447,24 @@ include '../layout/header.php';
                             $totals['tax']
                         ) ?>
                     </div>
+
+                    <?php if (
+                        abs((float)$totals['equity_tax']) > 0.005
+                        || abs((float)$totals['combined_tax']) > 0.005
+                    ): ?>
+
+                        <div class="small text-muted">
+                            Equity
+                            <?= payroll_reporting_page_abs_money(
+                                $totals['equity_tax']
+                            ) ?>
+                            · Combined
+                            <?= payroll_reporting_page_abs_money(
+                                $totals['combined_tax']
+                            ) ?>
+                        </div>
+
+                    <?php endif; ?>
 
                 </div>
 
@@ -550,7 +603,7 @@ include '../layout/header.php';
 
                 <div class="card-header">
                     <strong>
-                        Tax, pension and bonus
+                        Ordinary tax / NI, pension and bonus
                     </strong>
                 </div>
 
@@ -707,7 +760,7 @@ include '../layout/header.php';
                         <th>Pay date(s)</th>
                         <th class="text-end">Cash earnings</th>
                         <th class="text-end">Payroll net</th>
-                        <th class="text-end">Tax</th>
+                        <th class="text-end">Ordinary tax / NI</th>
                         <th class="text-end">Pension</th>
                         <th class="text-end">Bonus</th>
                         <th class="text-end">Bank settled</th>
@@ -1015,7 +1068,7 @@ include '../layout/header.php';
                 labels: monthLabels,
                 datasets: [
                     {
-                        label: 'Tax',
+                        label: 'Ordinary tax / NI',
                         data: payrollMonthRows.map(
                             row => Math.abs(row.totals.tax)
                         ),

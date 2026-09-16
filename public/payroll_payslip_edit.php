@@ -238,6 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'description' => '',
                 'amount' => '',
                 'is_notional' => '0',
+                'reporting_scope' => 'ordinary',
             ],
         ];
     }
@@ -252,6 +253,7 @@ if ($formLines === [] && !$notFound) {
             'description' => '',
             'amount' => '',
             'is_notional' => '0',
+            'reporting_scope' => 'ordinary',
         ],
     ];
 }
@@ -782,6 +784,12 @@ OLD,
                             <strong>Notional</strong> when the source
                             statement marks an item with * and states
                             that the item has been shown but not paid.
+                            Reporting scope is separate: use
+                            <strong>Equity / RSU</strong> for lines attributable
+                            to share compensation, and
+                            <strong>Combined / unallocated</strong> only where
+                            the source does not allow ordinary and equity
+                            amounts (for example PAYE/NI) to be split safely.
                         </div>
                     </div>
 
@@ -805,6 +813,7 @@ OLD,
                                 <th style="min-width: 130px;">Code</th>
                                 <th style="min-width: 220px;">Description</th>
                                 <th style="min-width: 130px;" class="text-end">Amount</th>
+                                <th style="min-width: 170px;">Reporting</th>
                                 <th style="min-width: 100px;">Notional</th>
                                 <th style="min-width: 100px;">Remove</th>
                             </tr>
@@ -901,6 +910,48 @@ OLD,
                                             required
                                         >
                                     </div>
+                                </td>
+
+                                <td>
+
+                                    <select
+                                        name="lines[<?= $index ?>][reporting_scope]"
+                                        class="form-select"
+                                        required
+                                    >
+
+                                        <option
+                                            value="ordinary"
+                                            <?= (string)($line['reporting_scope'] ?? 'ordinary')
+                                                === 'ordinary'
+                                                ? 'selected'
+                                                : '' ?>
+                                        >
+                                            Ordinary payroll
+                                        </option>
+
+                                        <option
+                                            value="equity"
+                                            <?= (string)($line['reporting_scope'] ?? 'ordinary')
+                                                === 'equity'
+                                                ? 'selected'
+                                                : '' ?>
+                                        >
+                                            Equity / RSU
+                                        </option>
+
+                                        <option
+                                            value="combined"
+                                            <?= (string)($line['reporting_scope'] ?? 'ordinary')
+                                                === 'combined'
+                                                ? 'selected'
+                                                : '' ?>
+                                        >
+                                            Combined / unallocated
+                                        </option>
+
+                                    </select>
+
                                 </td>
 
                                 <td>
@@ -1083,6 +1134,26 @@ OLD,
                             required
                         >
                     </div>
+                </td>
+
+                <td>
+
+                    <select
+                        name="lines[__INDEX__][reporting_scope]"
+                        class="form-select"
+                        required
+                    >
+                        <option value="ordinary" selected>
+                            Ordinary payroll
+                        </option>
+                        <option value="equity">
+                            Equity / RSU
+                        </option>
+                        <option value="combined">
+                            Combined / unallocated
+                        </option>
+                    </select>
+
                 </td>
 
                 <td>

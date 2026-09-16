@@ -80,7 +80,8 @@ function payroll_write_get_lines(
             description,
             amount,
             category_id,
-            is_notional
+            is_notional,
+            reporting_scope
         FROM payroll_line_items
         WHERE payslip_id = ?
         ORDER BY id
@@ -542,6 +543,29 @@ function payroll_write_validate_lines(
             && (string)$row['is_notional']
                 === '1';
 
+        $reportingScope = trim(
+            (string)(
+                $row['reporting_scope']
+                ?? 'ordinary'
+            )
+        );
+
+        if (
+            !in_array(
+                $reportingScope,
+                [
+                    'ordinary',
+                    'equity',
+                    'combined',
+                ],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'Every payslip line must use a valid Reporting scope.'
+            );
+        }
+
         if ($lineId < 0) {
             throw new RuntimeException(
                 'Invalid payslip line ID.'
@@ -588,6 +612,9 @@ function payroll_write_validate_lines(
                         null,
 
                     'is_notional' =>
+                        null,
+
+                    'reporting_scope' =>
                         null,
                 ];
             }
@@ -722,6 +749,9 @@ function payroll_write_validate_lines(
 
             'is_notional' =>
                 $isNotional,
+
+            'reporting_scope' =>
+                $reportingScope,
         ];
 
         $retainedCount++;
@@ -1019,7 +1049,8 @@ function payroll_write_save_payslip(
                         description = ?,
                         amount = ?,
                         category_id = ?,
-                        is_notional = ?
+                        is_notional = ?,
+                        reporting_scope = ?
                     WHERE id = ?
                       AND payslip_id = ?
                 ");
@@ -1047,6 +1078,10 @@ function payroll_write_save_payslip(
                         ? 1
                         : 0,
 
+                    $line[
+                        'reporting_scope'
+                    ],
+
                     $lineId,
                     $payslipId,
                 ]);
@@ -1061,9 +1096,10 @@ function payroll_write_save_payslip(
                     description,
                     amount,
                     category_id,
-                    is_notional
+                    is_notional,
+                    reporting_scope
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?
                 )
             ");
 
@@ -1091,6 +1127,10 @@ function payroll_write_save_payslip(
                 ]
                     ? 1
                     : 0,
+
+                $line[
+                    'reporting_scope'
+                ],
             ]);
         }
 

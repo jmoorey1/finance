@@ -265,7 +265,7 @@ function payroll_ui_get_payslip(
             e.employee_number,
             e.tax_reference,
             e.status AS employment_status
-        FROM payroll_payslip_summary ps
+        FROM payroll_payslip_reporting_summary ps
         JOIN payroll_employments e
           ON e.id = ps.employment_id
         WHERE ps.payslip_id = ?
@@ -290,6 +290,7 @@ function payroll_ui_get_payslip_lines(
             li.description,
             li.amount,
             li.is_notional,
+            li.reporting_scope,
             c.id AS category_id,
             c.name AS category_name,
             c.display_order,

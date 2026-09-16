@@ -162,6 +162,14 @@ function payroll_copy_prepare_draft(
                 ] === 1
                     ? '1'
                     : '0',
+
+            'reporting_scope' =>
+                (string)(
+                    $line[
+                        'reporting_scope'
+                    ]
+                    ?? 'ordinary'
+                ),
         ];
     }
 

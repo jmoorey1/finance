@@ -216,11 +216,11 @@ include '../layout/header.php';
             <div class="card h-100">
                 <div class="card-body">
                     <div class="text-muted small">
-                        Tax
+                        Ordinary tax / NI
                     </div>
                     <div class="fw-bold">
                         <?= payroll_ui_money(
-                            $payslip['taxes']
+                            $payslip['ordinary_tax_ni']
                         ) ?>
                     </div>
                 </div>
@@ -261,7 +261,7 @@ include '../layout/header.php';
             <div class="card h-100">
                 <div class="card-body">
                     <div class="text-muted small">
-                        Deductions
+                        Statement deductions
                     </div>
                     <div class="fw-bold">
                         <?= payroll_ui_money(
@@ -289,6 +289,120 @@ include '../layout/header.php';
 
     </div>
 
+    <?php if (
+        (int)$payslip['equity_line_count'] > 0
+        || (int)$payslip['combined_line_count'] > 0
+    ): ?>
+
+        <div class="card border-info mb-4">
+
+            <div class="card-header">
+                <strong>
+                    Equity / RSU semantics
+                </strong>
+            </div>
+
+            <div class="card-body">
+
+                <div class="small text-muted mb-3">
+                    These figures classify the payslip itself.
+                    They do not assume when vested shares were sold and
+                    do not infer broker/share-account proceeds.
+                </div>
+
+                <?php if (
+                    abs(
+                        (float)$payslip['combined_tax_ni']
+                    ) > 0.005
+                ): ?>
+
+                    <div class="alert alert-warning py-2">
+                        Some tax / NI is Combined / unallocated, so separate
+                        ordinary and equity tax rates are intentionally not
+                        estimated.
+                    </div>
+
+                <?php endif; ?>
+
+                <div class="row g-3">
+
+                    <div class="col-6 col-md-2">
+                        <div class="small text-muted">
+                            Ordinary compensation
+                        </div>
+                        <div class="fw-bold">
+                            <?= payroll_ui_money(
+                                $payslip['ordinary_compensation']
+                            ) ?>
+                        </div>
+                    </div>
+
+                    <div class="col-6 col-md-2">
+                        <div class="small text-muted">
+                            Equity compensation
+                        </div>
+                        <div class="fw-bold">
+                            <?= payroll_ui_money(
+                                $payslip['equity_compensation']
+                            ) ?>
+                        </div>
+                    </div>
+
+                    <div class="col-6 col-md-2">
+                        <div class="small text-muted">
+                            Equity tax / NI
+                        </div>
+                        <div class="fw-bold">
+                            <?= payroll_ui_money(
+                                $payslip['equity_tax_ni']
+                            ) ?>
+                        </div>
+                    </div>
+
+                    <div class="col-6 col-md-2">
+                        <div class="small text-muted">
+                            Combined tax / NI
+                        </div>
+                        <div class="fw-bold">
+                            <?= payroll_ui_money(
+                                $payslip['combined_tax_ni']
+                            ) ?>
+                        </div>
+                    </div>
+
+                    <div class="col-6 col-md-2">
+                        <div class="small text-muted">
+                            Equity adjustments
+                        </div>
+                        <div class="fw-bold">
+                            <?= payroll_ui_money(
+                                $payslip['equity_other_deductions']
+                            ) ?>
+                        </div>
+                    </div>
+
+                    <div class="col-6 col-md-2">
+                        <div class="small text-muted">
+                            Equity tax rate
+                        </div>
+                        <div class="fw-bold">
+                            <?= $payslip['equity_tax_percentage'] !== null
+                                ? number_format(
+                                    (float)$payslip['equity_tax_percentage'],
+                                    2
+                                ) . '%'
+                                : '—' ?>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    <?php endif; ?>
+
     <div class="row g-4 mb-4">
 
         <div class="col-lg-8">
@@ -309,6 +423,7 @@ include '../layout/header.php';
                                 <th>Category</th>
                                 <th>Code</th>
                                 <th>Description</th>
+                                <th>Reporting</th>
                                 <th>Notional</th>
                                 <th class="text-end">
                                     Amount
@@ -355,6 +470,31 @@ include '../layout/header.php';
                                     <?= payroll_ui_h(
                                         $line['description']
                                     ) ?>
+                                </td>
+
+                                <td>
+                                    <?php
+                                        $reportingScope = (string)(
+                                            $line['reporting_scope']
+                                            ?? 'ordinary'
+                                        );
+
+                                        $reportingLabel = match ($reportingScope) {
+                                            'equity' => 'Equity / RSU',
+                                            'combined' => 'Combined / unallocated',
+                                            default => 'Ordinary payroll',
+                                        };
+
+                                        $reportingClass = match ($reportingScope) {
+                                            'equity' => 'bg-info text-dark',
+                                            'combined' => 'bg-warning text-dark',
+                                            default => 'bg-light text-dark border',
+                                        };
+                                    ?>
+
+                                    <span class="badge <?= $reportingClass ?>">
+                                        <?= payroll_ui_h($reportingLabel) ?>
+                                    </span>
                                 </td>
 
                                 <td>
@@ -538,7 +678,13 @@ include '../layout/header.php';
             <div class="card">
 
                 <div class="card-header">
-                    <strong>Breakdown</strong>
+                    <strong>
+                        Source category breakdown
+                    </strong>
+                    <div class="small text-muted">
+                        Includes all reporting scopes; use the Equity / RSU
+                        semantics card above for ordinary/equity separation.
+                    </div>
                 </div>
 
                 <div class="card-body">
@@ -589,12 +735,16 @@ include '../layout/header.php';
                     </div>
 
                     <div class="d-flex justify-content-between pt-1">
-                        <span>Tax % of gross</span>
+                        <span>
+                            Ordinary tax / NI %
+                        </span>
                         <strong>
-                            <?= number_format(
-                                (float)$payslip['tax_percentage'],
-                                2
-                            ) ?>%
+                            <?= $payslip['ordinary_tax_percentage'] !== null
+                                ? number_format(
+                                    (float)$payslip['ordinary_tax_percentage'],
+                                    2
+                                ) . '%'
+                                : '—' ?>
                         </strong>
                     </div>
 

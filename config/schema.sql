@@ -431,6 +431,7 @@ CREATE TABLE `payroll_line_items` (
   `amount` decimal(12,2) NOT NULL,
   `category_id` tinyint NOT NULL,
   `is_notional` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 when the source payslip marks this line as shown but not paid',
+  `reporting_scope` enum('ordinary','equity','combined') NOT NULL DEFAULT 'ordinary' COMMENT 'Reporting allocation: ordinary payroll, equity/RSU, or combined/unallocated',
   `legacy_line_item_id` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -477,6 +478,92 @@ SET @saved_cs_client     = @@character_set_client;
  1 AS `corporate_expenses`,
  1 AS `personal_expenses`,
  1 AS `payslip_count`*/;
+SET character_set_client = @saved_cs_client;
+DROP TABLE IF EXISTS `payroll_payslip_reporting_line_summary`;
+/*!50001 DROP VIEW IF EXISTS `payroll_payslip_reporting_line_summary`*/;
+SET @saved_cs_client     = @@character_set_client;
+/*!50503 SET character_set_client = utf8mb4 */;
+/*!50001 CREATE VIEW `payroll_payslip_reporting_line_summary` AS SELECT
+ 1 AS `payslip_id`,
+ 1 AS `ordinary_compensation`,
+ 1 AS `ordinary_cash_compensation`,
+ 1 AS `ordinary_notional_compensation`,
+ 1 AS `equity_compensation`,
+ 1 AS `equity_cash_compensation`,
+ 1 AS `equity_notional_compensation`,
+ 1 AS `combined_compensation`,
+ 1 AS `ordinary_tax_ni`,
+ 1 AS `equity_tax_ni`,
+ 1 AS `combined_tax_ni`,
+ 1 AS `ordinary_other_deductions`,
+ 1 AS `equity_other_deductions`,
+ 1 AS `combined_other_deductions`,
+ 1 AS `ordinary_line_count`,
+ 1 AS `equity_line_count`,
+ 1 AS `combined_line_count`*/;
+SET character_set_client = @saved_cs_client;
+DROP TABLE IF EXISTS `payroll_payslip_reporting_summary`;
+/*!50001 DROP VIEW IF EXISTS `payroll_payslip_reporting_summary`*/;
+SET @saved_cs_client     = @@character_set_client;
+/*!50503 SET character_set_client = utf8mb4 */;
+/*!50001 CREATE VIEW `payroll_payslip_reporting_summary` AS SELECT
+ 1 AS `payslip_id`,
+ 1 AS `employment_id`,
+ 1 AS `person_id`,
+ 1 AS `person_name`,
+ 1 AS `pay_date`,
+ 1 AS `month_start`,
+ 1 AS `tax_year_start`,
+ 1 AS `tax_year`,
+ 1 AS `tax_month`,
+ 1 AS `tax_code`,
+ 1 AS `annual_salary`,
+ 1 AS `statement_total_earnings`,
+ 1 AS `statement_total_deductions`,
+ 1 AS `statement_net_pay`,
+ 1 AS `statement_amount_paid`,
+ 1 AS `payment_method`,
+ 1 AS `basic_pay`,
+ 1 AS `benefits`,
+ 1 AS `pre_tax_deductions`,
+ 1 AS `additional_earnings`,
+ 1 AS `bonus`,
+ 1 AS `pension`,
+ 1 AS `taxes`,
+ 1 AS `post_tax_deductions`,
+ 1 AS `total_gross`,
+ 1 AS `notional_pay`,
+ 1 AS `calculated_cash_earnings`,
+ 1 AS `cash_earnings`,
+ 1 AS `calculated_total_deductions`,
+ 1 AS `total_deductions`,
+ 1 AS `calculated_net_pay`,
+ 1 AS `net_pay`,
+ 1 AS `amount_paid`,
+ 1 AS `settlement_amount`,
+ 1 AS `settlement_amount_source`,
+ 1 AS `tax_percentage`,
+ 1 AS `line_item_count`,
+ 1 AS `notional_line_count`,
+ 1 AS `ordinary_compensation`,
+ 1 AS `ordinary_cash_compensation`,
+ 1 AS `ordinary_notional_compensation`,
+ 1 AS `equity_compensation`,
+ 1 AS `equity_cash_compensation`,
+ 1 AS `equity_notional_compensation`,
+ 1 AS `combined_compensation`,
+ 1 AS `ordinary_tax_ni`,
+ 1 AS `equity_tax_ni`,
+ 1 AS `combined_tax_ni`,
+ 1 AS `ordinary_other_deductions`,
+ 1 AS `equity_other_deductions`,
+ 1 AS `combined_other_deductions`,
+ 1 AS `ordinary_line_count`,
+ 1 AS `equity_line_count`,
+ 1 AS `combined_line_count`,
+ 1 AS `ordinary_tax_percentage`,
+ 1 AS `equity_tax_percentage`,
+ 1 AS `reporting_mix`*/;
 SET character_set_client = @saved_cs_client;
 DROP TABLE IF EXISTS `payroll_payslip_summary`;
 /*!50001 DROP VIEW IF EXISTS `payroll_payslip_summary`*/;
@@ -1096,6 +1183,30 @@ CREATE TABLE `watcher_alerts` (
 /*!50001 SET collation_connection      = utf8mb4_general_ci */;
 /*!50001 CREATE ALGORITHM=UNDEFINED */
 /*!50001 VIEW `payroll_monthly_summary` AS select `ps`.`employment_id` AS `employment_id`,`ps`.`person_id` AS `person_id`,`ps`.`person_name` AS `person_name`,`ps`.`month_start` AS `month_start`,sum(`ps`.`basic_pay`) AS `basic_pay`,sum(`ps`.`benefits`) AS `benefits`,sum(`ps`.`pre_tax_deductions`) AS `pre_tax_deductions`,sum(`ps`.`additional_earnings`) AS `additional_earnings`,sum(`ps`.`bonus`) AS `bonus`,sum(`ps`.`pension`) AS `pension`,sum(`ps`.`taxes`) AS `taxes`,sum(`ps`.`post_tax_deductions`) AS `post_tax_deductions`,sum(`ps`.`total_gross`) AS `total_gross`,sum(`ps`.`total_deductions`) AS `total_deductions`,sum(`ps`.`net_pay`) AS `net_pay`,round((case when (sum(`ps`.`total_gross`) = 0) then 0 else ((sum(`ps`.`taxes`) / sum(`ps`.`total_gross`)) * 100) end),2) AS `tax_percentage`,coalesce(max(`exp`.`corporate_expenses`),0) AS `corporate_expenses`,coalesce(max(`exp`.`personal_expenses`),0) AS `personal_expenses`,count(0) AS `payslip_count` from (`payroll_payslip_summary` `ps` left join (select `r`.`employment_id` AS `employment_id`,date_format(`x`.`expense_date`,'%Y-%m-01') AS `month_start`,sum((case when (`pm`.`funding_type` = 'corporate') then `x`.`gbp_amount` else 0 end)) AS `corporate_expenses`,sum((case when (`pm`.`funding_type` = 'personal') then `x`.`gbp_amount` else 0 end)) AS `personal_expenses` from ((`payroll_expenses` `x` join `payroll_expense_reports` `r` on((`r`.`id` = `x`.`report_id`))) left join `payroll_expense_payment_methods` `pm` on((`pm`.`id` = `x`.`payment_method_id`))) where (`r`.`employment_id` is not null) group by `r`.`employment_id`,date_format(`x`.`expense_date`,'%Y-%m-01')) `exp` on(((`exp`.`employment_id` = `ps`.`employment_id`) and (`exp`.`month_start` = `ps`.`month_start`)))) group by `ps`.`employment_id`,`ps`.`person_id`,`ps`.`person_name`,`ps`.`month_start` */;
+/*!50001 SET character_set_client      = @saved_cs_client */;
+/*!50001 SET character_set_results     = @saved_cs_results */;
+/*!50001 SET collation_connection      = @saved_col_connection */;
+/*!50001 DROP VIEW IF EXISTS `payroll_payslip_reporting_line_summary`*/;
+/*!50001 SET @saved_cs_client          = @@character_set_client */;
+/*!50001 SET @saved_cs_results         = @@character_set_results */;
+/*!50001 SET @saved_col_connection     = @@collation_connection */;
+/*!50001 SET character_set_client      = utf8mb4 */;
+/*!50001 SET character_set_results     = utf8mb4 */;
+/*!50001 SET collation_connection      = utf8mb4_general_ci */;
+/*!50001 CREATE ALGORITHM=UNDEFINED */
+/*!50001 VIEW `payroll_payslip_reporting_line_summary` AS select `li`.`payslip_id` AS `payslip_id`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'ordinary')) then `li`.`amount` else 0 end)) AS `ordinary_compensation`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'ordinary') and (`li`.`is_notional` = 0)) then `li`.`amount` else 0 end)) AS `ordinary_cash_compensation`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'ordinary') and (`li`.`is_notional` = 1)) then `li`.`amount` else 0 end)) AS `ordinary_notional_compensation`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'equity')) then `li`.`amount` else 0 end)) AS `equity_compensation`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'equity') and (`li`.`is_notional` = 0)) then `li`.`amount` else 0 end)) AS `equity_cash_compensation`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'equity') and (`li`.`is_notional` = 1)) then `li`.`amount` else 0 end)) AS `equity_notional_compensation`,sum((case when ((`lt`.`name` = 'Pay') and (`li`.`reporting_scope` = 'combined')) then `li`.`amount` else 0 end)) AS `combined_compensation`,sum((case when ((`c`.`name` = 'TAXES') and (`li`.`reporting_scope` = 'ordinary')) then `li`.`amount` else 0 end)) AS `ordinary_tax_ni`,sum((case when ((`c`.`name` = 'TAXES') and (`li`.`reporting_scope` = 'equity')) then `li`.`amount` else 0 end)) AS `equity_tax_ni`,sum((case when ((`c`.`name` = 'TAXES') and (`li`.`reporting_scope` = 'combined')) then `li`.`amount` else 0 end)) AS `combined_tax_ni`,sum((case when ((`lt`.`name` = 'Deduction') and (`c`.`name` <> 'TAXES') and (`li`.`reporting_scope` = 'ordinary') and (`li`.`is_notional` = 0)) then `li`.`amount` else 0 end)) AS `ordinary_other_deductions`,sum((case when ((`lt`.`name` = 'Deduction') and (`c`.`name` <> 'TAXES') and (`li`.`reporting_scope` = 'equity') and (`li`.`is_notional` = 0)) then `li`.`amount` else 0 end)) AS `equity_other_deductions`,sum((case when ((`lt`.`name` = 'Deduction') and (`c`.`name` <> 'TAXES') and (`li`.`reporting_scope` = 'combined') and (`li`.`is_notional` = 0)) then `li`.`amount` else 0 end)) AS `combined_other_deductions`,sum((case when (`li`.`reporting_scope` = 'ordinary') then 1 else 0 end)) AS `ordinary_line_count`,sum((case when (`li`.`reporting_scope` = 'equity') then 1 else 0 end)) AS `equity_line_count`,sum((case when (`li`.`reporting_scope` = 'combined') then 1 else 0 end)) AS `combined_line_count` from ((`payroll_line_items` `li` join `payroll_categories` `c` on((`c`.`id` = `li`.`category_id`))) join `payroll_line_types` `lt` on((`lt`.`id` = `c`.`line_type_id`))) group by `li`.`payslip_id` */;
+/*!50001 SET character_set_client      = @saved_cs_client */;
+/*!50001 SET character_set_results     = @saved_cs_results */;
+/*!50001 SET collation_connection      = @saved_col_connection */;
+/*!50001 DROP VIEW IF EXISTS `payroll_payslip_reporting_summary`*/;
+/*!50001 SET @saved_cs_client          = @@character_set_client */;
+/*!50001 SET @saved_cs_results         = @@character_set_results */;
+/*!50001 SET @saved_col_connection     = @@collation_connection */;
+/*!50001 SET character_set_client      = utf8mb4 */;
+/*!50001 SET character_set_results     = utf8mb4 */;
+/*!50001 SET collation_connection      = utf8mb4_general_ci */;
+/*!50001 CREATE ALGORITHM=UNDEFINED */
+/*!50001 VIEW `payroll_payslip_reporting_summary` AS select `ps`.`payslip_id` AS `payslip_id`,`ps`.`employment_id` AS `employment_id`,`ps`.`person_id` AS `person_id`,`ps`.`person_name` AS `person_name`,`ps`.`pay_date` AS `pay_date`,`ps`.`month_start` AS `month_start`,`ps`.`tax_year_start` AS `tax_year_start`,`ps`.`tax_year` AS `tax_year`,`ps`.`tax_month` AS `tax_month`,`ps`.`tax_code` AS `tax_code`,`ps`.`annual_salary` AS `annual_salary`,`ps`.`statement_total_earnings` AS `statement_total_earnings`,`ps`.`statement_total_deductions` AS `statement_total_deductions`,`ps`.`statement_net_pay` AS `statement_net_pay`,`ps`.`statement_amount_paid` AS `statement_amount_paid`,`ps`.`payment_method` AS `payment_method`,`ps`.`basic_pay` AS `basic_pay`,`ps`.`benefits` AS `benefits`,`ps`.`pre_tax_deductions` AS `pre_tax_deductions`,`ps`.`additional_earnings` AS `additional_earnings`,`ps`.`bonus` AS `bonus`,`ps`.`pension` AS `pension`,`ps`.`taxes` AS `taxes`,`ps`.`post_tax_deductions` AS `post_tax_deductions`,`ps`.`total_gross` AS `total_gross`,`ps`.`notional_pay` AS `notional_pay`,`ps`.`calculated_cash_earnings` AS `calculated_cash_earnings`,`ps`.`cash_earnings` AS `cash_earnings`,`ps`.`calculated_total_deductions` AS `calculated_total_deductions`,`ps`.`total_deductions` AS `total_deductions`,`ps`.`calculated_net_pay` AS `calculated_net_pay`,`ps`.`net_pay` AS `net_pay`,`ps`.`amount_paid` AS `amount_paid`,`ps`.`settlement_amount` AS `settlement_amount`,`ps`.`settlement_amount_source` AS `settlement_amount_source`,`ps`.`tax_percentage` AS `tax_percentage`,`ps`.`line_item_count` AS `line_item_count`,`ps`.`notional_line_count` AS `notional_line_count`,coalesce(`scope`.`ordinary_compensation`,0) AS `ordinary_compensation`,coalesce(`scope`.`ordinary_cash_compensation`,0) AS `ordinary_cash_compensation`,coalesce(`scope`.`ordinary_notional_compensation`,0) AS `ordinary_notional_compensation`,coalesce(`scope`.`equity_compensation`,0) AS `equity_compensation`,coalesce(`scope`.`equity_cash_compensation`,0) AS `equity_cash_compensation`,coalesce(`scope`.`equity_notional_compensation`,0) AS `equity_notional_compensation`,coalesce(`scope`.`combined_compensation`,0) AS `combined_compensation`,coalesce(`scope`.`ordinary_tax_ni`,0) AS `ordinary_tax_ni`,coalesce(`scope`.`equity_tax_ni`,0) AS `equity_tax_ni`,coalesce(`scope`.`combined_tax_ni`,0) AS `combined_tax_ni`,coalesce(`scope`.`ordinary_other_deductions`,0) AS `ordinary_other_deductions`,coalesce(`scope`.`equity_other_deductions`,0) AS `equity_other_deductions`,coalesce(`scope`.`combined_other_deductions`,0) AS `combined_other_deductions`,coalesce(`scope`.`ordinary_line_count`,0) AS `ordinary_line_count`,coalesce(`scope`.`equity_line_count`,0) AS `equity_line_count`,coalesce(`scope`.`combined_line_count`,0) AS `combined_line_count`,(case when (coalesce(`scope`.`combined_tax_ni`,0) <> 0) then NULL when (coalesce(`scope`.`ordinary_compensation`,0) = 0) then NULL else round(((`scope`.`ordinary_tax_ni` / `scope`.`ordinary_compensation`) * 100),2) end) AS `ordinary_tax_percentage`,(case when (coalesce(`scope`.`combined_tax_ni`,0) <> 0) then NULL when (coalesce(`scope`.`equity_compensation`,0) = 0) then NULL else round(((`scope`.`equity_tax_ni` / `scope`.`equity_compensation`) * 100),2) end) AS `equity_tax_percentage`,(case when ((coalesce(`scope`.`equity_line_count`,0) = 0) and (coalesce(`scope`.`combined_line_count`,0) = 0)) then 'ordinary' when ((coalesce(`scope`.`ordinary_line_count`,0) = 0) and (coalesce(`scope`.`equity_line_count`,0) > 0) and (coalesce(`scope`.`combined_line_count`,0) = 0)) then 'equity_only' else 'mixed_equity' end) AS `reporting_mix` from (`payroll_payslip_summary` `ps` left join `payroll_payslip_reporting_line_summary` `scope` on((`scope`.`payslip_id` = `ps`.`payslip_id`))) */;
 /*!50001 SET character_set_client      = @saved_cs_client */;
 /*!50001 SET character_set_results     = @saved_cs_results */;
 /*!50001 SET collation_connection      = @saved_col_connection */;

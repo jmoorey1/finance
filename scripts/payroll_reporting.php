@@ -116,6 +116,23 @@ function payroll_reporting_get_payslip_rows(
                 ps.line_item_count,
                 ps.notional_line_count,
 
+                ps.ordinary_compensation,
+                ps.ordinary_cash_compensation,
+                ps.ordinary_notional_compensation,
+                ps.equity_compensation,
+                ps.equity_cash_compensation,
+                ps.equity_notional_compensation,
+                ps.combined_compensation,
+                ps.ordinary_tax_ni,
+                ps.equity_tax_ni,
+                ps.combined_tax_ni,
+                ps.ordinary_tax_percentage,
+                ps.equity_tax_percentage,
+                ps.ordinary_line_count,
+                ps.equity_line_count,
+                ps.combined_line_count,
+                ps.reporting_mix,
+
                 finance.receiving_account_id,
                 finance.receiving_account_name,
                 finance.linkage_start_date,
@@ -127,7 +144,7 @@ function payroll_reporting_get_payslip_rows(
                 finance.last_transaction_date,
                 finance.link_status
 
-            FROM payroll_payslip_summary ps
+            FROM payroll_payslip_reporting_summary ps
 
             LEFT JOIN payroll_finance_link_status finance
               ON finance.payslip_id = ps.payslip_id
@@ -159,6 +176,24 @@ function payroll_reporting_empty_totals(): array
 
         'cash_earnings' =>
             0.0,
+
+        'ordinary_compensation' =>
+            0.0,
+
+        'equity_compensation' =>
+            0.0,
+
+        'equity_tax' =>
+            0.0,
+
+        'combined_tax' =>
+            0.0,
+
+        'equity_payslip_count' =>
+            0,
+
+        'combined_payslip_count' =>
+            0,
 
         'payroll_net' =>
             0.0,
@@ -229,6 +264,20 @@ function payroll_reporting_add_row_to_totals(
         ];
 
     $totals[
+        'ordinary_compensation'
+    ] +=
+        (float)$row[
+            'ordinary_compensation'
+        ];
+
+    $totals[
+        'equity_compensation'
+    ] +=
+        (float)$row[
+            'equity_compensation'
+        ];
+
+    $totals[
         'payroll_net'
     ] +=
         (float)$row[
@@ -239,8 +288,42 @@ function payroll_reporting_add_row_to_totals(
         'tax'
     ] +=
         (float)$row[
-            'taxes'
+            'ordinary_tax_ni'
         ];
+
+    $totals[
+        'equity_tax'
+    ] +=
+        (float)$row[
+            'equity_tax_ni'
+        ];
+
+    $totals[
+        'combined_tax'
+    ] +=
+        (float)$row[
+            'combined_tax_ni'
+        ];
+
+    if (
+        (int)$row[
+            'equity_line_count'
+        ] > 0
+    ) {
+        $totals[
+            'equity_payslip_count'
+        ]++;
+    }
+
+    if (
+        (int)$row[
+            'combined_line_count'
+        ] > 0
+    ) {
+        $totals[
+            'combined_payslip_count'
+        ]++;
+    }
 
     $totals[
         'pension'
@@ -336,8 +419,12 @@ function payroll_reporting_round_totals(
     foreach (
         [
             'cash_earnings',
+            'ordinary_compensation',
+            'equity_compensation',
             'payroll_net',
             'tax',
+            'equity_tax',
+            'combined_tax',
             'pension',
             'bonus',
             'notional_pay',
@@ -568,7 +655,7 @@ function payroll_reporting_get_prior_ytd_rows(
                 finance.linked_amount,
                 finance.link_status
 
-            FROM payroll_payslip_summary ps
+            FROM payroll_payslip_reporting_summary ps
 
             LEFT JOIN payroll_finance_link_status finance
               ON finance.payslip_id = ps.payslip_id
@@ -626,14 +713,14 @@ function payroll_reporting_build_ytd_comparison(
     array $priorTotals
 ): array {
     $metrics = [
-        'cash_earnings' =>
-            'Cash earnings',
+        'ordinary_compensation' =>
+            'Ordinary compensation',
 
         'payroll_net' =>
             'Payroll net',
 
         'tax' =>
-            'Tax',
+            'Ordinary tax / NI',
 
         'pension' =>
             'Pension',
@@ -822,6 +909,27 @@ function payroll_reporting_build_quality(
             ]
             . ' payslip(s) still rely on line-derived settlement '
             . 'rather than a captured source Amount Paid.';
+    }
+
+    if (
+        abs(
+            (float)$totals[
+                'combined_tax'
+            ]
+        ) > 0.005
+    ) {
+        $warnings[] =
+            '£'
+            . number_format(
+                abs(
+                    (float)$totals[
+                        'combined_tax'
+                    ]
+                ),
+                2
+            )
+            . ' of tax / NI is Combined / unallocated and is excluded '
+            . 'from the ordinary tax metric rather than being estimated.';
     }
 
     return [
