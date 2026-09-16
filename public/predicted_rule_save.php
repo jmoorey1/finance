@@ -3,6 +3,7 @@ require_once '../config/db.php';
 auth_session_start();
 require_once '../scripts/run_predict_instances.php';
 require_once 'prediction_rule_helpers.php';
+require_once '../scripts/lib/prediction_transaction_links.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: predicted.php');
@@ -14,6 +15,10 @@ $form = array_merge($defaults, $_POST);
 $errors = [];
 
 $id = isset($_POST['id']) && $_POST['id'] !== '' ? (int)$_POST['id'] : 0;
+$sourceTransactionId = isset($_POST['source_transaction_id']) && $_POST['source_transaction_id'] !== ''
+    ? (int)$_POST['source_transaction_id']
+    : 0;
+$returnUrl = ptl_safe_return_url($_POST['redirect'] ?? null, 'predicted.php');
 $description = trim((string)($_POST['description'] ?? ''));
 $fromAccountId = isset($_POST['from_account_id']) && $_POST['from_account_id'] !== '' ? (int)$_POST['from_account_id'] : 0;
 $toAccountId = isset($_POST['to_account_id']) && $_POST['to_account_id'] !== '' ? (int)$_POST['to_account_id'] : null;
@@ -86,6 +91,23 @@ if (
 
 if (!in_array($businessDayAdjustment, $validAdjustments, true)) {
     $errors[] = 'Invalid business-day adjustment selected.';
+}
+
+$sourceContext = null;
+if ($sourceTransactionId > 0) {
+    if ($id > 0) {
+        $errors[] = 'A source transaction can only be used when creating a new prediction rule.';
+    } else {
+        $sourceContext = ptl_load_transaction_context($pdo, $sourceTransactionId);
+        if (!$sourceContext) {
+            $errors[] = 'Source transaction not found.';
+        } else {
+            [$canCreateFromSource, $sourceReason] = ptl_can_create_rule_from_transaction($pdo, $sourceContext);
+            if (!$canCreateFromSource) {
+                $errors[] = $sourceReason;
+            }
+        }
+    }
 }
 
 $catType = null;
@@ -182,11 +204,22 @@ $form['day_of_month'] = $dayOfMonth ?? '';
 $form['weekday'] = $weekday ?? '';
 $form['nth_weekday'] = $nthWeekday ?? '';
 $form['business_day_adjustment'] = $businessDayAdjustment;
+$form['source_transaction_id'] = $sourceTransactionId > 0 ? $sourceTransactionId : '';
+$form['redirect'] = $returnUrl;
 
 if (!empty($errors)) {
     $_SESSION['prediction_rule_errors'] = $errors;
     $_SESSION['prediction_rule_form'] = $form;
-    $target = 'predicted_rule_edit.php' . ($id > 0 ? ('?id=' . $id) : '');
+    if ($id > 0) {
+        $target = 'predicted_rule_edit.php?id=' . $id;
+    } elseif ($sourceTransactionId > 0) {
+        $target = 'predicted_rule_edit.php?' . http_build_query([
+            'from_transaction_id' => $sourceTransactionId,
+            'redirect' => $returnUrl,
+        ]);
+    } else {
+        $target = 'predicted_rule_edit.php';
+    }
     header('Location: ' . $target);
     exit;
 }
@@ -270,6 +303,16 @@ try {
         $actionLabel = 'created';
     }
 
+    if ($sourceTransactionId > 0 && $id === 0) {
+        $lockedSourceContext = ptl_lock_source_transaction($pdo, $sourceTransactionId);
+        [$stillEligible, $sourceReason] = ptl_can_create_rule_from_transaction($pdo, $lockedSourceContext);
+        if (!$stillEligible) {
+            throw new RuntimeException($sourceReason);
+        }
+        ptl_assert_rule_compatible($pdo, $lockedSourceContext, $ruleId);
+        ptl_apply_rule_link($pdo, $lockedSourceContext, $ruleId);
+    }
+
     $pruned = prediction_rule_prune_future_open_instances($pdo, $ruleId);
 
     $pdo->commit();
@@ -278,7 +321,17 @@ try {
     $jobMessage = $job['message'] ?? 'Reforecast attempted.';
 
     $_SESSION['prediction_rule_flash'] = "✅ Prediction rule {$actionLabel}. Refreshed {$pruned} future open instance(s). {$jobMessage}";
-    header('Location: predicted.php');
+
+    if ($sourceTransactionId > 0 && $id === 0) {
+        $historyTarget = 'predicted_rule_history.php?' . http_build_query([
+            'id' => $ruleId,
+            'created' => 1,
+            'redirect' => $returnUrl,
+        ]);
+        header('Location: ' . $historyTarget);
+    } else {
+        header('Location: predicted.php');
+    }
     exit;
 
 } catch (Throwable $e) {
@@ -287,7 +340,16 @@ try {
     }
     $_SESSION['prediction_rule_errors'] = ['Save failed: ' . $e->getMessage()];
     $_SESSION['prediction_rule_form'] = $form;
-    $target = 'predicted_rule_edit.php' . ($id > 0 ? ('?id=' . $id) : '');
+    if ($id > 0) {
+        $target = 'predicted_rule_edit.php?id=' . $id;
+    } elseif ($sourceTransactionId > 0) {
+        $target = 'predicted_rule_edit.php?' . http_build_query([
+            'from_transaction_id' => $sourceTransactionId,
+            'redirect' => $returnUrl,
+        ]);
+    } else {
+        $target = 'predicted_rule_edit.php';
+    }
     header('Location: ' . $target);
     exit;
 }

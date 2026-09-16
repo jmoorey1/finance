@@ -1,6 +1,8 @@
 <?php
 require_once '../config/db.php';
 require_once '../scripts/lib/split_transaction_helpers.php';
+require_once '../scripts/lib/prediction_transaction_links.php';
+require_once '../scripts/run_predict_instances.php';
 $conn = get_db_connection();
 
 function safe_transaction_edit_redirect(?string $rawRedirect): string
@@ -27,6 +29,7 @@ function safe_transaction_edit_redirect(?string $rawRedirect): string
         'category_report.php',
         'subcategory_report.php',
         'job_expense_report.php',
+        'predicted_rule_history.php',
     ];
 
     $page = basename($path);
@@ -55,11 +58,31 @@ $id = (int)$_POST['id'];
 $categoryRaw = trim((string)($_POST['category_id'] ?? ''));
 $isSplitTransaction = finance_is_split_sentinel($categoryRaw);
 $categoryId = $isSplitTransaction ? null : (int)$categoryRaw;
+$predictionLinkRaw = trim((string)($_POST['predicted_transaction_id'] ?? ''));
+$preservePredictionLinks = $predictionLinkRaw === '__preserve__';
+$predictionRuleInputValid = $predictionLinkRaw === ''
+    || $preservePredictionLinks
+    || (ctype_digit($predictionLinkRaw) && (int)$predictionLinkRaw > 0);
+$selectedPredictionRuleId = (!$preservePredictionLinks && $predictionLinkRaw !== '' && $predictionRuleInputValid)
+    ? (int)$predictionLinkRaw
+    : null;
+
+$originalPredictionContext = ptl_load_transaction_context($conn, $id);
+if (!$originalPredictionContext) {
+    die('Transaction not found.');
+}
+$originalPredictionRuleIds = ptl_current_rule_ids($conn, $originalPredictionContext);
+sort($originalPredictionRuleIds);
+$predictionLinkChanged = false;
 
 // Begin transaction
 $conn->beginTransaction();
 
 try {
+    if (!$predictionRuleInputValid) {
+        throw new Exception("Invalid prediction rule selection.");
+    }
+
     if (!$isSplitTransaction && $categoryId <= 0) {
         throw new Exception("A valid category is required unless the transaction is split.");
     }
@@ -138,11 +161,37 @@ try {
         $conn->prepare("DELETE FROM transaction_splits WHERE transaction_id = ?")->execute([$id]);
     }
 
+    if (!$preservePredictionLinks) {
+        $updatedPredictionContext = ptl_load_transaction_context($conn, $id);
+        if (!$updatedPredictionContext) {
+            throw new RuntimeException('Unable to reload transaction for prediction linking.');
+        }
+
+        $desiredPredictionRuleIds = $selectedPredictionRuleId !== null ? [$selectedPredictionRuleId] : [];
+        sort($desiredPredictionRuleIds);
+
+        if ($desiredPredictionRuleIds !== $originalPredictionRuleIds) {
+            if ($selectedPredictionRuleId !== null) {
+                ptl_assert_rule_compatible($conn, $updatedPredictionContext, $selectedPredictionRuleId);
+            }
+            ptl_apply_rule_link($conn, $updatedPredictionContext, $selectedPredictionRuleId);
+            $predictionLinkChanged = true;
+        }
+    }
+
     $conn->commit();
+
+    if ($predictionLinkChanged) {
+        $job = run_predict_instances_job(true, 'transaction_prediction_link');
+        if (($job['status'] ?? '') !== 'success') {
+            app_log('Prediction reforecast failed after transaction prediction-link change: ' . ($job['message'] ?? 'unknown error'), 'ERROR');
+        }
+    }
+
     $redirect = safe_transaction_edit_redirect($_POST['redirect'] ?? null);
     header("Location: $redirect");
     exit;
-} catch (Exception $e) {
+} catch (Throwable $e) {
     $conn->rollBack();
     include '../layout/header.php';
     echo "<p>Error updating transaction: " . htmlspecialchars($e->getMessage()) . "</p>";

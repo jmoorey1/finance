@@ -134,6 +134,7 @@ $instances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td><?= !empty($r['active']) ? '✅' : '—' ?></td>
                     <td class="d-flex gap-1 flex-wrap">
                         <a href="predicted_rule_edit.php?id=<?= (int)$r['id'] ?>" class="btn btn-sm btn-outline-primary">✏️ Edit</a>
+                        <a href="predicted_rule_history.php?id=<?= (int)$r['id'] ?>" class="btn btn-sm btn-outline-secondary">📜 History</a>
 
                         <form method="post" action="predicted_rule_toggle.php" class="d-inline">
                             <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">

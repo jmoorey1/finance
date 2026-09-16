@@ -1,6 +1,8 @@
 <?php
 require_once '../config/db.php';
 require_once '../scripts/lib/split_transaction_helpers.php';
+require_once '../scripts/lib/prediction_transaction_links.php';
+require_once 'prediction_rule_helpers.php';
 include '../layout/header.php';
 
 $conn = get_db_connection();
@@ -70,9 +72,28 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
     $stmt->execute([$transaction['transfer_group_id'], $id]);
     $counterparty = $stmt->fetchColumn();
 }
+
+$predictionContext = ptl_load_transaction_context($conn, $id);
+$currentPredictionRuleIds = $predictionContext ? ptl_current_rule_ids($conn, $predictionContext) : [];
+$currentPredictionRuleId = count($currentPredictionRuleIds) === 1 ? (int)$currentPredictionRuleIds[0] : null;
+$predictionLinkInconsistent = count($currentPredictionRuleIds) > 1;
+$predictionRules = $predictionContext ? ptl_load_compatible_rules($conn, $predictionContext) : [];
+$predictionReturnUrl = ptl_safe_return_url($_GET['redirect'] ?? null, 'ledger.php');
+$canCreatePredictionRule = false;
+$createPredictionRuleReason = '';
+if ($predictionContext) {
+    [$canCreatePredictionRule, $createPredictionRuleReason] = ptl_can_create_rule_from_transaction($conn, $predictionContext);
+}
 ?>
 
 <h1>Edit Transaction #<?= $id ?></h1>
+
+<?php if ($predictionLinkInconsistent): ?>
+    <div class="alert alert-warning" style="max-width: 700px;">
+        This transfer group currently has different prediction-rule links across its legs.
+        Leave the selector on “Preserve existing links” unless you want to normalise the whole transfer onto one rule.
+    </div>
+<?php endif; ?>
 
 <form method="post" action="transaction_edit_submit.php">
     <input type="hidden" name="id" value="<?= $id ?>">
@@ -159,6 +180,37 @@ if ($transaction['type'] === 'transfer' && $transaction['transfer_group_id']) {
                 </option>
             <?php endforeach; ?>
         </select>
+
+        <label>Prediction Rule:</label>
+        <div>
+            <select name="predicted_transaction_id" id="predicted_transaction_id">
+                <?php if ($predictionLinkInconsistent): ?>
+                    <option value="__preserve__" selected>-- Preserve existing links --</option>
+                <?php else: ?>
+                    <option value="" <?= $currentPredictionRuleId === null ? 'selected' : '' ?>>-- None / not linked --</option>
+                <?php endif; ?>
+                <?php foreach ($predictionRules as $rule): ?>
+                    <option value="<?= (int)$rule['id'] ?>" <?= $currentPredictionRuleId === (int)$rule['id'] ? 'selected' : '' ?>>
+                        #<?= (int)$rule['id'] ?> — <?= htmlspecialchars((string)$rule['description']) ?>
+                        — <?= htmlspecialchars(prediction_rule_format_schedule($rule)) ?>
+                        <?= empty($rule['active']) ? ' [inactive]' : '' ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <div style="margin-top: 4px; color: #666; font-size: 0.9em;">
+                Links this real transaction to recurring-rule history and variable-amount calculations.
+                Transfer links apply to every leg in the transfer group.
+            </div>
+            <?php if ($currentPredictionRuleId !== null): ?>
+                <div style="margin-top: 4px;">
+                    <a href="predicted_rule_history.php?id=<?= $currentPredictionRuleId ?>&redirect=<?= urlencode($predictionReturnUrl) ?>">🔁 View linked rule history</a>
+                </div>
+            <?php elseif ($canCreatePredictionRule): ?>
+                <div style="margin-top: 4px;">
+                    <a href="predicted_rule_edit.php?from_transaction_id=<?= $id ?>&redirect=<?= urlencode($predictionReturnUrl) ?>">➕🔁 Create a new recurring rule from this transaction</a>
+                </div>
+            <?php endif; ?>
+        </div>
     </div>
 
 <!-- Split Section -->

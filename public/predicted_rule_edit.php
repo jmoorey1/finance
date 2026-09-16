@@ -2,7 +2,7 @@
 require_once '../config/db.php';
 auth_session_start();
 require_once 'prediction_rule_helpers.php';
-include '../layout/header.php';
+require_once '../scripts/lib/prediction_transaction_links.php';
 
 $accountsStmt = $pdo->query("SELECT id, name, type FROM accounts WHERE active = 1 ORDER BY type, name");
 $accounts = $accountsStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -18,15 +18,24 @@ $categories = $categoriesStmt->fetchAll(PDO::FETCH_ASSOC);
 $defaults = prediction_rule_defaults();
 $formValues = null;
 $formErrors = $_SESSION['prediction_rule_errors'] ?? [];
-unset($_SESSION['prediction_rule_errors']);
-
-if (isset($_SESSION['prediction_rule_form'])) {
-    $formValues = array_merge($defaults, $_SESSION['prediction_rule_form']);
-    unset($_SESSION['prediction_rule_form']);
-}
+$sessionForm = $_SESSION['prediction_rule_form'] ?? null;
+unset($_SESSION['prediction_rule_errors'], $_SESSION['prediction_rule_form']);
 
 $ruleId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $editing = $ruleId > 0;
+$sourceTransactionId = (!$editing && isset($_GET['from_transaction_id']) && is_numeric($_GET['from_transaction_id']))
+    ? (int)$_GET['from_transaction_id']
+    : 0;
+$returnUrl = ptl_safe_return_url($_GET['redirect'] ?? null, 'predicted.php');
+$sourceContext = null;
+
+if (is_array($sessionForm)) {
+    $formValues = array_merge($defaults, $sessionForm);
+    if (!$editing) {
+        $sourceTransactionId = isset($sessionForm['source_transaction_id']) ? (int)$sessionForm['source_transaction_id'] : $sourceTransactionId;
+        $returnUrl = ptl_safe_return_url($sessionForm['redirect'] ?? $returnUrl, 'predicted.php');
+    }
+}
 
 if ($formValues === null) {
     if ($editing) {
@@ -41,10 +50,33 @@ if ($formValues === null) {
         }
 
         $formValues = array_merge($defaults, $rule);
+    } elseif ($sourceTransactionId > 0) {
+        $sourceContext = ptl_load_transaction_context($pdo, $sourceTransactionId);
+        if (!$sourceContext) {
+            $formErrors[] = 'Source transaction not found.';
+            $sourceTransactionId = 0;
+            $formValues = $defaults;
+        } else {
+            [$canCreate, $reason] = ptl_can_create_rule_from_transaction($pdo, $sourceContext);
+            if (!$canCreate) {
+                $formErrors[] = $reason;
+                $sourceTransactionId = 0;
+                $sourceContext = null;
+                $formValues = $defaults;
+            } else {
+                $formValues = array_merge($defaults, ptl_build_rule_prefill($pdo, $sourceContext));
+            }
+        }
     } else {
         $formValues = $defaults;
     }
 }
+
+if ($sourceTransactionId > 0 && $sourceContext === null) {
+    $sourceContext = ptl_load_transaction_context($pdo, $sourceTransactionId);
+}
+
+include '../layout/header.php';
 
 $weekdayOptions = prediction_rule_weekday_options();
 $recurrenceUnitOptions = prediction_rule_recurrence_unit_options();
@@ -74,8 +106,23 @@ function checked($value): string {
     </div>
 <?php endif; ?>
 
+<?php if ($sourceTransactionId > 0 && $sourceContext): ?>
+    <div class="alert alert-info">
+        <strong>Creating from transaction #<?= $sourceTransactionId ?>.</strong>
+        <?= htmlspecialchars((string)$sourceContext['date']) ?> —
+        <?= htmlspecialchars((string)$sourceContext['description']) ?> —
+        £<?= number_format((float)$sourceContext['amount'], 2) ?>.
+        The transaction date is used as the initial recurrence anchor; choose the correct weekly/monthly/annual cadence before saving.
+        <?php if (!empty($sourceContext['is_transfer'])): ?>
+            Both transfer legs will be linked to the new rule.
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
+
 <form method="post" action="predicted_rule_save.php">
     <input type="hidden" name="id" value="<?= htmlspecialchars((string)$formValues['id']) ?>">
+    <input type="hidden" name="source_transaction_id" value="<?= $sourceTransactionId > 0 ? $sourceTransactionId : '' ?>">
+    <input type="hidden" name="redirect" value="<?= htmlspecialchars($returnUrl) ?>">
 
     <div class="row g-3">
         <div class="col-md-8">
@@ -263,8 +310,10 @@ function checked($value): string {
         </div>
 
         <div class="col-12 d-flex gap-2">
-            <button type="submit" class="btn btn-primary"><?= $editing ? '💾 Save Changes' : '✅ Create Rule' ?></button>
-            <a href="predicted.php" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">
+                <?= $editing ? '💾 Save Changes' : ($sourceTransactionId > 0 ? '✅ Create & Link Rule' : '✅ Create Rule') ?>
+            </button>
+            <a href="<?= htmlspecialchars($sourceTransactionId > 0 ? $returnUrl : 'predicted.php') ?>" class="btn btn-outline-secondary">Cancel</a>
         </div>
     </div>
 </form>

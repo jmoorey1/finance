@@ -115,8 +115,11 @@ $query = "
         ll.category_id AS cat_id,
         ll.line_role,
         ll.transaction_split_id,
-        ll.predicted_instance_id
+        ll.predicted_instance_id,
+        COALESCE(linked_tx.predicted_transaction_id, linked_pi.predicted_transaction_id) AS predicted_transaction_id
     FROM ledger_lines ll
+    LEFT JOIN transactions linked_tx ON linked_tx.id = ll.transaction_id
+    LEFT JOIN predicted_instances linked_pi ON linked_pi.id = ll.predicted_instance_id
     WHERE ll.account_id IN ($account_placeholders)
       AND ll.line_date BETWEEN ? AND ?
       AND ll.description LIKE ?
@@ -253,10 +256,28 @@ include '../layout/header.php';
                         <?php $total += (float)$entry['amount']; ?>
                     </td>
                     <td><?= htmlspecialchars($entry['source']) ?></td>
-                    <td>
-                        <?= !empty($entry['id'])
-                            ? '<a href="transaction_edit.php?id=' . (int)$entry['id'] . '&redirect=' . urlencode($_SERVER['REQUEST_URI']) . '" title="Edit Transaction">✏️</a>'
-                            : '' ?>
+                    <td class="text-nowrap">
+                        <?php
+                            $predictionRuleId = !empty($entry['predicted_transaction_id'])
+                                ? (int)$entry['predicted_transaction_id']
+                                : 0;
+                            $isActualTransaction = !empty($entry['id']);
+                            $isSplitLine = ($entry['line_role'] ?? '') === 'split';
+                            $ledgerReturnUrl = $_SERVER['REQUEST_URI'];
+                        ?>
+
+                        <?php if ($isActualTransaction): ?>
+                            <a href="transaction_edit.php?id=<?= (int)$entry['id'] ?>&redirect=<?= urlencode($ledgerReturnUrl) ?>"
+                               title="Edit Transaction">✏️</a>
+                        <?php endif; ?>
+
+                        <?php if ($predictionRuleId > 0): ?>
+                            <a href="predicted_rule_history.php?id=<?= $predictionRuleId ?>&redirect=<?= urlencode($ledgerReturnUrl) ?>"
+                               title="View prediction rule history">🔁</a>
+                        <?php elseif ($isActualTransaction && !$isSplitLine): ?>
+                            <a href="predicted_rule_edit.php?from_transaction_id=<?= (int)$entry['id'] ?>&redirect=<?= urlencode($ledgerReturnUrl) ?>"
+                               title="Create recurring rule from this transaction">➕🔁</a>
+                        <?php endif; ?>
                     </td>
                 </tr>
             <?php endforeach; ?>
