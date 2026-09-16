@@ -13,16 +13,15 @@ if (!function_exists('prediction_rule_defaults')) {
             'amount' => '',
             'variable' => 0,
             'average_over_last' => 3,
-            'day_of_month' => '',
-            'adjust_for_weekend' => 'none',
             'active' => 1,
-            'anchor_type' => 'day_of_month',
-            'frequency' => 'monthly',
-            'repeat_interval' => 1,
+            'recurrence_unit' => 'month',
+            'recurrence_interval' => 1,
+            'anchor_date' => date('Y-m-d'),
+            'schedule_pattern' => 'day_of_month',
+            'day_of_month' => date('j'),
             'weekday' => '',
             'nth_weekday' => '',
-            'is_business_day' => 1,
-            'monthly_anchor_type' => 'day_of_month',
+            'business_day_adjustment' => 'none',
         ];
     }
 }
@@ -42,14 +41,13 @@ if (!function_exists('prediction_rule_weekday_options')) {
     }
 }
 
-if (!function_exists('prediction_rule_frequency_options')) {
-    function prediction_rule_frequency_options(): array
+if (!function_exists('prediction_rule_recurrence_unit_options')) {
+    function prediction_rule_recurrence_unit_options(): array
     {
         return [
-            'monthly' => 'Monthly',
-            'weekly' => 'Weekly',
-            'fortnightly' => 'Fortnightly',
-            'custom' => 'Custom (every N weeks from last actual)',
+            'week' => 'Week(s)',
+            'month' => 'Month(s)',
+            'year' => 'Year(s)',
         ];
     }
 }
@@ -65,22 +63,23 @@ if (!function_exists('prediction_rule_type_options')) {
     }
 }
 
-if (!function_exists('prediction_rule_monthly_anchor_options')) {
-    function prediction_rule_monthly_anchor_options(): array
+if (!function_exists('prediction_rule_schedule_pattern_options')) {
+    function prediction_rule_schedule_pattern_options(): array
     {
         return [
+            'anchor_date' => 'Anchor date day',
             'day_of_month' => 'Day of month',
             'nth_weekday' => 'Nth weekday',
-            'last_business_day' => 'Last business day',
+            'month_end' => 'Month end',
         ];
     }
 }
 
-if (!function_exists('prediction_rule_adjust_options')) {
-    function prediction_rule_adjust_options(): array
+if (!function_exists('prediction_rule_business_day_adjustment_options')) {
+    function prediction_rule_business_day_adjustment_options(): array
     {
         return [
-            'none' => 'No weekend adjustment',
+            'none' => 'No business-day adjustment',
             'previous_business_day' => 'Move to previous business day',
             'next_business_day' => 'Move to next business day',
         ];
@@ -102,49 +101,69 @@ if (!function_exists('prediction_rule_ordinal')) {
     }
 }
 
+if (!function_exists('prediction_rule_format_anchor_date')) {
+    function prediction_rule_format_anchor_date(?string $value): string
+    {
+        if (!$value) {
+            return 'unknown date';
+        }
+
+        try {
+            return (new DateTimeImmutable($value))->format('j M Y');
+        } catch (Throwable $e) {
+            return $value;
+        }
+    }
+}
+
 if (!function_exists('prediction_rule_format_schedule')) {
     function prediction_rule_format_schedule(array $r): string
     {
         $weekdayNames = prediction_rule_weekday_options();
-        $frequency = $r['frequency'] ?? 'monthly';
-        $anchor = $r['anchor_type'] ?? 'day_of_month';
-        $repeatInterval = max(1, (int)($r['repeat_interval'] ?? 1));
+        $unit = $r['recurrence_unit'] ?? 'month';
+        $interval = max(1, (int)($r['recurrence_interval'] ?? 1));
+        $pattern = $r['schedule_pattern'] ?? 'anchor_date';
+        $anchorDate = isset($r['anchor_date']) ? (string)$r['anchor_date'] : '';
         $weekday = isset($r['weekday']) && $r['weekday'] !== '' ? (int)$r['weekday'] : null;
         $nthWeekday = isset($r['nth_weekday']) && $r['nth_weekday'] !== '' ? (int)$r['nth_weekday'] : null;
         $dayOfMonth = isset($r['day_of_month']) && $r['day_of_month'] !== '' ? (int)$r['day_of_month'] : null;
-        $isBusinessDay = !empty($r['is_business_day']);
+        $adjustment = $r['business_day_adjustment'] ?? 'none';
 
-        if ($frequency === 'custom') {
-            return "Every {$repeatInterval} week(s) from most recent actual transaction";
+        if ($unit === 'week') {
+            $base = $interval === 1 ? 'Weekly' : "Every {$interval} weeks";
+            $text = $base . ' from ' . prediction_rule_format_anchor_date($anchorDate);
+        } elseif ($unit === 'year') {
+            $base = $interval === 1 ? 'Annually' : "Every {$interval} years";
+            $text = $base . ' from ' . prediction_rule_format_anchor_date($anchorDate);
+        } else {
+            $base = $interval === 1 ? 'Monthly' : "Every {$interval} months";
+
+            if ($pattern === 'day_of_month' && $dayOfMonth) {
+                $text = $base . ' on the ' . prediction_rule_ordinal($dayOfMonth);
+            } elseif ($pattern === 'nth_weekday' && $nthWeekday && $weekday !== null && isset($weekdayNames[$weekday])) {
+                $text = $base . ' on the ' . prediction_rule_ordinal($nthWeekday) . ' ' . $weekdayNames[$weekday];
+            } elseif ($pattern === 'month_end') {
+                $text = $base . ' at month end';
+            } else {
+                $text = $base . ' from ' . prediction_rule_format_anchor_date($anchorDate);
+            }
+
+            if ($interval > 1 && $anchorDate !== '') {
+                try {
+                    $text .= ' (phase: ' . (new DateTimeImmutable($anchorDate))->format('M Y') . ')';
+                } catch (Throwable $e) {
+                    $text .= ' (phase anchored)';
+                }
+            }
         }
 
-        if ($frequency === 'weekly') {
-            return $weekday !== null && isset($weekdayNames[$weekday])
-                ? "Weekly on {$weekdayNames[$weekday]}"
-                : "Weekly";
+        if ($adjustment === 'previous_business_day') {
+            $text .= '; previous business day if needed';
+        } elseif ($adjustment === 'next_business_day') {
+            $text .= '; next business day if needed';
         }
 
-        if ($frequency === 'fortnightly') {
-            return $weekday !== null && isset($weekdayNames[$weekday])
-                ? "Fortnightly on {$weekdayNames[$weekday]}"
-                : "Fortnightly";
-        }
-
-        $prefix = $repeatInterval > 1 ? "Every {$repeatInterval} months" : "Monthly";
-
-        if ($anchor === 'day_of_month' && $dayOfMonth) {
-            return "{$prefix} on the " . prediction_rule_ordinal($dayOfMonth);
-        }
-
-        if ($anchor === 'nth_weekday' && $nthWeekday && $weekday !== null && isset($weekdayNames[$weekday])) {
-            return "{$prefix} on the " . prediction_rule_ordinal($nthWeekday) . " {$weekdayNames[$weekday]}";
-        }
-
-        if ($anchor === 'last_business_day') {
-            return $isBusinessDay ? "{$prefix} on the last business day" : "{$prefix} at month end";
-        }
-
-        return ucfirst($frequency);
+        return $text;
     }
 }
 

@@ -1,46 +1,22 @@
 from datetime import datetime, timedelta
-import calendar
 from statistics import median
 
-import holidays
 import mysql.connector
 from dateutil.relativedelta import relativedelta
 
 from finance_env import get_db_config
-
-UK_HOLIDAYS = holidays.UnitedKingdom()
-
-
-def is_business_day(date):
-    return date.weekday() < 5 and date not in UK_HOLIDAYS
+from prediction_recurrence import adjust_business_day, generate_recurrence_dates
 
 
-def adjust_date(date, mode):
-    if mode == 'next_business_day':
-        while not is_business_day(date):
-            date += timedelta(days=1)
-    elif mode == 'previous_business_day':
-        while not is_business_day(date):
-            date -= timedelta(days=1)
-    return date
-
-
-def get_nth_weekday(year, month, weekday, n):
-    count, day = 0, 1
-    while day <= calendar.monthrange(year, month)[1]:
-        dt = datetime(year, month, day)
-        if dt.weekday() == weekday:
-            count += 1
-            if count == n:
-                return dt
-        day += 1
-    return None
+def adjust_date(day, mode):
+    return adjust_business_day(day, mode)
 
 
 def actual_txn_exists_for_predicted_transaction(cursor, predicted_transaction_id, scheduled_date):
     """
     If a real transaction already exists tied to predicted_transaction_id near the scheduled date,
-    do not recreate the predicted_instance (prevents regenerated stale predictions after deletion).
+    do not recreate that occurrence. The actual transaction fulfils/suppresses an occurrence but
+    never changes the recurrence phase.
     """
     cursor.execute("""
         SELECT 1
@@ -50,90 +26,6 @@ def actual_txn_exists_for_predicted_transaction(cursor, predicted_transaction_id
         LIMIT 1
     """, (predicted_transaction_id, scheduled_date))
     return cursor.fetchone() is not None
-
-
-def get_last_actual_date(cursor, predicted_transaction_id):
-    cursor.execute("""
-        SELECT MAX(date) AS last_date
-        FROM transactions
-        WHERE predicted_transaction_id = %s
-    """, (predicted_transaction_id,))
-    row = cursor.fetchone()
-    return row['last_date'] if row else None
-
-
-def compute_monthly_anchor_date(p, year, month):
-    """
-    Compute the anchor date for a given month based on anchor_type.
-    Returns a date (not datetime) or None.
-    """
-    anchor_type = p.get('anchor_type')
-    dt = None
-
-    if anchor_type == 'day_of_month':
-        dom = p.get('day_of_month')
-        if dom:
-            last_day = calendar.monthrange(year, month)[1]
-            dom = min(int(dom), last_day)
-            dt = datetime(year, month, dom)
-
-    elif anchor_type == 'nth_weekday':
-        wd = p.get('weekday')
-        nth = p.get('nth_weekday')
-        if wd is not None and nth:
-            dt = get_nth_weekday(year, month, int(wd), int(nth))
-
-    elif anchor_type == 'last_business_day':
-        last_day = calendar.monthrange(year, month)[1]
-        dt = datetime(year, month, last_day)
-        if p.get('is_business_day'):
-            dt = adjust_date(dt, 'previous_business_day')
-
-    if not dt:
-        return None
-
-    dt = adjust_date(dt, p.get('adjust_for_weekend') or 'none')
-    return dt.date()
-
-
-def next_weekday_on_or_after(start_date, weekday):
-    days_ahead = (int(weekday) - start_date.weekday()) % 7
-    return start_date + timedelta(days=days_ahead)
-
-
-def get_last_scheduled_instance_date(cursor, predicted_transaction_id, before_date):
-    cursor.execute("""
-        SELECT MAX(scheduled_date) AS last_date
-        FROM predicted_instances
-        WHERE predicted_transaction_id = %s
-          AND scheduled_date < %s
-    """, (predicted_transaction_id, before_date))
-    row = cursor.fetchone()
-    return row['last_date'] if row else None
-
-
-def schedule_weekly_or_fortnightly_instances(cursor, p, today, end_date, frequency, last_actual_date):
-    weekday = p.get('weekday')
-    if weekday is None:
-        return
-
-    step = timedelta(days=14 if frequency == 'fortnightly' else 7)
-
-    if frequency == 'fortnightly':
-        phase_date = last_actual_date or get_last_scheduled_instance_date(cursor, p['id'], today)
-        if phase_date is not None:
-            next_date = next_weekday_on_or_after(phase_date + step, weekday)
-        else:
-            next_date = next_weekday_on_or_after(today, weekday)
-    else:
-        next_date = next_weekday_on_or_after(today, weekday)
-
-    while next_date < today:
-        next_date += step
-
-    while next_date <= end_date:
-        schedule_instance(cursor, p, next_date)
-        next_date += step
 
 
 def actual_transfer_exists_by_metadata(cursor, from_account_id, to_account_id, scheduled_date):
@@ -209,50 +101,10 @@ def predict_fixed_transactions(cursor, today, end_date):
     cursor.execute("SELECT * FROM predicted_transactions WHERE active=1")
     predictions = cursor.fetchall()
 
-    for p in predictions:
-        interval = int(p.get('repeat_interval') or 1)
-        anchor_type = p.get('anchor_type')
-        frequency = (p.get('frequency') or ('weekly' if anchor_type == 'weekly' else 'monthly'))
-
-        last_actual_date = get_last_actual_date(cursor, p['id'])
-
-        if frequency == 'custom' and interval:
-            step = timedelta(days=7 * interval)
-            if last_actual_date is None:
-                next_date = today
-            else:
-                next_date = last_actual_date + step
-
-            while next_date < today:
-                next_date += step
-
-            while next_date <= end_date:
-                schedule_instance(cursor, p, next_date)
-                next_date += step
-            continue
-
-        if frequency in ('weekly', 'fortnightly') or anchor_type == 'weekly':
-            effective_frequency = frequency if frequency in ('weekly', 'fortnightly') else 'weekly'
-            schedule_weekly_or_fortnightly_instances(
-                cursor, p, today, end_date, effective_frequency, last_actual_date
-            )
-            continue
-
-        month_step = max(1, interval)
-
-        month_cursor = today.replace(day=1)
-        if month_step > 1 and last_actual_date is not None:
-            month_cursor = (last_actual_date.replace(day=1) + relativedelta(months=month_step))
-            current_month = today.replace(day=1)
-            while month_cursor < current_month:
-                month_cursor = (month_cursor + relativedelta(months=month_step)).replace(day=1)
-
-        while month_cursor <= end_date:
-            d = compute_monthly_anchor_date(p, month_cursor.year, month_cursor.month)
-            if d and (today <= d <= end_date):
-                schedule_instance(cursor, p, d)
-
-            month_cursor = (month_cursor + relativedelta(months=month_step)).replace(day=1)
+    for prediction in predictions:
+        scheduled_dates = generate_recurrence_dates(prediction, today, end_date)
+        for scheduled_date in scheduled_dates:
+            schedule_instance(cursor, prediction, scheduled_date)
 
 
 def calc_min_payment(balance, floor_amt, percent):
@@ -403,7 +255,7 @@ def compute_cycle_dates(card, year, month):
     except ValueError:
         return None, None
 
-    return statement_date_dt.date(), payment_date_dt.date()
+    return statement_date_dt, payment_date_dt
 
 
 def estimate_statement_balance_for_cycle(
@@ -648,10 +500,11 @@ def main():
     cursor = db.cursor(dictionary=True)
 
     today = datetime.now().date()
-    end_date = today + timedelta(days=90)
+    recurring_end_date = today + timedelta(days=365)
+    repayment_end_date = today + timedelta(days=90)
 
-    predict_fixed_transactions(cursor, today, end_date)
-    predict_credit_card_repayments(cursor, today, end_date)
+    predict_fixed_transactions(cursor, today, recurring_end_date)
+    predict_credit_card_repayments(cursor, today, repayment_end_date)
 
     db.commit()
     cursor.close()

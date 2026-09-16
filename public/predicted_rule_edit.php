@@ -40,10 +40,6 @@ if ($formValues === null) {
             exit;
         }
 
-        $rule['monthly_anchor_type'] = in_array($rule['frequency'], ['weekly', 'fortnightly', 'custom'], true)
-            ? 'day_of_month'
-            : ($rule['anchor_type'] ?? 'day_of_month');
-
         $formValues = array_merge($defaults, $rule);
     } else {
         $formValues = $defaults;
@@ -51,9 +47,9 @@ if ($formValues === null) {
 }
 
 $weekdayOptions = prediction_rule_weekday_options();
-$frequencyOptions = prediction_rule_frequency_options();
-$monthlyAnchorOptions = prediction_rule_monthly_anchor_options();
-$adjustOptions = prediction_rule_adjust_options();
+$recurrenceUnitOptions = prediction_rule_recurrence_unit_options();
+$schedulePatternOptions = prediction_rule_schedule_pattern_options();
+$adjustmentOptions = prediction_rule_business_day_adjustment_options();
 $typeOptions = prediction_rule_type_options();
 
 function selected($a, $b): string {
@@ -179,28 +175,37 @@ function checked($value): string {
         </div>
 
         <div class="col-md-3">
-            <label class="form-label">Frequency</label>
-            <select name="frequency" id="frequency" class="form-select" required>
-                <?php foreach ($frequencyOptions as $key => $label): ?>
-                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['frequency'], $key) ?>>
+            <label class="form-label">Repeat Every</label>
+            <input type="number" name="recurrence_interval" id="recurrence_interval" min="1" class="form-control" required
+                   value="<?= htmlspecialchars((string)$formValues['recurrence_interval']) ?>">
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label">Recurrence Unit</label>
+            <select name="recurrence_unit" id="recurrence_unit" class="form-select" required>
+                <?php foreach ($recurrenceUnitOptions as $key => $label): ?>
+                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['recurrence_unit'], $key) ?>>
                         <?= htmlspecialchars($label) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
 
-        <div class="col-md-3">
-            <label class="form-label">Repeat Interval</label>
-            <input type="number" name="repeat_interval" min="1" class="form-control"
-                   value="<?= htmlspecialchars((string)$formValues['repeat_interval']) ?>">
-            <div class="form-text">For monthly rules, this means every N months.</div>
+        <div class="col-md-4">
+            <label class="form-label">Anchor Date</label>
+            <input type="date" name="anchor_date" id="anchor_date" class="form-control" required
+                   value="<?= htmlspecialchars((string)$formValues['anchor_date']) ?>">
+            <div class="form-text">
+                Permanent phase reference. Actual transactions never move this date.
+                For multi-month rules, its month fixes the recurrence phase.
+            </div>
         </div>
 
-        <div class="col-md-4 js-monthly-anchor-fields">
-            <label class="form-label">Monthly Anchor</label>
-            <select name="monthly_anchor_type" id="monthly_anchor_type" class="form-select">
-                <?php foreach ($monthlyAnchorOptions as $key => $label): ?>
-                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['monthly_anchor_type'], $key) ?>>
+        <div class="col-md-4 js-monthly-pattern-field">
+            <label class="form-label">Monthly Schedule Pattern</label>
+            <select name="schedule_pattern" id="schedule_pattern" class="form-select">
+                <?php foreach ($schedulePatternOptions as $key => $label): ?>
+                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['schedule_pattern'], $key) ?>>
                         <?= htmlspecialchars($label) ?>
                     </option>
                 <?php endforeach; ?>
@@ -211,6 +216,7 @@ function checked($value): string {
             <label class="form-label">Day of Month</label>
             <input type="number" name="day_of_month" min="1" max="31" class="form-control"
                    value="<?= htmlspecialchars((string)$formValues['day_of_month']) ?>">
+            <div class="form-text">Days beyond month-end clamp to the final calendar day.</div>
         </div>
 
         <div class="col-md-4 js-weekday-field">
@@ -237,28 +243,22 @@ function checked($value): string {
             </select>
         </div>
 
-        <div class="col-md-4 js-adjust-field">
-            <label class="form-label">Weekend Adjustment</label>
-            <select name="adjust_for_weekend" class="form-select">
-                <?php foreach ($adjustOptions as $key => $label): ?>
-                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['adjust_for_weekend'], $key) ?>>
+        <div class="col-md-4">
+            <label class="form-label">Business Day Adjustment</label>
+            <select name="business_day_adjustment" class="form-select">
+                <?php foreach ($adjustmentOptions as $key => $label): ?>
+                    <option value="<?= htmlspecialchars($key) ?>" <?= selected($formValues['business_day_adjustment'], $key) ?>>
                         <?= htmlspecialchars($label) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
 
-        <div class="col-md-4 js-last-business-day-field">
-            <label class="form-label">Last Business Day Logic</label>
-            <div class="form-check mt-2">
-                <input class="form-check-input" type="checkbox" name="is_business_day" id="is_business_day" value="1" <?= checked($formValues['is_business_day']) ?>>
-                <label class="form-check-label" for="is_business_day">Use previous business day when month-end is not a business day</label>
-            </div>
-        </div>
-
         <div class="col-12">
-            <div class="alert alert-light border js-custom-note" role="alert">
-                Custom frequency means <strong>every N weeks from the most recent actual transaction linked to this rule</strong>.
+            <div class="alert alert-light border mb-0" role="alert">
+                <strong>Recurrence phase is deterministic.</strong>
+                Weekly, fortnightly, four-weekly, monthly, quarterly and annual schedules all advance from the saved anchor.
+                Matching an actual transaction can fulfil an occurrence, but it cannot shift future dates.
             </div>
         </div>
 
@@ -272,13 +272,14 @@ function checked($value): string {
 <script>
 function updatePredictionRuleForm() {
     const predictionType = document.getElementById('prediction_type').value;
-    const frequency = document.getElementById('frequency').value;
-    const monthlyAnchor = document.getElementById('monthly_anchor_type').value;
+    const recurrenceUnit = document.getElementById('recurrence_unit').value;
+    const schedulePattern = document.getElementById('schedule_pattern').value;
     const variable = document.getElementById('variable').checked;
     const categorySelect = document.getElementById('category_id');
     const toAccountSelect = document.getElementById('to_account_id');
 
     const isTransfer = predictionType === 'transfer';
+    const isMonthly = recurrenceUnit === 'month';
 
     document.querySelectorAll('.js-category-field').forEach(el => {
         el.style.display = isTransfer ? 'none' : '';
@@ -296,42 +297,26 @@ function updatePredictionRuleForm() {
         el.style.display = variable ? '' : 'none';
     });
 
-    const isMonthly = frequency === 'monthly';
-    const isWeeklyish = frequency === 'weekly' || frequency === 'fortnightly';
-    const isCustom = frequency === 'custom';
-
-    document.querySelectorAll('.js-monthly-anchor-fields').forEach(el => {
+    document.querySelectorAll('.js-monthly-pattern-field').forEach(el => {
         el.style.display = isMonthly ? '' : 'none';
     });
 
     document.querySelectorAll('.js-day-of-month-field').forEach(el => {
-        el.style.display = (isMonthly && monthlyAnchor === 'day_of_month') ? '' : 'none';
+        el.style.display = (isMonthly && schedulePattern === 'day_of_month') ? '' : 'none';
     });
 
     document.querySelectorAll('.js-weekday-field').forEach(el => {
-        el.style.display = (isWeeklyish || (isMonthly && monthlyAnchor === 'nth_weekday')) ? '' : 'none';
+        el.style.display = (isMonthly && schedulePattern === 'nth_weekday') ? '' : 'none';
     });
 
     document.querySelectorAll('.js-nth-weekday-field').forEach(el => {
-        el.style.display = (isMonthly && monthlyAnchor === 'nth_weekday') ? '' : 'none';
-    });
-
-    document.querySelectorAll('.js-adjust-field').forEach(el => {
-        el.style.display = (isMonthly && monthlyAnchor !== 'last_business_day') ? '' : 'none';
-    });
-
-    document.querySelectorAll('.js-last-business-day-field').forEach(el => {
-        el.style.display = (isMonthly && monthlyAnchor === 'last_business_day') ? '' : 'none';
-    });
-
-    document.querySelectorAll('.js-custom-note').forEach(el => {
-        el.style.display = isCustom ? '' : 'none';
+        el.style.display = (isMonthly && schedulePattern === 'nth_weekday') ? '' : 'none';
     });
 }
 
 document.getElementById('prediction_type').addEventListener('change', updatePredictionRuleForm);
-document.getElementById('frequency').addEventListener('change', updatePredictionRuleForm);
-document.getElementById('monthly_anchor_type').addEventListener('change', updatePredictionRuleForm);
+document.getElementById('recurrence_unit').addEventListener('change', updatePredictionRuleForm);
+document.getElementById('schedule_pattern').addEventListener('change', updatePredictionRuleForm);
 document.getElementById('variable').addEventListener('change', updatePredictionRuleForm);
 updatePredictionRuleForm();
 </script>

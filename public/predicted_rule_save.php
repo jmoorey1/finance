@@ -23,19 +23,19 @@ $amountRaw = trim((string)($_POST['amount'] ?? ''));
 $variable = isset($_POST['variable']) ? 1 : 0;
 $averageOverLast = isset($_POST['average_over_last']) && $_POST['average_over_last'] !== '' ? (int)$_POST['average_over_last'] : null;
 $active = isset($_POST['active']) ? 1 : 0;
-$frequency = trim((string)($_POST['frequency'] ?? 'monthly'));
-$repeatInterval = isset($_POST['repeat_interval']) && $_POST['repeat_interval'] !== '' ? (int)$_POST['repeat_interval'] : 1;
-$monthlyAnchorType = trim((string)($_POST['monthly_anchor_type'] ?? 'day_of_month'));
+$recurrenceUnit = trim((string)($_POST['recurrence_unit'] ?? 'month'));
+$recurrenceInterval = isset($_POST['recurrence_interval']) && $_POST['recurrence_interval'] !== '' ? (int)$_POST['recurrence_interval'] : 1;
+$anchorDate = trim((string)($_POST['anchor_date'] ?? ''));
+$schedulePattern = trim((string)($_POST['schedule_pattern'] ?? 'anchor_date'));
 $dayOfMonth = isset($_POST['day_of_month']) && $_POST['day_of_month'] !== '' ? (int)$_POST['day_of_month'] : null;
 $weekday = isset($_POST['weekday']) && $_POST['weekday'] !== '' ? (int)$_POST['weekday'] : null;
 $nthWeekday = isset($_POST['nth_weekday']) && $_POST['nth_weekday'] !== '' ? (int)$_POST['nth_weekday'] : null;
-$adjustForWeekend = trim((string)($_POST['adjust_for_weekend'] ?? 'none'));
-$isBusinessDay = isset($_POST['is_business_day']) ? 1 : 0;
+$businessDayAdjustment = trim((string)($_POST['business_day_adjustment'] ?? 'none'));
 
 $validPredictionTypes = array_keys(prediction_rule_type_options());
-$validFrequencies = array_keys(prediction_rule_frequency_options());
-$validMonthlyAnchors = array_keys(prediction_rule_monthly_anchor_options());
-$validAdjustments = array_keys(prediction_rule_adjust_options());
+$validRecurrenceUnits = array_keys(prediction_rule_recurrence_unit_options());
+$validSchedulePatterns = array_keys(prediction_rule_schedule_pattern_options());
+$validAdjustments = array_keys(prediction_rule_business_day_adjustment_options());
 $validWeekdays = array_keys(prediction_rule_weekday_options());
 
 if ($description === '') {
@@ -56,6 +56,7 @@ if ($predictionType !== 'transfer' && $categoryId <= 0) {
 
 if ($amountRaw === '' || !is_numeric($amountRaw)) {
     $errors[] = 'Fallback amount must be a valid number.';
+    $amount = '0.00';
 } else {
     $amount = number_format((float)$amountRaw, 2, '.', '');
 }
@@ -64,16 +65,27 @@ if ($variable && ($averageOverLast === null || $averageOverLast < 1)) {
     $errors[] = 'Average Over Last must be at least 1 when Variable Amount is enabled.';
 }
 
-if (!in_array($frequency, $validFrequencies, true)) {
-    $errors[] = 'Invalid frequency selected.';
+if (!in_array($recurrenceUnit, $validRecurrenceUnits, true)) {
+    $errors[] = 'Invalid recurrence unit selected.';
 }
 
-if ($repeatInterval < 1) {
-    $errors[] = 'Repeat interval must be at least 1.';
+if ($recurrenceInterval < 1) {
+    $errors[] = 'Repeat Every must be at least 1.';
 }
 
-if (!in_array($adjustForWeekend, $validAdjustments, true)) {
-    $errors[] = 'Invalid weekend adjustment selected.';
+$anchorDateObj = DateTimeImmutable::createFromFormat('!Y-m-d', $anchorDate);
+$anchorDateErrors = DateTimeImmutable::getLastErrors();
+if (
+    $anchorDate === ''
+    || !$anchorDateObj
+    || ($anchorDateErrors !== false && (($anchorDateErrors['warning_count'] ?? 0) > 0 || ($anchorDateErrors['error_count'] ?? 0) > 0))
+    || $anchorDateObj->format('Y-m-d') !== $anchorDate
+) {
+    $errors[] = 'Anchor Date must be a valid date.';
+}
+
+if (!in_array($businessDayAdjustment, $validAdjustments, true)) {
+    $errors[] = 'Invalid business-day adjustment selected.';
 }
 
 $catType = null;
@@ -121,21 +133,18 @@ if ($predictionType === 'transfer') {
     $toAccountId = null;
 }
 
-if ($frequency === 'monthly') {
-    if (!in_array($monthlyAnchorType, $validMonthlyAnchors, true)) {
-        $errors[] = 'Invalid monthly anchor selected.';
+if ($recurrenceUnit === 'month') {
+    if (!in_array($schedulePattern, $validSchedulePatterns, true)) {
+        $errors[] = 'Invalid monthly schedule pattern selected.';
     }
 
-    $anchorType = $monthlyAnchorType;
-
-    if ($monthlyAnchorType === 'day_of_month') {
+    if ($schedulePattern === 'day_of_month') {
         if ($dayOfMonth === null || $dayOfMonth < 1 || $dayOfMonth > 31) {
             $errors[] = 'Day of month must be between 1 and 31.';
         }
         $weekday = null;
         $nthWeekday = null;
-        $isBusinessDay = 0;
-    } elseif ($monthlyAnchorType === 'nth_weekday') {
+    } elseif ($schedulePattern === 'nth_weekday') {
         if ($weekday === null || !in_array($weekday, $validWeekdays, true)) {
             $errors[] = 'Weekday is required for nth weekday rules.';
         }
@@ -143,32 +152,16 @@ if ($frequency === 'monthly') {
             $errors[] = 'Nth weekday must be between 1 and 5.';
         }
         $dayOfMonth = null;
-        $isBusinessDay = 0;
-    } elseif ($monthlyAnchorType === 'last_business_day') {
+    } elseif ($schedulePattern === 'month_end' || $schedulePattern === 'anchor_date') {
         $dayOfMonth = null;
         $weekday = null;
         $nthWeekday = null;
     }
-} elseif ($frequency === 'weekly' || $frequency === 'fortnightly') {
-    $anchorType = 'weekly';
-
-    if ($weekday === null || !in_array($weekday, $validWeekdays, true)) {
-        $errors[] = 'Weekday is required for weekly and fortnightly rules.';
-    }
-
-    $dayOfMonth = null;
-    $nthWeekday = null;
-    $isBusinessDay = 0;
-    $monthlyAnchorType = 'day_of_month';
-} else { // custom
-    // Custom rules are interval-based; keep date-anchor fields empty so they
-    // cannot be mistaken for weekly/monthly rules by the generator.
-    $anchorType = 'day_of_month';
+} else {
+    $schedulePattern = 'anchor_date';
     $dayOfMonth = null;
     $weekday = null;
     $nthWeekday = null;
-    $isBusinessDay = 0;
-    $monthlyAnchorType = 'day_of_month';
 }
 
 $form['id'] = $id ?: '';
@@ -181,14 +174,14 @@ $form['amount'] = $amountRaw;
 $form['variable'] = $variable;
 $form['average_over_last'] = $averageOverLast ?? '';
 $form['active'] = $active;
-$form['frequency'] = $frequency;
-$form['repeat_interval'] = $repeatInterval;
-$form['monthly_anchor_type'] = $monthlyAnchorType;
+$form['recurrence_unit'] = $recurrenceUnit;
+$form['recurrence_interval'] = $recurrenceInterval;
+$form['anchor_date'] = $anchorDate;
+$form['schedule_pattern'] = $schedulePattern;
 $form['day_of_month'] = $dayOfMonth ?? '';
 $form['weekday'] = $weekday ?? '';
 $form['nth_weekday'] = $nthWeekday ?? '';
-$form['adjust_for_weekend'] = $adjustForWeekend;
-$form['is_business_day'] = $isBusinessDay;
+$form['business_day_adjustment'] = $businessDayAdjustment;
 
 if (!empty($errors)) {
     $_SESSION['prediction_rule_errors'] = $errors;
@@ -212,15 +205,15 @@ try {
                 amount = ?,
                 variable = ?,
                 average_over_last = ?,
-                day_of_month = ?,
-                adjust_for_weekend = ?,
                 active = ?,
-                anchor_type = ?,
-                frequency = ?,
-                repeat_interval = ?,
+                recurrence_unit = ?,
+                recurrence_interval = ?,
+                anchor_date = ?,
+                schedule_pattern = ?,
+                day_of_month = ?,
                 weekday = ?,
                 nth_weekday = ?,
-                is_business_day = ?
+                business_day_adjustment = ?
             WHERE id = ?
         ");
         $stmt->execute([
@@ -232,15 +225,15 @@ try {
             $amount,
             $variable,
             $variable ? $averageOverLast : null,
-            $dayOfMonth,
-            $adjustForWeekend,
             $active,
-            $anchorType,
-            $frequency,
-            $repeatInterval,
+            $recurrenceUnit,
+            $recurrenceInterval,
+            $anchorDate,
+            $schedulePattern,
+            $dayOfMonth,
             $weekday,
             $nthWeekday,
-            $isBusinessDay,
+            $businessDayAdjustment,
             $id,
         ]);
         $ruleId = $id;
@@ -249,8 +242,9 @@ try {
         $stmt = $pdo->prepare("
             INSERT INTO predicted_transactions (
                 description, from_account_id, to_account_id, category_id, prediction_type, amount,
-                variable, average_over_last, day_of_month, adjust_for_weekend, active,
-                anchor_type, frequency, repeat_interval, weekday, nth_weekday, is_business_day
+                variable, average_over_last, active,
+                recurrence_unit, recurrence_interval, anchor_date, schedule_pattern,
+                day_of_month, weekday, nth_weekday, business_day_adjustment
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
@@ -262,15 +256,15 @@ try {
             $amount,
             $variable,
             $variable ? $averageOverLast : null,
-            $dayOfMonth,
-            $adjustForWeekend,
             $active,
-            $anchorType,
-            $frequency,
-            $repeatInterval,
+            $recurrenceUnit,
+            $recurrenceInterval,
+            $anchorDate,
+            $schedulePattern,
+            $dayOfMonth,
             $weekday,
             $nthWeekday,
-            $isBusinessDay,
+            $businessDayAdjustment,
         ]);
         $ruleId = (int)$pdo->lastInsertId();
         $actionLabel = 'created';
